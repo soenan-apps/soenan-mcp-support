@@ -23,7 +23,7 @@ classifiers = [
 ]
 
 [project.urls]
-Repository = "https://github.com/soenan-apps/soenan-mcp-python"
+Repository = "https://github.com/soenan-apps/soenan-mcp-support"
 
 [tool.setuptools.packages.find]
 where = ["src"]

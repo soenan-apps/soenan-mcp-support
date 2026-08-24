@@ -17,7 +17,7 @@ The runtime has no third-party dependencies.
 Before a package release, install the source by pinning its full 40-character commit instead of a branch or mutable tag:
 
 ```console
-python -m pip install 'soenan-mcp-support @ git+https://github.com/soenan-apps/soenan-mcp-python.git@<40-character-commit>'
+python -m pip install 'soenan-mcp-support @ git+https://github.com/soenan-apps/soenan-mcp-support.git@<40-character-commit>'
 ```
 
 After publishing a package version, install that exact version:
