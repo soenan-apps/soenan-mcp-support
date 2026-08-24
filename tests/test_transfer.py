@@ -7,12 +7,15 @@ import io
 from pathlib import Path
 import tempfile
 import threading
+import time
 import unittest
 
 from soenan_mcp_support.transfer import (
     DescriptorError,
     TransferHTTPError,
     TransferSizeMismatch,
+    TransferTimeoutError,
+    TransferTimeouts,
     DownloadDescriptor,
     UploadDescriptor,
     download_file,
@@ -64,6 +67,10 @@ class _Server(ThreadingHTTPServer):
         self.requests: list[tuple[str, str]] = []
         self.request_headers: list[dict[str, str]] = []
         self.received = b""
+    def handle_error(
+        self, request: object, client_address: tuple[str, int]
+    ) -> None:
+        pass
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -144,6 +151,19 @@ class _NonSeekable:
         return False
 
 
+class _UnreadableSource(io.BytesIO):
+    def readable(self) -> bool:
+        return False
+
+
+class _UnwritableDestination(io.BytesIO):
+    def writable(self) -> bool:
+        return False
+
+class _UntruncatableDestination(io.BytesIO):
+    def truncate(self, size: int | None = None) -> int:
+        raise io.UnsupportedOperation("truncate")
+
 class DescriptorTests(unittest.TestCase):
     def test_parses_actual_wrapped_tool_result_shapes(self) -> None:
         upload = parse_upload_descriptor(_upload_result(f"https://mcp.example/{_SECRET}", 7))
@@ -169,6 +189,13 @@ class DescriptorTests(unittest.TestCase):
             parse_upload_descriptor(result)
         self.assertNotIn(_SECRET, str(raised.exception))
         self.assertNotIn(_SECRET, repr(raised.exception))
+
+    def test_rejects_invalid_capability_ports(self) -> None:
+        for port in ("invalid", "70000", "0"):
+            with self.subTest(port=port), self.assertRaises(DescriptorError):
+                parse_upload_descriptor(
+                    _upload_result(f"http://mcp.example:{port}/{_SECRET}", 7)
+                )
 
 
 class UploadTests(unittest.TestCase):
@@ -210,6 +237,16 @@ class UploadTests(unittest.TestCase):
             )
             with self.assertRaises(TypeError):
                 upload_file(descriptor, _NonSeekable(b"data"))
+
+        self.assertEqual(server.requests, [])
+
+    def test_unreadable_stream_is_rejected_before_one_time_request(self) -> None:
+        with _server() as (server, origin):
+            descriptor = parse_upload_descriptor(
+                _upload_result(f"{origin}/transfers/upload/{_SECRET}", 4)
+            )
+            with self.assertRaises(TypeError):
+                upload_file(descriptor, _UnreadableSource(b"data"))
 
         self.assertEqual(server.requests, [])
 
@@ -298,6 +335,59 @@ class DownloadTests(unittest.TestCase):
                 download_file(descriptor, destination)
 
         self.assertEqual(destination.getvalue(), b"prefix")
+        self.assertEqual(server.requests, [("GET", f"/transfers/download/{_SECRET}")])
+
+    def test_unwritable_stream_is_rejected_before_one_time_request(self) -> None:
+        with _server() as (server, origin):
+            descriptor = parse_download_descriptor(
+                _download_result(f"{origin}/transfers/download/{_SECRET}", 4)
+            )
+            with self.assertRaises(TypeError):
+                download_file(descriptor, _UnwritableDestination())
+
+        self.assertEqual(server.requests, [])
+
+    def test_non_eof_stream_is_rejected_without_losing_existing_data(self) -> None:
+        destination = io.BytesIO(b"existing")
+        destination.seek(2)
+        with _server() as (server, origin):
+            descriptor = parse_download_descriptor(
+                _download_result(f"{origin}/transfers/download/{_SECRET}", 4)
+            )
+            with self.assertRaises(ValueError):
+                download_file(descriptor, destination)
+
+        self.assertEqual(destination.getvalue(), b"existing")
+        self.assertEqual(server.requests, [])
+
+    def test_untruncatable_stream_is_rejected_before_one_time_request(self) -> None:
+        destination = _UntruncatableDestination()
+        with _server() as (server, origin):
+            descriptor = parse_download_descriptor(
+                _download_result(f"{origin}/transfers/download/{_SECRET}", 4)
+            )
+            with self.assertRaises(TypeError):
+                download_file(descriptor, destination)
+
+        self.assertEqual(server.requests, [])
+
+    def test_total_deadline_interrupts_slow_response_headers(self) -> None:
+        class SlowHeaders(_Handler):
+            def do_GET(self) -> None:
+                time.sleep(0.2)
+                super().do_GET()
+
+        with _server(SlowHeaders) as (server, origin):
+            descriptor = parse_download_descriptor(
+                _download_result(f"{origin}/transfers/download/{_SECRET}", 4)
+            )
+            with self.assertRaises(TransferTimeoutError):
+                download_file(
+                    descriptor,
+                    io.BytesIO(),
+                    timeouts=TransferTimeouts(connect=1, read=1, total=0.05),
+                )
+
         self.assertEqual(server.requests, [("GET", f"/transfers/download/{_SECRET}")])
 
 

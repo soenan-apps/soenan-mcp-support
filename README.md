@@ -75,7 +75,7 @@ download_file(descriptor, destination_path)
 
 The SDK writes a private temporary sibling, validates the response status, media type, declared size, and received size, flushes the completed file, and atomically replaces the destination. It removes the temporary file after any failure and leaves an existing destination unchanged.
 
-You can also pass a writable binary stream. If the stream supports seeking and truncation, the SDK restores its original length after a failed download. A non-seekable stream can retain bytes written before a network failure, so use a path when failure cleanup is required.
+You can also pass a writable binary stream. A seekable destination must support truncation and be positioned at EOF; the SDK then restores its original length after a failed download. A non-seekable stream can retain bytes written before a network failure, so use a path when failure cleanup is required.
 
 ## Agent sample
 
@@ -98,7 +98,7 @@ Do not put the descriptor or its `url` in an agent message, tool summary, trace,
 
 ## Timeouts
 
-Every request uses finite connect, socket-read, and whole-transfer limits. Override them explicitly for a large transfer:
+Every request uses finite socket-connect and socket-read limits. The total deadline interrupts an established connection and is checked between SDK operations. DNS resolution and local filesystem operations remain subject to the operating system and stream implementation. Override the network limits explicitly for a large transfer:
 
 ```python
 from soenan_mcp_support.transfer import TransferTimeouts, upload_file

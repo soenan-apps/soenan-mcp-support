@@ -181,6 +181,9 @@ def _url(value: Mapping[str, Any]) -> str:
 def _validate_url(value: SplitResult) -> None:
     if value.scheme not in {"http", "https"} or not value.hostname:
         raise ValueError("invalid endpoint")
+    port = value.port
+    if port is not None and not 1 <= port <= 65_535:
+        raise ValueError("invalid endpoint")
     if value.username is not None or value.password is not None or value.fragment:
         raise ValueError("invalid endpoint")
 

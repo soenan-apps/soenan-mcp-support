@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import socket
 import tempfile
+import threading
 import time
 from typing import BinaryIO, TypeAlias
 from urllib.parse import urlsplit
@@ -47,7 +48,7 @@ class TransferTimeoutError(TransferError):
 
 @dataclass(frozen=True)
 class TransferTimeouts:
-    """Finite network and whole-transfer time limits, in seconds."""
+    """Finite connect, read, and established-connection time limits, in seconds."""
 
     connect: float = 10.0
     read: float = 30.0
@@ -94,6 +95,7 @@ def upload_file(
 
     deadline = time.monotonic() + timeouts.total
     connection = _connection(descriptor.url, timeouts, deadline)
+    watchdog = _deadline_watchdog(connection, deadline)
     try:
         connection.connect()
         _set_socket_timeout(connection, timeouts, deadline)
@@ -130,8 +132,11 @@ def upload_file(
     except (TimeoutError, socket.timeout):
         raise TransferTimeoutError() from None
     except (OSError, http.client.HTTPException):
+        if time.monotonic() >= deadline:
+            raise TransferTimeoutError() from None
         raise TransferError("transfer endpoint communication failed") from None
     finally:
+        watchdog.cancel()
         connection.close()
         if close_stream:
             stream.close()
@@ -148,7 +153,7 @@ def download_file(
         return _download_to_path(descriptor, Path(destination), timeouts)
 
     _require_writer(destination)
-    rollback = _rollback_position(destination)
+    rollback = _append_rollback_position(destination)
     try:
         return _download_to_stream(descriptor, destination, timeouts)
     except BaseException:
@@ -183,6 +188,7 @@ def _download_to_stream(
 ) -> int:
     deadline = time.monotonic() + timeouts.total
     connection = _connection(descriptor.url, timeouts, deadline)
+    watchdog = _deadline_watchdog(connection, deadline)
     try:
         connection.connect()
         _set_socket_timeout(connection, timeouts, deadline)
@@ -227,8 +233,11 @@ def _download_to_stream(
     except (TimeoutError, socket.timeout):
         raise TransferTimeoutError() from None
     except (OSError, http.client.HTTPException):
+        if time.monotonic() >= deadline:
+            raise TransferTimeoutError() from None
         raise TransferError("transfer endpoint communication failed") from None
     finally:
+        watchdog.cancel()
         connection.close()
 
 
@@ -264,8 +273,27 @@ def _remaining(deadline: float) -> float:
         raise TransferTimeoutError()
     return value
 
+def _deadline_watchdog(
+    connection: http.client.HTTPConnection, deadline: float
+) -> threading.Timer:
+    timer = threading.Timer(_remaining(deadline), _interrupt_connection, args=(connection,))
+    timer.daemon = True
+    timer.start()
+    return timer
 
 
+def _interrupt_connection(connection: http.client.HTTPConnection) -> None:
+    stream = connection.sock
+    if stream is None:
+        return
+    try:
+        stream.shutdown(socket.SHUT_RDWR)
+    except OSError:
+        pass
+    try:
+        stream.close()
+    except OSError:
+        pass
 
 def _response_length(response: http.client.HTTPResponse) -> int:
     value = response.getheader("Content-Length")
@@ -296,18 +324,35 @@ def _write_all(stream: BinaryIO, data: bytes) -> None:
 def _require_reader(stream: object) -> None:
     if not callable(getattr(stream, "read", None)):
         raise TypeError("source must be a path or readable binary stream")
+    readable = getattr(stream, "readable", None)
+    if callable(readable) and not readable():
+        raise TypeError("source binary stream must be readable")
 
 
 def _require_writer(stream: object) -> None:
     if not callable(getattr(stream, "write", None)):
         raise TypeError("destination must be a path or writable binary stream")
+    writable = getattr(stream, "writable", None)
+    if callable(writable) and not writable():
+        raise TypeError("destination binary stream must be writable")
 
 
-def _rollback_position(stream: BinaryIO) -> int | None:
+def _append_rollback_position(stream: BinaryIO) -> int | None:
     try:
-        return stream.tell() if stream.seekable() else None
+        if not stream.seekable():
+            return None
+        position = stream.tell()
+        end = stream.seek(0, os.SEEK_END)
+        stream.seek(position)
     except (AttributeError, OSError):
-        return None
+        raise TypeError("destination binary stream position cannot be validated") from None
+    if position != end:
+        raise ValueError("seekable destination binary stream must be positioned at EOF")
+    try:
+        stream.truncate(position)
+    except (AttributeError, OSError):
+        raise TypeError("seekable destination binary stream must support truncation") from None
+    return position
 
 
 def _rollback_stream(stream: BinaryIO, position: int | None) -> None:
