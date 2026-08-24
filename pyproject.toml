@@ -9,7 +9,7 @@ description = "Support utilities for applications and agents that use Soenan MCP
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "Soenan" }]
-dependencies = []
+dependencies = ["cryptography==50.0.0"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",

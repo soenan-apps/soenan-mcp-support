@@ -1,395 +1,210 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
-from datetime import datetime, timezone
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import io
-from pathlib import Path
-import tempfile
+import json
 import threading
-import time
-import unittest
+from base64 import b64encode
+from collections.abc import Mapping
+from hashlib import sha256
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Any
 
-from soenan_mcp_support.transfer import (
-    DescriptorError,
-    TransferHTTPError,
-    TransferSizeMismatch,
-    TransferTimeoutError,
-    TransferTimeouts,
-    DownloadDescriptor,
-    UploadDescriptor,
-    download_file,
-    parse_download_descriptor,
-    parse_upload_descriptor,
-    upload_file,
-)
+import pytest
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+from soenan_mcp_support.transfer import download_file, upload_file
+from soenan_mcp_support.transfer._crypto import CHUNK_SIZE, chunk_aad, chunk_nonce
 
 
-_SECRET = "capability-do-not-disclose"
-_EXPIRY = "2030-01-02T03:04:05Z"
+@pytest.fixture
+def bucket() -> tuple[str, dict[str, bytes]]:
+    objects: dict[str, bytes] = {}
 
+    class Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
 
-def _upload_result(url: str, length: int) -> dict[str, object]:
-    return {
-        "resultType": "complete",
-        "content": [{"type": "text", "text": "Tool call completed."}],
-        "structuredContent": {
-            "method": "PUT",
-            "url": url,
-            "contentType": "application/octet-stream",
-            "contentLength": length,
-            "expiresAt": _EXPIRY,
-        },
-    }
+        def do_PUT(self) -> None:
+            length = int(self.headers["Content-Length"])
+            objects[self.path] = self.rfile.read(length)
+            self.send_response(204)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
 
+        def do_GET(self) -> None:
+            value = objects[self.path]
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(value)))
+            self.end_headers()
+            self.wfile.write(value)
 
-def _download_result(url: str, length: int) -> dict[str, object]:
-    return {
-        "result": {
-            "resultType": "complete",
-            "structuredContent": {
-                "method": "GET",
-                "url": url,
-                "filename": "private-name.bin",
-                "contentType": "application/octet-stream",
-                "contentLength": length,
-                "expiresAt": _EXPIRY,
-            },
-        }
-    }
+        def log_message(self, format: str, *args: object) -> None:
+            pass
 
-
-class _Server(ThreadingHTTPServer):
-    daemon_threads = True
-
-    def __init__(self, handler: type[BaseHTTPRequestHandler]) -> None:
-        super().__init__(("127.0.0.1", 0), handler)
-        self.requests: list[tuple[str, str]] = []
-        self.request_headers: list[dict[str, str]] = []
-        self.received = b""
-    def handle_error(
-        self, request: object, client_address: tuple[str, int]
-    ) -> None:
-        pass
-
-
-class _Handler(BaseHTTPRequestHandler):
-    protocol_version = "HTTP/1.1"
-    upload_status = 204
-    download_status = 200
-    download_body = b"downloaded plaintext"
-    declared_download_length: int | None = None
-    redirect_location: str | None = None
-
-    def do_PUT(self) -> None:
-        self.server.requests.append(("PUT", self.path))  # type: ignore[attr-defined]
-        self.server.request_headers.append(dict(self.headers.items()))  # type: ignore[attr-defined]
-        length = int(self.headers["Content-Length"])
-        self.server.received = self.rfile.read(length)  # type: ignore[attr-defined]
-        if self.redirect_location:
-            self.send_response(307)
-            self.send_header("Location", self.redirect_location)
-        else:
-            self.send_response(self.upload_status)
-        self.send_header("Content-Length", "0")
-        self.send_header("Connection", "close")
-        self.end_headers()
-
-    def do_GET(self) -> None:
-        self.server.requests.append(("GET", self.path))  # type: ignore[attr-defined]
-        self.server.request_headers.append(dict(self.headers.items()))  # type: ignore[attr-defined]
-        if self.redirect_location:
-            self.send_response(307)
-            self.send_header("Location", self.redirect_location)
-            body = b""
-        else:
-            self.send_response(self.download_status)
-            body = self.download_body if self.download_status == 200 else b""
-            if self.download_status == 200:
-                self.send_header("Content-Type", "application/octet-stream")
-        length = self.declared_download_length
-        self.send_header("Content-Length", str(len(body) if length is None else length))
-        self.send_header("Connection", "close")
-        self.end_headers()
-        self.wfile.write(body)
-
-    def log_message(self, format: str, *args: object) -> None:
-        pass
-
-
-@contextmanager
-def _server(handler: type[_Handler] = _Handler):
-    server = _Server(handler)
-    thread = threading.Thread(target=server.serve_forever)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        yield server, f"http://127.0.0.1:{server.server_port}"
+        host, port = server.server_address
+        yield f"http://{host}:{port}", objects
     finally:
         server.shutdown()
         thread.join()
         server.server_close()
 
 
-class _SmallReads(io.BytesIO):
-    def __init__(self, value: bytes) -> None:
-        super().__init__(value)
-        self.largest_request = 0
+def test_managed_chunk_encryption_matches_audaligo_vector() -> None:
+    key = bytes.fromhex(
+        "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+    )
+    nonce_base = bytes.fromhex("0102030405060708")
+    plaintext = bytes.fromhex("68656c6c6f20776f726c64")
+    aad = chunk_aad(
+        project_id="project_123",
+        file_id="file_123",
+        object_id="object_123",
+        epoch=7,
+        total_plaintext_size=11,
+        chunk_count=1,
+        chunk_index=0,
+        plaintext_offset=0,
+        plaintext_length=11,
+        final=True,
+    )
 
-    def read(self, size: int = -1) -> bytes:
-        self.largest_request = max(self.largest_request, size)
-        return super().read(size)
-
-
-class _NonSeekable:
-    def __init__(self, value: bytes) -> None:
-        self._stream = io.BytesIO(value)
-
-    def read(self, size: int = -1) -> bytes:
-        return self._stream.read(size)
-
-    def seekable(self) -> bool:
-        return False
-
-
-class _UnreadableSource(io.BytesIO):
-    def readable(self) -> bool:
-        return False
-
-
-class _UnwritableDestination(io.BytesIO):
-    def writable(self) -> bool:
-        return False
-
-class _UntruncatableDestination(io.BytesIO):
-    def truncate(self, size: int | None = None) -> int:
-        raise io.UnsupportedOperation("truncate")
-
-class DescriptorTests(unittest.TestCase):
-    def test_parses_actual_wrapped_tool_result_shapes(self) -> None:
-        upload = parse_upload_descriptor(_upload_result(f"https://mcp.example/{_SECRET}", 7))
-        download = parse_download_descriptor(
-            _download_result(f"https://mcp.example/{_SECRET}", 9)
-        )
-
-        self.assertEqual(upload.method, "PUT")
-        self.assertEqual(upload.content_length, 7)
-        self.assertEqual(download.method, "GET")
-        self.assertEqual(download.filename, "private-name.bin")
-
-    def test_repr_summary_and_parse_error_redact_capability(self) -> None:
-        descriptor = parse_upload_descriptor(
-            _upload_result(f"https://mcp.example/{_SECRET}", 7)
-        )
-        self.assertNotIn(_SECRET, repr(descriptor))
-        self.assertNotIn(_SECRET, descriptor.safe_summary())
-
-        result = _upload_result(f"https://mcp.example/{_SECRET}", 7)
-        result["structuredContent"]["method"] = "POST"  # type: ignore[index]
-        with self.assertRaises(DescriptorError) as raised:
-            parse_upload_descriptor(result)
-        self.assertNotIn(_SECRET, str(raised.exception))
-        self.assertNotIn(_SECRET, repr(raised.exception))
-
-    def test_rejects_invalid_capability_ports(self) -> None:
-        for port in ("invalid", "70000", "0"):
-            with self.subTest(port=port), self.assertRaises(DescriptorError):
-                parse_upload_descriptor(
-                    _upload_result(f"http://mcp.example:{port}/{_SECRET}", 7)
-                )
+    assert chunk_nonce(nonce_base, 0).hex() == "010203040506070800000000"
+    assert aad.hex() == (
+        "001e617564616c69676f3a6d616e616765643a6368756e6b2d616561643a7631"
+        "01000100176165732d3235362d67636d2d617564616c69676f2d7631000b7072"
+        "6f6a6563745f313233001770726f6a6563745f66696c655f6d616e616765645f"
+        "7631000866696c655f3132330000000000000007000a6f626a6563745f313233"
+        "000000000000000b00800000000000010000000000000000000000000000000b01"
+    )
+    ciphertext = AESGCM(key).encrypt(chunk_nonce(nonce_base, 0), plaintext, aad)
+    assert ciphertext.hex() == "3e7bf028024103387e74441035931da74f49d51a62099ab7ade31c"
+    assert sha256(ciphertext).hexdigest() == (
+        "e91438ee31fa9cd996cff6e6d3a3507d4488f73cb378bb5a34cf8c28913c6c08"
+    )
 
 
-class UploadTests(unittest.TestCase):
-    def test_upload_streams_plaintext_with_exact_headers(self) -> None:
-        payload = b"plaintext" * 20_000
-        source = _SmallReads(payload)
-        with _server() as (server, origin):
-            descriptor = parse_upload_descriptor(
-                _upload_result(f"{origin}/transfers/upload/{_SECRET}", len(payload))
-            )
-            count = upload_file(descriptor, source)
+def test_sdk_encrypts_locally_and_transfers_ciphertext_directly(
+    bucket: tuple[str, dict[str, bytes]], tmp_path: Path
+) -> None:
+    endpoint, objects = bucket
+    project_key = bytes(range(1, 33))
+    plaintext = bytes((index * 37) % 251 for index in range(CHUNK_SIZE + 17))
+    manifest: dict[str, Any] | None = None
+    calls: list[str] = []
 
-        self.assertEqual(count, len(payload))
-        self.assertEqual(server.received, payload)
-        self.assertEqual(server.requests, [("PUT", f"/transfers/upload/{_SECRET}")])
-        self.assertLessEqual(source.largest_request, 64 * 1024)
-        headers = server.request_headers[0]
-        self.assertEqual(headers["Content-Type"], "application/octet-stream")
-        self.assertEqual(headers["Content-Length"], str(len(payload)))
-        self.assertNotIn("Authorization", headers)
-        self.assertNotIn("Cookie", headers)
+    def call_tool(name: str, arguments: Mapping[str, object]) -> Mapping[str, Any]:
+        nonlocal manifest
+        calls.append(name)
+        if name == "audaligo_begin_file_upload":
+            assert arguments["plaintextSize"] == len(plaintext)
+            return {
+                "uploadId": "upload_123",
+                "keyring": {
+                    "projectId": "project_123",
+                    "keys": [{"key": b64encode(project_key).decode("ascii")}],
+                },
+            }
+        if name == "audaligo_put_file_upload_manifest":
+            manifest = json.loads(str(arguments["manifestJson"]))
+            return {"objectId": "upload_123", "state": "manifest_stored"}
+        if name == "audaligo_create_file_upload_chunk_capability":
+            index = int(arguments["chunkIndex"])
+            return _capability(endpoint, "put", index, int(arguments["contentLength"]))
+        if name == "audaligo_complete_file_upload_chunks":
+            assert arguments["chunkIndexes"] == [0, 1]
+            return {"objectId": "upload_123", "state": "chunks_complete"}
+        if name == "audaligo_commit_file_upload":
+            return {
+                "file": {
+                    "projectId": "project_123",
+                    "fileId": "file_123",
+                    "encryptedObjectId": "upload_123",
+                    "originalFilename": "mix.wav",
+                    "originalPlaintextSize": str(len(plaintext)),
+                    "mimeType": "application/octet-stream",
+                    "createdAtUnixMilliseconds": "1",
+                    "updatedAtUnixMilliseconds": "1",
+                },
+                "idempotent": False,
+            }
+        if name == "audaligo_begin_file_download":
+            assert manifest is not None
+            return {
+                "file": {
+                    "projectId": "project_123",
+                    "fileId": "file_123",
+                    "encryptedObjectId": "upload_123",
+                    "originalFilename": "mix.wav",
+                    "originalPlaintextSize": str(len(plaintext)),
+                    "mimeType": "application/octet-stream",
+                    "createdAtUnixMilliseconds": "1",
+                    "updatedAtUnixMilliseconds": "1",
+                },
+                "manifest": _protobuf_json_manifest(manifest),
+                "keyring": {
+                    "projectId": "project_123",
+                    "keys": [{"key": b64encode(project_key).decode("ascii")}],
+                },
+            }
+        if name == "audaligo_create_file_read_chunk_capability":
+            assert manifest is not None
+            index = int(arguments["chunkIndex"])
+            length = int(manifest["chunks"][index]["ciphertextSize"])
+            return _capability(endpoint, "get", index, length)
+        raise AssertionError(f"unexpected tool: {name}")
 
-    def test_path_size_mismatch_does_not_start_one_time_request(self) -> None:
-        with tempfile.TemporaryDirectory() as directory, _server() as (server, origin):
-            source = Path(directory, "source.bin")
-            source.write_bytes(b"short")
-            descriptor = parse_upload_descriptor(
-                _upload_result(f"{origin}/transfers/upload/{_SECRET}", 99)
-            )
-            with self.assertRaises(TransferSizeMismatch):
-                upload_file(descriptor, source)
+    upload_result = upload_file(
+        call_tool,
+        project_id="project_123",
+        filename="mix.wav",
+        source=io.BytesIO(plaintext),
+        operation_id="file_123",
+    )
+    assert upload_result["file"]["fileId"] == "file_123"
+    assert len(objects) == 2
+    assert objects["/upload_123/0?signature=test"] != plaintext[:CHUNK_SIZE]
+    assert objects["/upload_123/1?signature=test"] != plaintext[CHUNK_SIZE:]
 
-        self.assertEqual(server.requests, [])
-
-    def test_non_seekable_stream_is_rejected_before_one_time_request(self) -> None:
-        with _server() as (server, origin):
-            descriptor = parse_upload_descriptor(
-                _upload_result(f"{origin}/transfers/upload/{_SECRET}", 4)
-            )
-            with self.assertRaises(TypeError):
-                upload_file(descriptor, _NonSeekable(b"data"))
-
-        self.assertEqual(server.requests, [])
-
-    def test_unreadable_stream_is_rejected_before_one_time_request(self) -> None:
-        with _server() as (server, origin):
-            descriptor = parse_upload_descriptor(
-                _upload_result(f"{origin}/transfers/upload/{_SECRET}", 4)
-            )
-            with self.assertRaises(TypeError):
-                upload_file(descriptor, _UnreadableSource(b"data"))
-
-        self.assertEqual(server.requests, [])
-
-    def test_redirect_is_rejected_without_second_request(self) -> None:
-        class Redirect(_Handler):
-            redirect_location = "/must-not-follow"
-
-        with _server(Redirect) as (server, origin):
-            descriptor = parse_upload_descriptor(
-                _upload_result(f"{origin}/transfers/upload/{_SECRET}", 4)
-            )
-            with self.assertRaises(TransferHTTPError) as raised:
-                upload_file(descriptor, io.BytesIO(b"data"))
-
-        self.assertEqual(raised.exception.status, 307)
-        self.assertEqual(server.requests, [("PUT", f"/transfers/upload/{_SECRET}")])
-
-    def test_error_response_is_not_retried_and_does_not_leak_capability(self) -> None:
-        class Unavailable(_Handler):
-            upload_status = 503
-
-        with _server(Unavailable) as (server, origin):
-            descriptor = parse_upload_descriptor(
-                _upload_result(f"{origin}/transfers/upload/{_SECRET}", 4)
-            )
-            with self.assertRaises(TransferHTTPError) as raised:
-                upload_file(descriptor, io.BytesIO(b"data"))
-
-        self.assertEqual(server.requests, [("PUT", f"/transfers/upload/{_SECRET}")])
-        self.assertNotIn(_SECRET, str(raised.exception))
-        self.assertNotIn(_SECRET, repr(raised.exception))
-
-
-class DownloadTests(unittest.TestCase):
-    def test_download_atomically_replaces_path_with_plaintext(self) -> None:
-        with tempfile.TemporaryDirectory() as directory, _server() as (server, origin):
-            destination = Path(directory, "download.bin")
-            destination.write_bytes(b"old")
-            body = _Handler.download_body
-            descriptor = parse_download_descriptor(
-                _download_result(f"{origin}/transfers/download/{_SECRET}", len(body))
-            )
-            count = download_file(descriptor, destination)
-
-            self.assertEqual(count, len(body))
-            self.assertEqual(destination.read_bytes(), body)
-            self.assertEqual(list(Path(directory).glob("*.part")), [])
-        self.assertEqual(server.requests, [("GET", f"/transfers/download/{_SECRET}")])
-        headers = server.request_headers[0]
-        self.assertEqual(headers["Accept"], "application/octet-stream")
-        self.assertNotIn("Authorization", headers)
-        self.assertNotIn("Cookie", headers)
-
-    def test_size_mismatch_preserves_destination_and_removes_partial_file(self) -> None:
-        class Truncated(_Handler):
-            download_body = b"short"
-            declared_download_length = 10
-
-        with tempfile.TemporaryDirectory() as directory, _server(Truncated) as (server, origin):
-            destination = Path(directory, "download.bin")
-            destination.write_bytes(b"keep me")
-            descriptor = parse_download_descriptor(
-                _download_result(f"{origin}/transfers/download/{_SECRET}", 10)
-            )
-            with self.assertRaises(TransferSizeMismatch):
-                download_file(descriptor, destination)
-
-            self.assertEqual(destination.read_bytes(), b"keep me")
-            self.assertEqual(list(Path(directory).glob("*.part")), [])
-        self.assertEqual(len(server.requests), 1)
-
-    def test_redirect_is_rejected_and_stream_is_rolled_back(self) -> None:
-        class Redirect(_Handler):
-            redirect_location = "/must-not-follow"
-
-        destination = io.BytesIO(b"prefix")
-        destination.seek(0, io.SEEK_END)
-        with _server(Redirect) as (server, origin):
-            descriptor = DownloadDescriptor(
-                url=f"{origin}/transfers/download/{_SECRET}",
-                filename="private.bin",
-                content_length=4,
-                expires_at=datetime.now(timezone.utc),
-            )
-            with self.assertRaises(TransferHTTPError):
-                download_file(descriptor, destination)
-
-        self.assertEqual(destination.getvalue(), b"prefix")
-        self.assertEqual(server.requests, [("GET", f"/transfers/download/{_SECRET}")])
-
-    def test_unwritable_stream_is_rejected_before_one_time_request(self) -> None:
-        with _server() as (server, origin):
-            descriptor = parse_download_descriptor(
-                _download_result(f"{origin}/transfers/download/{_SECRET}", 4)
-            )
-            with self.assertRaises(TypeError):
-                download_file(descriptor, _UnwritableDestination())
-
-        self.assertEqual(server.requests, [])
-
-    def test_non_eof_stream_is_rejected_without_losing_existing_data(self) -> None:
-        destination = io.BytesIO(b"existing")
-        destination.seek(2)
-        with _server() as (server, origin):
-            descriptor = parse_download_descriptor(
-                _download_result(f"{origin}/transfers/download/{_SECRET}", 4)
-            )
-            with self.assertRaises(ValueError):
-                download_file(descriptor, destination)
-
-        self.assertEqual(destination.getvalue(), b"existing")
-        self.assertEqual(server.requests, [])
-
-    def test_untruncatable_stream_is_rejected_before_one_time_request(self) -> None:
-        destination = _UntruncatableDestination()
-        with _server() as (server, origin):
-            descriptor = parse_download_descriptor(
-                _download_result(f"{origin}/transfers/download/{_SECRET}", 4)
-            )
-            with self.assertRaises(TypeError):
-                download_file(descriptor, destination)
-
-        self.assertEqual(server.requests, [])
-
-    def test_total_deadline_interrupts_slow_response_headers(self) -> None:
-        class SlowHeaders(_Handler):
-            def do_GET(self) -> None:
-                time.sleep(0.2)
-                super().do_GET()
-
-        with _server(SlowHeaders) as (server, origin):
-            descriptor = parse_download_descriptor(
-                _download_result(f"{origin}/transfers/download/{_SECRET}", 4)
-            )
-            with self.assertRaises(TransferTimeoutError):
-                download_file(
-                    descriptor,
-                    io.BytesIO(),
-                    timeouts=TransferTimeouts(connect=1, read=1, total=0.05),
-                )
-
-        self.assertEqual(server.requests, [("GET", f"/transfers/download/{_SECRET}")])
+    destination = tmp_path / "download.wav"
+    assert download_file(
+        call_tool,
+        project_id="project_123",
+        file_id="file_123",
+        destination=destination,
+    ) == len(plaintext)
+    assert destination.read_bytes() == plaintext
+    assert calls.count("audaligo_create_file_upload_chunk_capability") == 2
+    assert calls.count("audaligo_create_file_read_chunk_capability") == 2
 
 
-if __name__ == "__main__":
-    unittest.main()
+def _capability(
+    endpoint: str, operation: str, index: int, content_length: int
+) -> dict[str, object]:
+    capability: dict[str, object] = {
+        "operation": operation,
+        "objectId": "upload_123",
+        "expiresAtUnixMilliseconds": "4102444800000",
+        "contentLength": str(content_length),
+        "url": f"{endpoint}/upload_123/{index}?signature=test",
+    }
+    if index:
+        capability["chunkIndex"] = index
+    return capability
+
+
+def _protobuf_json_manifest(manifest: Mapping[str, Any]) -> dict[str, Any]:
+    result = json.loads(json.dumps(manifest))
+    result["encryptionMode"] = "managed_encryption"
+    if result["epoch"] == "0":
+        del result["epoch"]
+    for chunk in result["chunks"]:
+        for key in ("chunkIndex", "ciphertextOffset", "plaintextOffset"):
+            if chunk[key] in (0, "0"):
+                del chunk[key]
+        if chunk["finalChunk"] is False:
+            del chunk["finalChunk"]
+    return result

@@ -1,16 +1,16 @@
 # Soenan MCP Support SDK for Python
 
-`soenan-mcp-support` provides focused support utilities for applications and agents that use Soenan MCP. Its first module, `soenan_mcp_support.transfer`, streams files through the one-time descriptors returned by `audaligo_begin_file_upload` and `audaligo_begin_file_download`.
+`soenan-mcp-support` provides client-side managed encryption and direct Railway Bucket transfer orchestration for applications and agents that use Soenan MCP.
 
-The package does not include an MCP client. Your existing client remains responsible for OAuth and MCP requests. The transfer module does not implement OAuth, MCP JSON-RPC, or encryption.
+The package does not include an MCP client. Your existing client remains responsible for OAuth and MCP JSON-RPC. Pass its authenticated `call_tool` function to the transfer SDK.
 
 ## Requirements
 
 - Python 3.10 or later
-- A completed begin-upload or begin-download MCP tool result
-- An HTTPS connection to the production Soenan MCP transfer endpoint
+- An MCP client authorized for the Audaligo file tools
+- Direct network access to the presigned Railway Bucket URLs returned by Audaligo
 
-The runtime has no third-party dependencies.
+The SDK uses `cryptography==50.0.0` for AES-256-GCM interoperability with the Audaligo managed encryption contract.
 
 ## Installation
 
@@ -28,105 +28,80 @@ python -m pip install 'soenan-mcp-support==0.1.0'
 
 ## Upload a file
 
-Pass either the complete MCP tool result or its `structuredContent` object to `parse_upload_descriptor`. Then pass a path or a readable binary stream to `upload_file`.
+Pass your MCP client's authenticated tool caller and a path or seekable binary stream to `upload_file`:
 
 ```python
-from soenan_mcp_support.transfer import parse_upload_descriptor, upload_file
+from soenan_mcp_support.transfer import upload_file
 
-# Obtain this result with the MCP client and authentication stack you already use.
-begin_result = mcp_client.call_tool(
-    "audaligo_begin_file_upload",
-    {
-        "projectId": project_id,
-        "filename": "recording.wav",
-        "plaintextSize": source_path.stat().st_size,
-        "operationId": operation_id,
-    },
+
+def call_tool(name: str, arguments: dict[str, object]) -> dict[str, object]:
+    return mcp_client.call_tool(name, arguments)
+
+
+result = upload_file(
+    call_tool,
+    project_id=project_id,
+    filename="recording.wav",
+    source=source_path,
+    operation_id=operation_id,
 )
-
-descriptor = parse_upload_descriptor(begin_result)
-upload_file(descriptor, source_path)
 ```
 
-For a binary stream, the descriptor's `contentLength` is authoritative:
+The SDK performs the following operations:
 
-```python
-with source_path.open("rb") as source:
-    upload_file(descriptor, source)
-```
+1. Calls `audaligo_begin_file_upload` to obtain upload state and the project key ring.
+2. Generates a file data key and encrypts the plaintext locally with the Audaligo AES-256-GCM chunk contract.
+3. Calls `audaligo_put_file_upload_manifest` with the ciphertext manifest.
+4. Obtains one short-lived Railway Bucket write capability per chunk.
+5. Sends each ciphertext chunk directly from the caller to Railway Bucket.
+6. Confirms the uploaded chunks and commits the file through MCP control-plane tools.
 
-The SDK sends `PUT`, `Content-Type: application/octet-stream`, and the exact `Content-Length` from the descriptor. It reads and sends at most 64 KiB at a time. Paths and seekable streams with the wrong remaining size fail before the SDK contacts the one-time endpoint. Upload streams must be seekable so the SDK can validate the complete remaining size before consuming the capability.
+The source must be seekable. The SDK reads the source twice: once to compute the encrypted manifest and once to upload the same deterministic ciphertext. It keeps at most one 8 MiB plaintext chunk and its ciphertext in memory. Neither plaintext nor ciphertext passes through the Soenan MCP server.
 
 ## Download a file
 
 Pass a destination path to get atomic replacement in the destination directory:
 
 ```python
-from soenan_mcp_support.transfer import download_file, parse_download_descriptor
+from soenan_mcp_support.transfer import download_file
 
-begin_result = mcp_client.call_tool(
-    "audaligo_begin_file_download",
-    {"projectId": project_id, "fileId": file_id},
+written = download_file(
+    call_tool,
+    project_id=project_id,
+    file_id=file_id,
+    destination=destination_path,
 )
-
-descriptor = parse_download_descriptor(begin_result)
-download_file(descriptor, destination_path)
 ```
 
-The SDK writes a private temporary sibling, validates the response status, media type, declared size, and received size, flushes the completed file, and atomically replaces the destination. It removes the temporary file after any failure and leaves an existing destination unchanged.
+The SDK obtains the encrypted manifest and project key ring through `audaligo_begin_file_download`. It obtains one short-lived Railway Bucket read capability per chunk, downloads ciphertext directly, validates its length and SHA-256 digest, authenticates and decrypts it locally, and writes plaintext to the destination.
 
-You can also pass a writable binary stream. A seekable destination must support truncation and be positioned at EOF; the SDK then restores its original length after a failed download. A non-seekable stream can retain bytes written before a network failure, so use a path when failure cleanup is required.
-
-## Agent sample
-
-An agent can keep protocol work and transfer work separate:
-
-```python
-from soenan_mcp_support.transfer import download_file, parse_download_descriptor
-
-
-def save_tool_download(tool_result: dict[str, object], output_path: str) -> None:
-    descriptor = parse_download_descriptor(tool_result)
-    download_file(descriptor, output_path)
-
-
-# The host agent obtains tool_result through its existing MCP client.
-save_tool_download(tool_result, "/private/output/project-file.bin")
-```
-
-Do not put the descriptor or its `url` in an agent message, tool summary, trace, or log.
+For a destination path, the SDK writes a private temporary sibling, flushes the completed file, and atomically replaces the destination. It removes the temporary file after any failure and leaves an existing destination unchanged. For a seekable binary stream, it restores the original length after a failed download when the stream supports truncation.
 
 ## Timeouts
 
-Every request uses finite socket-connect and socket-read limits. The total deadline interrupts an established connection and is checked between SDK operations. DNS resolution and local filesystem operations remain subject to the operating system and stream implementation. Override the network limits explicitly for a large transfer:
+Every direct Bucket request uses finite socket-connect, socket-read, and total deadlines:
 
 ```python
 from soenan_mcp_support.transfer import TransferTimeouts, upload_file
 
 upload_file(
-    descriptor,
-    source_path,
+    call_tool,
+    project_id=project_id,
+    filename="recording.wav",
+    source=source_path,
+    operation_id=operation_id,
     timeouts=TransferTimeouts(connect=10, read=60, total=900),
 )
 ```
 
-The SDK never retries. A transfer capability is one-time authority, and an endpoint can consume it as soon as a request starts. Obtain a new descriptor through the corresponding MCP begin tool after any failed or ambiguous attempt.
-
-## Managed-encryption semantics
-
-The SDK reads and writes **plaintext**. The Soenan MCP transfer gateway applies or removes managed encryption while processing the transfer. The SDK never receives project keys, creates ciphertext, decrypts downloaded data, or implements a parallel encryption format.
-
-For upload, `plaintextSize` and the upload descriptor's `contentLength` are plaintext byte counts. For download, `contentLength` is also the expected plaintext byte count.
+The SDK does not retry a Bucket request after it starts. The caller can invoke the capability tool again after a failed or ambiguous request if Audaligo permits a replacement capability for the current upload state.
 
 ## Security invariants
 
-- Treat `descriptor.url` as a bearer capability. Anyone who obtains it can attempt the one-time transfer before it expires.
-- Do not serialize, log, trace, cache, or send the capability URL through an agent model.
-- Descriptor `repr()`, exceptions, and `safe_summary()` redact the capability URL. The SDK emits no logs.
-- The SDK sends no `Authorization` or `Cookie` header to a transfer endpoint.
-- The SDK rejects every redirect. It never forwards a capability to another origin or path.
-- The SDK validates exact plaintext sizes and does not retry after a request starts.
-- Production descriptors use HTTPS. Plain HTTP remains accepted so callers can exercise local test servers.
-- A download path is replaced only after the complete response passes validation.
-
-The descriptor's `filename` can also contain private information. The safe representation and summary omit it. Use it only when your application has explicitly chosen how to handle server-provided filenames; `download_file` never selects a destination from it.
+- The caller performs encryption and decryption. Soenan MCP handles only control-plane tool calls and small key or manifest payloads.
+- Plaintext and ciphertext file bodies travel directly between the caller and Railway Bucket.
+- The SDK validates the project, file, object, epoch, chunk layout, ciphertext length, SHA-256 digest, and AES-GCM authentication tag before accepting a download.
+- The SDK does not log project keys, data keys, presigned URLs, capability headers, manifests, filenames, or file content.
+- The SDK rejects redirects and does not retry a request after transmission starts.
+- A download path changes only after every chunk passes validation.
+- Presigned URLs and headers are bearer authority. Do not serialize, log, trace, cache, or send them through an agent model.

@@ -1,54 +1,46 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import http.client
 import math
-import os
-from pathlib import Path
 import socket
-import tempfile
+import ssl
 import threading
 import time
-from typing import BinaryIO, TypeAlias
-from urllib.parse import urlsplit
-
-from .descriptors import DownloadDescriptor, UploadDescriptor
-
-
-PathSource: TypeAlias = str | os.PathLike[str]
-UploadSource: TypeAlias = PathSource | BinaryIO
-DownloadDestination: TypeAlias = PathSource | BinaryIO
+from collections.abc import Mapping
+from dataclasses import dataclass
+from pathlib import Path
+from urllib.parse import SplitResult, urlsplit
 
 
 class TransferError(Exception):
-    """A transfer failed without disclosing its capability URL."""
+    """A transfer failed without disclosing its bearer capability."""
 
 
 class TransferSizeMismatch(TransferError):
-    """The transferred plaintext byte count differs from the descriptor."""
+    """A ciphertext byte count differs from the signed capability."""
 
     def __init__(self) -> None:
-        super().__init__("transfer byte count does not match descriptor")
+        super().__init__("ciphertext byte count does not match capability")
 
 
 class TransferHTTPError(TransferError):
-    """The transfer endpoint returned an unsuccessful response."""
+    """Railway Bucket returned an unsuccessful response."""
 
     def __init__(self, status: int) -> None:
         self.status = status
-        super().__init__(f"transfer endpoint returned HTTP {status}")
+        super().__init__(f"Railway Bucket returned HTTP {status}")
 
 
 class TransferTimeoutError(TransferError):
-    """The configured transfer deadline elapsed."""
+    """The configured direct Bucket transfer deadline elapsed."""
 
     def __init__(self) -> None:
-        super().__init__("transfer deadline elapsed")
+        super().__init__("direct Bucket transfer deadline elapsed")
 
 
 @dataclass(frozen=True)
 class TransferTimeouts:
-    """Finite connect, read, and established-connection time limits, in seconds."""
+    """Finite connect, read, and total direct-transfer limits, in seconds."""
 
     connect: float = 10.0
     read: float = 30.0
@@ -65,136 +57,108 @@ class TransferTimeouts:
                 raise ValueError("transfer timeouts must be finite positive numbers")
 
 
+@dataclass(frozen=True)
+class TransferTransport:
+    """Optional test/private-network connection override for a signed logical URL."""
+
+    connect_host: str | None = None
+    connect_port: int | None = None
+    ca_file: str | Path | None = None
+
+    def __post_init__(self) -> None:
+        if (self.connect_host is None) != (self.connect_port is None):
+            raise ValueError(
+                "connect_host and connect_port must be configured together"
+            )
+        if self.connect_host is not None and not self.connect_host:
+            raise ValueError("connect_host must be nonempty")
+        if self.connect_port is not None and not 1 <= self.connect_port <= 65535:
+            raise ValueError("connect_port must be between 1 and 65535")
+
+
 DEFAULT_TIMEOUTS = TransferTimeouts()
-_CHUNK_SIZE = 64 * 1024
+DEFAULT_TRANSPORT = TransferTransport()
+_ALLOWED_HEADERS = frozenset(
+    {
+        "content-type",
+        "x-amz-checksum-sha256",
+        "x-amz-content-sha256",
+        "x-amz-server-side-encryption",
+    }
+)
 
 
-def upload_file(
-    descriptor: UploadDescriptor,
-    source: UploadSource,
+def put_ciphertext(
+    url: str,
+    headers: Mapping[str, str],
+    ciphertext: bytes,
     *,
-    timeouts: TransferTimeouts = DEFAULT_TIMEOUTS,
-) -> int:
-    """Stream plaintext from a path or binary stream to a one-time upload capability."""
-    stream: BinaryIO
-    close_stream = False
-    if isinstance(source, (str, os.PathLike)):
-        path = Path(source)
-        if path.stat().st_size != descriptor.content_length:
-            raise TransferSizeMismatch()
-        stream = path.open("rb")
-        close_stream = True
-    else:
-        stream = source
-        _require_reader(stream)
-        remaining_size = _remaining_stream_size(stream)
-        if remaining_size is None:
-            raise TypeError("source binary stream must be seekable")
-        if remaining_size != descriptor.content_length:
-            raise TransferSizeMismatch()
-
+    timeouts: TransferTimeouts,
+    transport: TransferTransport,
+) -> None:
+    parsed = _parse_url(url)
     deadline = time.monotonic() + timeouts.total
-    connection = _connection(descriptor.url, timeouts, deadline)
+    connection = _connection(parsed, timeouts, deadline, transport)
     watchdog = _deadline_watchdog(connection, deadline)
     try:
         connection.connect()
         _set_socket_timeout(connection, timeouts, deadline)
-        target = _request_target(descriptor.url)
-        connection.putrequest("PUT", target, skip_accept_encoding=True)
-        connection.putheader("Content-Type", descriptor.content_type)
-        connection.putheader("Content-Length", str(descriptor.content_length))
-        connection.putheader("Cache-Control", "no-store")
+        connection.putrequest(
+            "PUT", _request_target(parsed), skip_host=True, skip_accept_encoding=True
+        )
+        connection.putheader("Host", _authority(parsed))
+        for name, value in _validated_headers(headers).items():
+            connection.putheader(name, value)
+        connection.putheader("Content-Length", str(len(ciphertext)))
         connection.endheaders()
-
-        sent = 0
-        while sent < descriptor.content_length:
-            _set_socket_timeout(connection, timeouts, deadline)
-            chunk = stream.read(min(_CHUNK_SIZE, descriptor.content_length - sent))
-            data = _binary_chunk(chunk)
-            if not data or len(data) > descriptor.content_length - sent:
-                raise TransferSizeMismatch()
-            connection.send(data)
-            sent += len(data)
-
-
+        _set_socket_timeout(connection, timeouts, deadline)
+        connection.send(ciphertext)
         _set_socket_timeout(connection, timeouts, deadline)
         response = connection.getresponse()
         try:
             if 300 <= response.status < 400:
                 raise TransferHTTPError(response.status)
-            if response.status != 204:
+            if response.status not in (200, 204):
                 raise TransferHTTPError(response.status)
+            response.read(1)
         finally:
             response.close()
-        return sent
     except TransferError:
         raise
-    except (TimeoutError, socket.timeout):
+    except TimeoutError:
         raise TransferTimeoutError() from None
-    except (OSError, http.client.HTTPException):
+    except (OSError, http.client.HTTPException, ssl.SSLError):
         if time.monotonic() >= deadline:
             raise TransferTimeoutError() from None
-        raise TransferError("transfer endpoint communication failed") from None
+        raise TransferError("direct Bucket upload failed") from None
     finally:
         watchdog.cancel()
         connection.close()
-        if close_stream:
-            stream.close()
 
 
-def download_file(
-    descriptor: DownloadDescriptor,
-    destination: DownloadDestination,
+def get_ciphertext(
+    url: str,
+    headers: Mapping[str, str],
+    expected_length: int,
     *,
-    timeouts: TransferTimeouts = DEFAULT_TIMEOUTS,
-) -> int:
-    """Stream plaintext to a path atomically or to a writable binary stream."""
-    if isinstance(destination, (str, os.PathLike)):
-        return _download_to_path(descriptor, Path(destination), timeouts)
-
-    _require_writer(destination)
-    rollback = _append_rollback_position(destination)
-    try:
-        return _download_to_stream(descriptor, destination, timeouts)
-    except BaseException:
-        _rollback_stream(destination, rollback)
-        raise
-
-
-def _download_to_path(
-    descriptor: DownloadDescriptor, destination: Path, timeouts: TransferTimeouts
-) -> int:
-    file_descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{destination.name}.", suffix=".part", dir=destination.parent
-    )
-    temporary = Path(temporary_name)
-    try:
-        with os.fdopen(file_descriptor, "wb") as stream:
-            count = _download_to_stream(descriptor, stream, timeouts)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary, destination)
-        return count
-    except BaseException:
-        try:
-            temporary.unlink()
-        except FileNotFoundError:
-            pass
-        raise
-
-
-def _download_to_stream(
-    descriptor: DownloadDescriptor, destination: BinaryIO, timeouts: TransferTimeouts
-) -> int:
+    timeouts: TransferTimeouts,
+    transport: TransferTransport,
+) -> bytes:
+    if expected_length <= 0:
+        raise ValueError("expected_length must be positive")
+    parsed = _parse_url(url)
     deadline = time.monotonic() + timeouts.total
-    connection = _connection(descriptor.url, timeouts, deadline)
+    connection = _connection(parsed, timeouts, deadline, transport)
     watchdog = _deadline_watchdog(connection, deadline)
     try:
         connection.connect()
         _set_socket_timeout(connection, timeouts, deadline)
-        connection.putrequest("GET", _request_target(descriptor.url), skip_accept_encoding=True)
-        connection.putheader("Accept", descriptor.content_type)
-        connection.putheader("Cache-Control", "no-store")
+        connection.putrequest(
+            "GET", _request_target(parsed), skip_host=True, skip_accept_encoding=True
+        )
+        connection.putheader("Host", _authority(parsed))
+        for name, value in _validated_headers(headers).items():
+            connection.putheader(name, value)
         connection.endheaders()
         _set_socket_timeout(connection, timeouts, deadline)
         response = connection.getresponse()
@@ -203,175 +167,160 @@ def _download_to_stream(
                 raise TransferHTTPError(response.status)
             if response.status != 200:
                 raise TransferHTTPError(response.status)
-            if response.getheader("Content-Type", "").lower() != descriptor.content_type:
-                raise TransferError("transfer endpoint returned an invalid content type")
-            if _response_length(response) != descriptor.content_length:
+            response_length = response.getheader("Content-Length")
+            if (
+                response_length is None
+                or not response_length.isdecimal()
+                or int(response_length) != expected_length
+            ):
                 raise TransferSizeMismatch()
-
-            received = 0
-            while True:
-                _set_socket_timeout(connection, timeouts, deadline)
-                try:
-                    chunk = response.read(
-                        min(_CHUNK_SIZE, descriptor.content_length - received + 1)
-                    )
-                except http.client.IncompleteRead:
-                    raise TransferSizeMismatch() from None
-                if not chunk:
-                    break
-                received += len(chunk)
-                if received > descriptor.content_length:
-                    raise TransferSizeMismatch()
-                _write_all(destination, chunk)
-            if received != descriptor.content_length:
+            ciphertext = response.read(expected_length + 1)
+            if len(ciphertext) != expected_length:
                 raise TransferSizeMismatch()
-            return received
+            return ciphertext
         finally:
             response.close()
     except TransferError:
         raise
-    except (TimeoutError, socket.timeout):
+    except TimeoutError:
         raise TransferTimeoutError() from None
-    except (OSError, http.client.HTTPException):
+    except (OSError, http.client.HTTPException, ssl.SSLError):
         if time.monotonic() >= deadline:
             raise TransferTimeoutError() from None
-        raise TransferError("transfer endpoint communication failed") from None
+        raise TransferError("direct Bucket download failed") from None
     finally:
         watchdog.cancel()
         connection.close()
 
 
-def _connection(
-    url: str, timeouts: TransferTimeouts, deadline: float
-) -> http.client.HTTPConnection:
+def _parse_url(url: str) -> SplitResult:
+    if not isinstance(url, str) or not url or len(url) > 8192 or "#" in url:
+        raise TransferError("Bucket capability URL is invalid")
     parsed = urlsplit(url)
+    if (
+        parsed.scheme not in ("http", "https")
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+    ):
+        raise TransferError("Bucket capability URL is invalid")
+    try:
+        _ = parsed.port
+    except ValueError:
+        raise TransferError("Bucket capability URL is invalid") from None
+    if parsed.path == "" or any(character in url for character in ("\r", "\n", "\x00")):
+        raise TransferError("Bucket capability URL is invalid")
+    return parsed
+
+
+def _validated_headers(headers: Mapping[str, str]) -> dict[str, str]:
+    if not isinstance(headers, Mapping) or len(headers) > len(_ALLOWED_HEADERS):
+        raise TransferError("Bucket capability headers are invalid")
+    validated: dict[str, str] = {}
+    for raw_name, raw_value in headers.items():
+        if not isinstance(raw_name, str) or not isinstance(raw_value, str):
+            raise TransferError("Bucket capability headers are invalid")
+        name = raw_name.lower()
+        if name not in _ALLOWED_HEADERS or name in validated:
+            raise TransferError("Bucket capability headers are invalid")
+        if (
+            not raw_value
+            or len(raw_value) > 1024
+            or any(character in raw_value for character in ("\r", "\n", "\x00"))
+        ):
+            raise TransferError("Bucket capability headers are invalid")
+        validated[name] = raw_value
+    return validated
+
+
+def _connection(
+    parsed: SplitResult,
+    timeouts: TransferTimeouts,
+    deadline: float,
+    transport: TransferTransport,
+) -> http.client.HTTPConnection:
+    logical_host = parsed.hostname
+    if logical_host is None:
+        raise TransferError("Bucket capability URL is invalid")
+    logical_port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    connect_host = transport.connect_host or logical_host
+    connect_port = transport.connect_port or logical_port
     timeout = min(timeouts.connect, _remaining(deadline))
     if parsed.scheme == "https":
-        return http.client.HTTPSConnection(parsed.hostname, parsed.port, timeout=timeout)
-    return http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=timeout)
+        context = ssl.create_default_context(
+            cafile=str(transport.ca_file) if transport.ca_file else None
+        )
+        return _LogicalHTTPSConnection(
+            logical_host=logical_host,
+            connect_host=connect_host,
+            connect_port=connect_port,
+            timeout=timeout,
+            context=context,
+        )
+    return http.client.HTTPConnection(connect_host, connect_port, timeout=timeout)
 
 
-def _request_target(url: str) -> str:
-    parsed = urlsplit(url)
-    target = parsed.path or "/"
-    if parsed.query:
-        target += f"?{parsed.query}"
-    return target
+class _LogicalHTTPSConnection(http.client.HTTPSConnection):
+    def __init__(
+        self,
+        *,
+        logical_host: str,
+        connect_host: str,
+        connect_port: int,
+        timeout: float,
+        context: ssl.SSLContext,
+    ) -> None:
+        super().__init__(logical_host, connect_port, timeout=timeout, context=context)
+        self._connect_host = connect_host
+        self._connect_port = connect_port
+
+    def connect(self) -> None:
+        raw_socket = socket.create_connection(
+            (self._connect_host, self._connect_port), self.timeout, self.source_address
+        )
+        if self._tunnel_host:
+            self.sock = raw_socket
+            self._tunnel()
+        self.sock = self._context.wrap_socket(raw_socket, server_hostname=self.host)
+
+
+def _request_target(parsed: SplitResult) -> str:
+    return parsed.path + (f"?{parsed.query}" if parsed.query else "")
+
+
+def _authority(parsed: SplitResult) -> str:
+    hostname = parsed.hostname
+    if hostname is None:
+        raise TransferError("Bucket capability URL is invalid")
+    default_port = 443 if parsed.scheme == "https" else 80
+    return (
+        hostname if parsed.port in (None, default_port) else f"{hostname}:{parsed.port}"
+    )
 
 
 def _set_socket_timeout(
-    connection: http.client.HTTPConnection, timeouts: TransferTimeouts, deadline: float
+    connection: http.client.HTTPConnection,
+    timeouts: TransferTimeouts,
+    deadline: float,
 ) -> None:
-    remaining = _remaining(deadline)
     if connection.sock is not None:
-        connection.sock.settimeout(min(timeouts.read, remaining))
+        connection.sock.settimeout(min(timeouts.read, _remaining(deadline)))
 
 
 def _remaining(deadline: float) -> float:
-    value = deadline - time.monotonic()
-    if value <= 0:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
         raise TransferTimeoutError()
-    return value
+    return remaining
+
 
 def _deadline_watchdog(
     connection: http.client.HTTPConnection, deadline: float
 ) -> threading.Timer:
-    timer = threading.Timer(_remaining(deadline), _interrupt_connection, args=(connection,))
+    def expire() -> None:
+        connection.close()
+
+    timer = threading.Timer(max(0.0, deadline - time.monotonic()), expire)
     timer.daemon = True
     timer.start()
     return timer
-
-
-def _interrupt_connection(connection: http.client.HTTPConnection) -> None:
-    stream = connection.sock
-    if stream is None:
-        return
-    try:
-        stream.shutdown(socket.SHUT_RDWR)
-    except OSError:
-        pass
-    try:
-        stream.close()
-    except OSError:
-        pass
-
-def _response_length(response: http.client.HTTPResponse) -> int:
-    value = response.getheader("Content-Length")
-    try:
-        length = int(value) if value is not None else -1
-    except ValueError:
-        length = -1
-    if length < 0:
-        raise TransferSizeMismatch()
-    return length
-
-
-def _binary_chunk(value: object) -> bytes | bytearray | memoryview:
-    if not isinstance(value, (bytes, bytearray, memoryview)):
-        raise TypeError("binary stream read() must return bytes")
-    return value
-
-
-def _write_all(stream: BinaryIO, data: bytes) -> None:
-    remaining = memoryview(data)
-    while remaining:
-        written = stream.write(remaining)
-        if not isinstance(written, int) or written <= 0:
-            raise OSError("binary stream did not accept transfer bytes")
-        remaining = remaining[written:]
-
-
-def _require_reader(stream: object) -> None:
-    if not callable(getattr(stream, "read", None)):
-        raise TypeError("source must be a path or readable binary stream")
-    readable = getattr(stream, "readable", None)
-    if callable(readable) and not readable():
-        raise TypeError("source binary stream must be readable")
-
-
-def _require_writer(stream: object) -> None:
-    if not callable(getattr(stream, "write", None)):
-        raise TypeError("destination must be a path or writable binary stream")
-    writable = getattr(stream, "writable", None)
-    if callable(writable) and not writable():
-        raise TypeError("destination binary stream must be writable")
-
-
-def _append_rollback_position(stream: BinaryIO) -> int | None:
-    try:
-        if not stream.seekable():
-            return None
-        position = stream.tell()
-        end = stream.seek(0, os.SEEK_END)
-        stream.seek(position)
-    except (AttributeError, OSError):
-        raise TypeError("destination binary stream position cannot be validated") from None
-    if position != end:
-        raise ValueError("seekable destination binary stream must be positioned at EOF")
-    try:
-        stream.truncate(position)
-    except (AttributeError, OSError):
-        raise TypeError("seekable destination binary stream must support truncation") from None
-    return position
-
-
-def _rollback_stream(stream: BinaryIO, position: int | None) -> None:
-    if position is None:
-        return
-    try:
-        stream.seek(position)
-        stream.truncate()
-    except (AttributeError, OSError):
-        pass
-
-
-def _remaining_stream_size(stream: BinaryIO) -> int | None:
-    try:
-        if not stream.seekable():
-            return None
-        position = stream.tell()
-        end = stream.seek(0, os.SEEK_END)
-        stream.seek(position)
-        return end - position
-    except (AttributeError, OSError):
-        return None

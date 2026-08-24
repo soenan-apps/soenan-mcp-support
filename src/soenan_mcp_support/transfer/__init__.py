@@ -1,35 +1,27 @@
-"""Synchronous plaintext transfers for Soenan MCP capabilities."""
+"""Client-side encrypted transfers using direct Railway Bucket capabilities."""
 
-from .descriptors import (
-    DescriptorError,
-    DownloadDescriptor,
-    UploadDescriptor,
-    parse_download_descriptor,
-    parse_upload_descriptor,
-)
 from ._http import (
     DEFAULT_TIMEOUTS,
+    DEFAULT_TRANSPORT,
     TransferError,
     TransferHTTPError,
     TransferSizeMismatch,
     TransferTimeoutError,
     TransferTimeouts,
-    download_file,
-    upload_file,
+    TransferTransport,
 )
+from ._workflow import ToolCaller, download_file, upload_file
 
 __all__ = [
     "DEFAULT_TIMEOUTS",
-    "DescriptorError",
-    "DownloadDescriptor",
+    "DEFAULT_TRANSPORT",
+    "ToolCaller",
     "TransferError",
     "TransferHTTPError",
     "TransferSizeMismatch",
     "TransferTimeoutError",
     "TransferTimeouts",
-    "UploadDescriptor",
+    "TransferTransport",
     "download_file",
-    "parse_download_descriptor",
-    "parse_upload_descriptor",
     "upload_file",
 ]
