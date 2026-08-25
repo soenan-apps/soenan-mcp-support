@@ -37,7 +37,8 @@ def main(argv: list[str] | None = None) -> int:
                 operation_id=arguments.operation_id,
                 mix_version_id=arguments.mix_version_id,
             )
-            file_id = result.get("fileId")
+            file = result.get("file")
+            file_id = file.get("fileId") if isinstance(file, dict) else None
             if not isinstance(file_id, str) or not file_id:
                 raise TransferError("Audaligo upload response omitted the file ID")
             print(json.dumps({"fileId": file_id}, separators=(",", ":")))

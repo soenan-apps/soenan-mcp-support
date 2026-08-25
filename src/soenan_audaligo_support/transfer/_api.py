@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from http import HTTPStatus
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 from audaligo_public_api_client import AuthenticatedClient
@@ -36,9 +37,14 @@ class AudaligoTransferAPI:
         base_url: str,
         access_token: str,
         timeouts: TransferTimeouts,
+        control_transport: httpx.BaseTransport | None = None,
     ) -> None:
-        if not base_url.startswith(
-            ("https://", "http://localhost", "http://127.0.0.1")
+        parsed = urlsplit(base_url)
+        if parsed.username is not None or parsed.password is not None:
+            raise ValueError("Audaligo API URL must not contain user information")
+        if parsed.scheme != "https" and not (
+            parsed.scheme == "http"
+            and parsed.hostname in {"localhost", "127.0.0.1"}
         ):
             raise ValueError("Audaligo API URL must use HTTPS")
         if len(access_token.encode("utf-8")) != 43:
@@ -57,6 +63,9 @@ class AudaligoTransferAPI:
             ),
             raise_on_unexpected_status=False,
             follow_redirects=False,
+            httpx_args=(
+                {} if control_transport is None else {"transport": control_transport}
+            ),
         )
 
     def begin_upload(
@@ -72,9 +81,10 @@ class AudaligoTransferAPI:
         if mix_version_id is not None:
             preview_intent = {
                 "v": 1,
-                "profile": "mix_preview",
+                "profile": "aac-lc-128k-m4a-v1",
                 "filename": filename,
-                "mediaType": "application/octet-stream",
+                "mediaType": "audio/wav",
+                "plaintextSize": plaintext_size,
                 "mixVersionId": mix_version_id,
             }
         body = CreateUploadRequest.from_dict(

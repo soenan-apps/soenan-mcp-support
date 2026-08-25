@@ -13,7 +13,14 @@ from typing import Any
 import pytest
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from soenan_audaligo_support.transfer import download_file, upload_file
+from soenan_audaligo_support.transfer import (
+    AudaligoTransferAPI,
+    TransferTimeouts,
+    _api,
+    _cli,
+    download_file,
+    upload_file,
+)
 from soenan_audaligo_support.transfer._crypto import CHUNK_SIZE, chunk_aad, chunk_nonce
 
 
@@ -96,6 +103,92 @@ def test_managed_chunk_encryption_matches_audaligo_vector() -> None:
     assert sha256(ciphertext).hexdigest() == (
         "e91438ee31fa9cd996cff6e6d3a3507d4488f73cb378bb5a34cf8c28913c6c08"
     )
+
+
+def test_api_allows_plaintext_only_for_exact_loopback_hosts() -> None:
+    for endpoint in (
+        "http://localhost.attacker.example",
+        "http://127.0.0.1.attacker.example",
+        "http://user@localhost",
+    ):
+        with pytest.raises(ValueError):
+            AudaligoTransferAPI(
+                base_url=endpoint,
+                access_token="a" * 43,
+                timeouts=TransferTimeouts(connect=1, read=1, total=1),
+            )
+
+
+def test_preview_upload_uses_generated_contract_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    def begin(*args: object, **arguments: Any) -> object:
+        captured.update(arguments["body"].to_dict())
+        return object()
+
+    monkeypatch.setattr(_api.create_encrypted_object_upload, "sync_detailed", begin)
+    monkeypatch.setattr(
+        AudaligoTransferAPI,
+        "_body",
+        staticmethod(lambda response, *expected: {}),
+    )
+    api = AudaligoTransferAPI(
+        base_url="https://audaligo.example",
+        access_token="a" * 43,
+        timeouts=TransferTimeouts(connect=1, read=1, total=1),
+    )
+    api.begin_upload(
+        project_id="project_123",
+        operation_id="operation_123",
+        mix_version_id="mix_123",
+        filename="mix.wav",
+        plaintext_size=4096,
+    )
+
+    assert captured["previewIntent"] == {
+        "v": 1,
+        "profile": "aac-lc-128k-m4a-v1",
+        "filename": "mix.wav",
+        "mediaType": "audio/wav",
+        "plaintextSize": 4096,
+        "mixVersionId": "mix_123",
+    }
+
+
+def test_cli_reads_committed_file_id_from_response_envelope(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source = tmp_path / "mix.wav"
+    source.write_bytes(b"audio")
+    monkeypatch.setenv("AUDALIGO_ACCESS_TOKEN", "a" * 43)
+    monkeypatch.setattr(_cli, "AudaligoTransferAPI", lambda **arguments: object())
+    monkeypatch.setattr(
+        _cli,
+        "upload_file",
+        lambda *args, **arguments: {"file": {"fileId": "file_123"}},
+    )
+
+    assert (
+        _cli.main(
+            [
+                "--api-url",
+                "https://audaligo.example",
+                "upload",
+                "--project-id",
+                "project_123",
+                "--source",
+                str(source),
+                "--operation-id",
+                "operation_123",
+            ]
+        )
+        == 0
+    )
+    assert json.loads(capsys.readouterr().out) == {"fileId": "file_123"}
 
 
 def test_sdk_encrypts_locally_and_transfers_ciphertext_directly(
