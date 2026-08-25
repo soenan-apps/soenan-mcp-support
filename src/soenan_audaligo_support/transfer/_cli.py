@@ -2,96 +2,99 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
+from typing import Any
 
-from ._api import AudaligoTransferAPI
-from ._http import DEFAULT_TIMEOUTS, TransferError
-from ._workflow import download_file, upload_file
+from ._http import TransferError
+from ._workflow import download_file, download_preview, upload_file
+
+_MAXIMUM_HANDOFF_BYTES = 256 * 1024
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = _parser()
     arguments = parser.parse_args(argv)
-    endpoint = arguments.api_url or os.environ.get("AUDALIGO_API_URL")
-    access_token = os.environ.get(arguments.access_token_env)
-    if not endpoint:
-        parser.error("set --api-url or AUDALIGO_API_URL")
-    if not access_token:
-        parser.error(f"set the access token in {arguments.access_token_env}")
-
     try:
-        with AudaligoTransferAPI(
-            base_url=endpoint,
-            access_token=access_token,
-            timeouts=DEFAULT_TIMEOUTS,
-        ) as api:
-            if arguments.command == "upload":
-                source = Path(arguments.source)
-                result = upload_file(
-                    api,
-                    project_id=arguments.project_id,
-                    filename=arguments.filename or source.name,
-                    source=source,
-                    operation_id=arguments.operation_id,
-                    mix_version_id=arguments.mix_version_id,
-                )
-                file = result.get("file")
-                file_id = file.get("fileId") if isinstance(file, dict) else None
-                if not isinstance(file_id, str) or not file_id:
-                    raise TransferError("Audaligo upload response omitted the file ID")
-                print(json.dumps({"fileId": file_id}, separators=(",", ":")))
-            else:
-                written = download_file(
-                    api,
-                    project_id=arguments.project_id,
-                    file_id=arguments.file_id,
+        structured_content = _read_handoff()
+        if arguments.command == "upload":
+            result: Any = upload_file(
+                structured_content,
+                source=Path(arguments.source),
+            )
+        elif arguments.command == "download":
+            result = {
+                "writtenBytes": download_file(
+                    structured_content,
                     destination=Path(arguments.destination),
                 )
-                print(json.dumps({"writtenBytes": written}, separators=(",", ":")))
+            }
+        else:
+            result = {
+                "writtenBytes": download_preview(
+                    structured_content,
+                    destination=Path(arguments.destination),
+                )
+            }
+        print(json.dumps(result, separators=(",", ":"), sort_keys=True))
         return 0
     except OSError:
-        print("soenan-audaligo-transfer: local file operation failed", file=sys.stderr)
-        return 1
-    except (TransferError, ValueError) as error:
-        print(f"soenan-audaligo-transfer: {error}", file=sys.stderr)
-        return 1
+        error = TransferError("local file operation failed", code="local_io_failed")
+    except (TransferError, TypeError, ValueError) as caught:
+        error = (
+            caught
+            if isinstance(caught, TransferError)
+            else TransferError("transfer input is invalid", code="input_invalid")
+        )
+    print(json.dumps(error.wire_value(), separators=(",", ":")), file=sys.stderr)
+    return 1
+
+
+def _read_handoff() -> dict[str, Any]:
+    raw = sys.stdin.buffer.read(_MAXIMUM_HANDOFF_BYTES + 1)
+    if not raw or len(raw) > _MAXIMUM_HANDOFF_BYTES:
+        raise TransferError(
+            "structuredContent stdin is invalid", code="handoff_invalid"
+        )
+    try:
+        value = json.loads(raw, object_pairs_hook=_strict_object)
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
+        raise TransferError(
+            "structuredContent stdin is invalid", code="handoff_invalid"
+        ) from None
+    if not isinstance(value, dict):
+        raise TransferError(
+            "structuredContent stdin must be an object", code="handoff_invalid"
+        )
+    return value
+
+
+def _strict_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    value: dict[str, Any] = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError("duplicate JSON field")
+        value[key] = item
+    return value
 
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="soenan-audaligo-transfer",
-        description=(
-            "Encrypt or decrypt Audaligo files locally while transferring ciphertext "
-            "directly with Railway Bucket capabilities."
-        ),
-    )
-    parser.add_argument(
-        "--api-url",
-        help="Audaligo API origin; defaults to AUDALIGO_API_URL",
-    )
-    parser.add_argument(
-        "--access-token-env",
-        default="AUDALIGO_ACCESS_TOKEN",
-        help=(
-            "environment variable containing an Audaligo-audience OAuth bearer token "
-            "(default: AUDALIGO_ACCESS_TOKEN)"
-        ),
+        description="Consume an MCP handoff and transfer encrypted Audaligo content.",
     )
     commands = parser.add_subparsers(dest="command", required=True)
 
-    upload = commands.add_parser("upload", help="encrypt and upload one local file")
-    upload.add_argument("--project-id", required=True)
+    upload = commands.add_parser("upload", help="upload one authorized local file")
     upload.add_argument("--source", required=True)
-    upload.add_argument("--operation-id", required=True)
-    upload.add_argument("--filename")
-    upload.add_argument("--mix-version-id")
 
-    download = commands.add_parser("download", help="download and decrypt one file")
-    download.add_argument("--project-id", required=True)
-    download.add_argument("--file-id", required=True)
+    download = commands.add_parser("download", help="download one authorized file")
     download.add_argument("--destination", required=True)
+
+    preview = commands.add_parser(
+        "download-preview", help="download one authorized encrypted preview"
+    )
+    preview.add_argument("--destination", required=True)
     return parser
 
 

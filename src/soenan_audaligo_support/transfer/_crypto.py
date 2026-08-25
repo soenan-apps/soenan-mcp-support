@@ -168,6 +168,62 @@ class DecryptionPlan:
         return cleartext
 
 
+@dataclass(frozen=True)
+class PreviewDecryptionPlan:
+    project_id: str
+    source_object_id: str
+    processing_id: str
+    preview_id: str
+    job_id: str
+    object_id: str
+    epoch: int
+    plaintext_size: int
+    chunk_count: int
+    chunk_size: int
+    nonce_base: bytes
+    data_key: bytes
+    chunks: tuple[ChunkMetadata, ...]
+
+    def open_chunk(self, ciphertext: bytes, index: int) -> bytes:
+        chunk = self.chunks[index]
+        if len(ciphertext) != chunk.ciphertext_size:
+            raise EncryptionContractError(
+                "ciphertext chunk size does not match preview manifest"
+            )
+        if sha256(ciphertext).digest() != chunk.ciphertext_sha256:
+            raise EncryptionContractError(
+                "ciphertext chunk digest does not match preview manifest"
+            )
+        try:
+            cleartext = AESGCM(self.data_key).decrypt(
+                chunk_nonce(self.nonce_base, index),
+                ciphertext,
+                preview_chunk_aad(
+                    project_id=self.project_id,
+                    source_object_id=self.source_object_id,
+                    processing_id=self.processing_id,
+                    preview_id=self.preview_id,
+                    job_id=self.job_id,
+                    total_plaintext_size=self.plaintext_size,
+                    chunk_count=self.chunk_count,
+                    chunk_size=self.chunk_size,
+                    chunk_index=index,
+                    plaintext_offset=chunk.plaintext_offset,
+                    plaintext_length=chunk.plaintext_size,
+                    final=chunk.final,
+                ),
+            )
+        except InvalidTag:
+            raise EncryptionContractError(
+                "preview ciphertext authentication failed"
+            ) from None
+        if len(cleartext) != chunk.plaintext_size:
+            raise EncryptionContractError(
+                "preview plaintext chunk size does not match manifest"
+            )
+        return cleartext
+
+
 def build_encryption_plan(
     stream: BinaryIO,
     *,
@@ -426,6 +482,153 @@ def parse_decryption_plan(
     )
 
 
+def parse_file_handoff_plan(
+    manifest: Mapping[str, Any],
+    *,
+    project_id: str,
+    object_id: str,
+    epoch: int,
+    data_key: bytes,
+    wrapped_nonce: bytes,
+    wrapped_data_key: bytes,
+) -> DecryptionPlan:
+    raw_chunks = manifest.get("chunks")
+    if not isinstance(raw_chunks, Sequence) or isinstance(raw_chunks, (str, bytes)):
+        raise EncryptionContractError("manifest chunks must be an array")
+    normalized = {
+        "v": manifest.get("version"),
+        "type": manifest.get("type"),
+        "suite_id": manifest.get("suiteId"),
+        "encryption": {
+            "mode": manifest.get("encryptionMode"),
+            "content_key_alg": manifest.get("contentKeyAlgorithm"),
+            "wrap_alg": manifest.get("wrapAlgorithm"),
+            "wrapped_data_key": {
+                "nonceB64u": _base64url(wrapped_nonce),
+                "ciphertextB64u": _base64url(wrapped_data_key),
+            },
+        },
+        "object": {
+            "chunk_count": len(raw_chunks),
+            "chunk_size": manifest.get("chunkSize"),
+            "chunks": [
+                {
+                    "chunk_index": chunk.get("chunkIndex"),
+                    "ciphertext_offset": chunk.get("ciphertextOffset"),
+                    "ciphertext_sha256_b64u": chunk.get("ciphertextSha256Base64url"),
+                    "ciphertext_size": chunk.get("ciphertextSize"),
+                    "final_chunk": chunk.get("finalChunk"),
+                    "plaintext_offset": chunk.get("plaintextOffset"),
+                    "plaintext_size": chunk.get("plaintextSize"),
+                }
+                for chunk in raw_chunks
+                if isinstance(chunk, Mapping)
+            ],
+            "ciphertext_size": manifest.get("ciphertextSize"),
+            "epoch": epoch,
+            "file_id": manifest.get("fileId"),
+            "nonce_base_b64u": manifest.get("nonceBase64url"),
+            "object_id": object_id,
+            "plaintext_size": manifest.get("plaintextSize"),
+            "project_id": project_id,
+            "share_id": manifest.get("shareId"),
+        },
+    }
+    return parse_decryption_plan(
+        normalized,
+        data_key=data_key,
+        wrapped_nonce=wrapped_nonce,
+        wrapped_data_key=wrapped_data_key,
+    )
+
+
+def parse_preview_decryption_plan(
+    manifest: Mapping[str, Any],
+    *,
+    project_id: str,
+    preview_id: str,
+    epoch: int,
+    data_key: bytes,
+) -> PreviewDecryptionPlan:
+    if len(data_key) != 32 or not any(data_key):
+        raise EncryptionContractError("data key must be a nonzero 256-bit key")
+    if not 0 <= epoch <= MAXIMUM_WIRE_INTEGER:
+        raise EncryptionContractError("epoch must be a canonical wire integer")
+    if manifest.get("contract") != "audaligo.managed-preview-read-descriptor":
+        raise EncryptionContractError("unsupported preview manifest")
+    source_object_id = _string(manifest, "sourceObjectId")
+    processing_id = _string(manifest, "processingId")
+    job_id = _string(manifest, "jobId")
+    for value in (project_id, preview_id, source_object_id, processing_id, job_id):
+        _validate_identity(value)
+    chunk_size = _positive_integer(manifest, "chunkSize")
+    plaintext_size = _positive_integer(manifest, "plaintextSize")
+    ciphertext_size = _positive_integer(manifest, "ciphertextSize")
+    if chunk_size != CHUNK_SIZE:
+        raise EncryptionContractError("unsupported preview chunk size")
+    nonce_base = _base64url_bytes(manifest, "nonceBase64url", 8)
+    raw_chunks = manifest.get("chunks")
+    if not isinstance(raw_chunks, Sequence) or isinstance(raw_chunks, (str, bytes)):
+        raise EncryptionContractError("preview manifest chunks must be an array")
+    chunk_count = len(raw_chunks)
+    if (
+        not 1 <= chunk_count <= MAXIMUM_CHUNKS
+        or (plaintext_size - 1) // chunk_size + 1 != chunk_count
+    ):
+        raise EncryptionContractError("invalid preview manifest chunk count")
+    chunks: list[ChunkMetadata] = []
+    plaintext_offset = 0
+    ciphertext_offset = 0
+    for index, raw in enumerate(raw_chunks):
+        if not isinstance(raw, Mapping):
+            raise EncryptionContractError("preview manifest chunk must be an object")
+        plaintext_length = _positive_integer(raw, "plaintextSize")
+        ciphertext_length = _positive_integer(raw, "ciphertextSize")
+        final = raw.get("finalChunk")
+        if (
+            _integer(raw, "chunkIndex") != index
+            or _integer(raw, "plaintextOffset") != plaintext_offset
+            or _integer(raw, "ciphertextOffset") != ciphertext_offset
+            or plaintext_length != min(chunk_size, plaintext_size - plaintext_offset)
+            or ciphertext_length != plaintext_length + _TAG_SIZE
+            or not isinstance(final, bool)
+            or final != (index + 1 == chunk_count)
+        ):
+            raise EncryptionContractError("invalid preview manifest chunk layout")
+        chunks.append(
+            ChunkMetadata(
+                index=index,
+                ciphertext_offset=ciphertext_offset,
+                ciphertext_sha256=_base64url_bytes(
+                    raw, "ciphertextSha256Base64url", 32
+                ),
+                ciphertext_size=ciphertext_length,
+                final=final,
+                plaintext_offset=plaintext_offset,
+                plaintext_size=plaintext_length,
+            )
+        )
+        plaintext_offset += plaintext_length
+        ciphertext_offset += ciphertext_length
+    if plaintext_offset != plaintext_size or ciphertext_offset != ciphertext_size:
+        raise EncryptionContractError("preview manifest totals do not match chunks")
+    return PreviewDecryptionPlan(
+        project_id=project_id,
+        source_object_id=source_object_id,
+        processing_id=processing_id,
+        preview_id=preview_id,
+        job_id=job_id,
+        object_id=preview_id,
+        epoch=epoch,
+        plaintext_size=plaintext_size,
+        chunk_count=chunk_count,
+        chunk_size=chunk_size,
+        nonce_base=nonce_base,
+        data_key=data_key,
+        chunks=tuple(chunks),
+    )
+
+
 def chunk_nonce(nonce_base: bytes, index: int) -> bytes:
     if len(nonce_base) != 8 or not 0 <= index <= 0xFFFFFFFF:
         raise EncryptionContractError("invalid managed chunk nonce input")
@@ -454,6 +657,42 @@ def chunk_aad(
         _append_string(output, value)
     output.extend(struct.pack(">Q", epoch))
     _append_string(output, object_id)
+    output.extend(struct.pack(">Q", total_plaintext_size))
+    output.extend(struct.pack(">I", chunk_size))
+    output.extend(struct.pack(">I", chunk_count))
+    output.extend(struct.pack(">I", chunk_index))
+    output.extend(struct.pack(">Q", plaintext_offset))
+    output.extend(struct.pack(">I", plaintext_length))
+    output.extend(b"\x01" if final else b"\x00")
+    return bytes(output)
+
+
+def preview_chunk_aad(
+    *,
+    project_id: str,
+    source_object_id: str,
+    processing_id: str,
+    preview_id: str,
+    job_id: str,
+    total_plaintext_size: int,
+    chunk_count: int,
+    chunk_size: int,
+    chunk_index: int,
+    plaintext_offset: int,
+    plaintext_length: int,
+    final: bool,
+) -> bytes:
+    output = bytearray()
+    _append_string(output, "audaligo:managed:file-preview:chunk-aead:v1")
+    output.extend(b"\x01")
+    for value in (
+        project_id,
+        source_object_id,
+        processing_id,
+        preview_id,
+        job_id,
+    ):
+        _append_string(output, value)
     output.extend(struct.pack(">Q", total_plaintext_size))
     output.extend(struct.pack(">I", chunk_size))
     output.extend(struct.pack(">I", chunk_count))

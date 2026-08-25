@@ -1,6 +1,5 @@
 """Client-side encrypted transfers using direct Railway Bucket capabilities."""
 
-from ._api import AudaligoTransferAPI
 from ._http import (
     DEFAULT_TIMEOUTS,
     DEFAULT_TRANSPORT,
@@ -11,12 +10,11 @@ from ._http import (
     TransferTimeouts,
     TransferTransport,
 )
-from ._workflow import download_file, upload_file
+from ._workflow import download_file, download_preview, upload_file
 
 __all__ = [
     "DEFAULT_TIMEOUTS",
     "DEFAULT_TRANSPORT",
-    "AudaligoTransferAPI",
     "TransferError",
     "TransferHTTPError",
     "TransferSizeMismatch",
@@ -24,5 +22,6 @@ __all__ = [
     "TransferTimeouts",
     "TransferTransport",
     "download_file",
+    "download_preview",
     "upload_file",
 ]

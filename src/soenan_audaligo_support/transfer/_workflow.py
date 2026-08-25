@@ -4,24 +4,29 @@ import io
 import os
 import tempfile
 from collections.abc import Mapping
+from hashlib import sha256
 from pathlib import Path
 from typing import Any, BinaryIO, TypeAlias
 
-from ._api import AudaligoTransferAPI, _transfer_continuation
+import httpx
+
+from ._api import AudaligoTransferAPI
 from ._claim import redeem_file_key_claim
 from ._crypto import (
     CHUNK_SIZE,
     MAXIMUM_CHUNKS,
-    MAXIMUM_WIRE_INTEGER,
     ChunkMetadata,
     EncryptionContractError,
     build_encryption_plan,
-    parse_decryption_plan,
+    parse_file_handoff_plan,
+    parse_preview_decryption_plan,
 )
+from ._handoff import TransferHandoff, parse_handoff
 from ._http import (
     DEFAULT_TIMEOUTS,
     DEFAULT_TRANSPORT,
     TransferError,
+    TransferHTTPError,
     TransferSizeMismatch,
     TransferTimeouts,
     TransferTransport,
@@ -33,96 +38,104 @@ PathSource: TypeAlias = str | os.PathLike[str]
 UploadSource: TypeAlias = PathSource | BinaryIO
 DownloadDestination: TypeAlias = PathSource | BinaryIO
 
+_DOWNLOAD_SPOOL_MEMORY_LIMIT = 8 * 1024 * 1024
+_DOWNLOAD_COPY_SIZE = 1024 * 1024
+
 
 def upload_file(
-    api: AudaligoTransferAPI,
+    structured_content: Mapping[str, Any],
     *,
-    project_id: str,
-    filename: str,
     source: UploadSource,
-    operation_id: str,
-    mix_version_id: str | None = None,
     timeouts: TransferTimeouts = DEFAULT_TIMEOUTS,
     transport: TransferTransport = DEFAULT_TRANSPORT,
     claim_transport: TransferTransport = DEFAULT_TRANSPORT,
+    control_transport: httpx.BaseTransport | None = None,
 ) -> Mapping[str, Any]:
-    """Encrypt locally and upload ciphertext directly to Railway Bucket capabilities."""
+    """Consume an MCP upload handoff and transfer locally encrypted ciphertext."""
+    handoff = _parse_handoff(structured_content)
+    if handoff.operation != "upload" or handoff.upload is None:
+        raise TransferError("structuredContent is not an upload handoff")
+    upload = handoff.upload
     stream, close_stream, plaintext_size = _open_upload_source(source)
     try:
-        if plaintext_size <= 0:
-            raise TransferError("plaintext size must be positive")
+        if plaintext_size != upload.plaintext_size:
+            raise TransferSizeMismatch("source size does not match the MCP handoff")
         if plaintext_size > CHUNK_SIZE * MAXIMUM_CHUNKS:
             raise TransferError("plaintext exceeds the managed transfer limit")
-        begin = api.begin_upload(
-            project_id=project_id,
-            filename=filename,
-            plaintext_size=plaintext_size,
-            operation_id=operation_id,
-            mix_version_id=mix_version_id,
-        )
-        upload_id = _string(begin, "uploadId")
-        transfer_continuation = _transfer_continuation(begin)
-        epoch = _integer_or_zero(begin, "keyEpoch")
         key_claim = redeem_file_key_claim(
-            _mapping(begin, "keyClaim"),
+            handoff.key_claim,
             expected_direction="upload",
-            expected_project_id=project_id,
-            expected_object_id=upload_id,
-            expected_epoch=epoch,
+            expected_project_id=handoff.project_id,
+            expected_object_id=handoff.object_id,
+            expected_epoch=handoff.epoch,
+            expected_origin=handoff.control_origin,
             timeouts=timeouts,
             transport=claim_transport,
         )
         plan = build_encryption_plan(
             stream,
-            project_id=project_id,
-            file_id=operation_id,
-            object_id=upload_id,
-            epoch=epoch,
+            project_id=handoff.project_id,
+            file_id=upload.operation_id,
+            object_id=handoff.object_id,
+            epoch=handoff.epoch,
             data_key=key_claim.data_key,
             wrapped_nonce=key_claim.wrapped_nonce,
             wrapped_data_key=key_claim.wrapped_data_key,
             plaintext_size=plaintext_size,
         )
-        manifest = api.put_manifest(
-            project_id=project_id,
-            upload_id=upload_id,
-            transfer_continuation=transfer_continuation,
-            manifest=plan.manifest(),
-        )
-        ready = manifest.get("state") == "ready"
-
-        if not ready:
-            for chunk in plan.chunks:
-                cleartext = _read_exact(stream, chunk.plaintext_size)
-                ciphertext = plan.seal_chunk(cleartext, chunk.index)
-                capability = api.upload_capability(
-                    project_id=project_id,
-                    upload_id=upload_id,
-                    chunk_index=chunk.index,
-                    transfer_continuation=transfer_continuation,
-                )
-                url, headers = _validate_capability(
-                    capability, operation="PUT", object_id=upload_id, chunk=chunk
-                )
-                put_ciphertext(
-                    url, headers, ciphertext, timeouts=timeouts, transport=transport
-                )
-            if stream.read(1):
-                raise TransferSizeMismatch()
-            api.complete_upload(
-                project_id=project_id,
-                upload_id=upload_id,
-                transfer_continuation=transfer_continuation,
+        with AudaligoTransferAPI(
+            control_origin=handoff.control_origin,
+            continuation=handoff.continuation,
+            timeouts=timeouts,
+            control_transport=control_transport,
+        ) as api:
+            manifest = api.put_manifest(
+                project_id=handoff.project_id,
+                upload_id=handoff.object_id,
+                manifest=plan.manifest(),
             )
-        return api.commit_file(
-            project_id=project_id,
-            file_id=operation_id,
-            upload_id=upload_id,
-            filename=filename,
-            plaintext_size=plaintext_size,
-            mix_version_id=mix_version_id,
-            transfer_continuation=transfer_continuation,
-        )
+            if manifest.get("state") != "ready":
+                for chunk in plan.chunks:
+                    cleartext = _read_exact(stream, chunk.plaintext_size)
+                    ciphertext = plan.seal_chunk(cleartext, chunk.index)
+                    if sha256(ciphertext).digest() != chunk.ciphertext_sha256:
+                        raise TransferSizeMismatch(
+                            "source changed after the upload manifest was built"
+                        )
+                    capability = api.upload_capability(
+                        project_id=handoff.project_id,
+                        upload_id=handoff.object_id,
+                        chunk_index=chunk.index,
+                    )
+                    url, headers = _validate_capability(
+                        capability,
+                        operation="PUT",
+                        object_id=handoff.object_id,
+                        chunk=chunk,
+                    )
+                    put_ciphertext(
+                        url,
+                        headers,
+                        ciphertext,
+                        timeouts=timeouts,
+                        transport=transport,
+                    )
+                if stream.read(1):
+                    raise TransferSizeMismatch(
+                        "source changed after the upload manifest was built"
+                    )
+                api.complete_upload(
+                    project_id=handoff.project_id,
+                    upload_id=handoff.object_id,
+                )
+            return api.commit_file(
+                project_id=handoff.project_id,
+                file_id=upload.operation_id,
+                upload_id=handoff.object_id,
+                filename=upload.filename,
+                plaintext_size=upload.plaintext_size,
+                mix_version_id=upload.mix_version_id,
+            )
     except EncryptionContractError as error:
         raise TransferError(str(error)) from None
     finally:
@@ -131,84 +144,157 @@ def upload_file(
 
 
 def download_file(
-    api: AudaligoTransferAPI,
+    structured_content: Mapping[str, Any],
     *,
-    project_id: str,
-    file_id: str,
     destination: DownloadDestination,
     timeouts: TransferTimeouts = DEFAULT_TIMEOUTS,
     transport: TransferTransport = DEFAULT_TRANSPORT,
     claim_transport: TransferTransport = DEFAULT_TRANSPORT,
+    control_transport: httpx.BaseTransport | None = None,
 ) -> int:
-    """Download ciphertext directly from Railway Bucket and decrypt locally."""
-    begin = api.read_descriptor(project_id=project_id, file_id=file_id)
-    transfer_continuation = _transfer_continuation(begin)
-    file_value = _mapping(begin, "file")
-    manifest = _mapping(begin, "manifest")
-    manifest_object = _mapping(manifest, "object")
-    object_id = _string(manifest_object, "object_id")
-    epoch = _integer(manifest_object, "epoch")
-    if (
-        _string(file_value, "projectId") != project_id
-        or _string(file_value, "fileId") != file_id
-        or _string(file_value, "encryptedObjectId") != object_id
-    ):
-        raise TransferError("download metadata does not match the requested file")
-    key_claim = redeem_file_key_claim(
-        _mapping(begin, "keyClaim"),
-        expected_direction="download",
-        expected_project_id=project_id,
-        expected_object_id=object_id,
-        expected_epoch=epoch,
-        timeouts=timeouts,
-        transport=claim_transport,
-    )
+    """Consume an MCP file handoff and atomically write locally decrypted bytes."""
+    handoff = _parse_handoff(structured_content)
+    if handoff.operation != "file_download" or handoff.file is None:
+        raise TransferError("structuredContent is not a file download handoff")
+    key_claim = _redeem_download_claim(handoff, timeouts, claim_transport)
     try:
-        plan = parse_decryption_plan(
-            manifest,
+        plan = parse_file_handoff_plan(
+            _required_manifest(handoff),
+            project_id=handoff.project_id,
+            object_id=handoff.object_id,
+            epoch=handoff.epoch,
             data_key=key_claim.data_key,
             wrapped_nonce=key_claim.wrapped_nonce,
             wrapped_data_key=key_claim.wrapped_data_key,
         )
     except EncryptionContractError as error:
         raise TransferError(str(error)) from None
-    if plan.project_id != project_id or plan.file_id != file_id:
-        raise TransferError("download manifest does not match the requested file")
+    if plan.file_id != handoff.file.file_id:
+        raise TransferError("file manifest does not match the handoff")
+    return _download(
+        handoff,
+        destination,
+        plan,
+        timeouts,
+        transport,
+        control_transport,
+    )
 
-    if isinstance(destination, (str, os.PathLike)):
-        return _download_to_path(
-            api,
-            project_id,
-            file_id,
-            transfer_continuation,
-            Path(destination),
-            plan,
-            timeouts,
-            transport,
-        )
-    _require_writer(destination)
-    rollback = _append_rollback_position(destination)
+
+def download_preview(
+    structured_content: Mapping[str, Any],
+    *,
+    destination: DownloadDestination,
+    timeouts: TransferTimeouts = DEFAULT_TIMEOUTS,
+    transport: TransferTransport = DEFAULT_TRANSPORT,
+    claim_transport: TransferTransport = DEFAULT_TRANSPORT,
+    control_transport: httpx.BaseTransport | None = None,
+) -> int:
+    """Consume an MCP preview handoff and atomically write decrypted preview bytes."""
+    handoff = _parse_handoff(structured_content)
+    if handoff.operation != "preview_download" or handoff.preview is None:
+        raise TransferError("structuredContent is not a preview download handoff")
+    key_claim = _redeem_download_claim(handoff, timeouts, claim_transport)
     try:
-        return _download_to_stream(
-            api,
-            project_id,
-            file_id,
-            transfer_continuation,
-            destination,
-            plan,
-            timeouts,
-            transport,
+        plan = parse_preview_decryption_plan(
+            _required_manifest(handoff),
+            project_id=handoff.project_id,
+            preview_id=handoff.object_id,
+            epoch=handoff.epoch,
+            data_key=key_claim.data_key,
         )
-    except BaseException:
-        _rollback_stream(destination, rollback)
-        raise
+    except EncryptionContractError as error:
+        raise TransferError(str(error)) from None
+    return _download(
+        handoff,
+        destination,
+        plan,
+        timeouts,
+        transport,
+        control_transport,
+    )
+
+
+def _redeem_download_claim(
+    handoff: TransferHandoff,
+    timeouts: TransferTimeouts,
+    claim_transport: TransferTransport,
+) -> Any:
+    return redeem_file_key_claim(
+        handoff.key_claim,
+        expected_direction="download",
+        expected_project_id=handoff.project_id,
+        expected_object_id=handoff.object_id,
+        expected_epoch=handoff.epoch,
+        expected_origin=handoff.control_origin,
+        timeouts=timeouts,
+        transport=claim_transport,
+    )
+
+
+def _parse_handoff(structured_content: Mapping[str, Any]) -> TransferHandoff:
+    try:
+        return parse_handoff(structured_content)
+    except TransferError as error:
+        if error.code != "transfer_failed":
+            raise
+        raise TransferError(
+            str(error),
+            code="handoff_invalid",
+            recoverable=False,
+        ) from None
+
+
+def _required_manifest(handoff: TransferHandoff) -> Mapping[str, Any]:
+    if handoff.manifest is None:
+        raise TransferError("structuredContent omitted the download manifest")
+    return handoff.manifest
+
+
+def _download(
+    handoff: TransferHandoff,
+    destination: DownloadDestination,
+    plan: Any,
+    timeouts: TransferTimeouts,
+    transport: TransferTransport,
+    control_transport: httpx.BaseTransport | None,
+) -> int:
+    with AudaligoTransferAPI(
+        control_origin=handoff.control_origin,
+        continuation=handoff.continuation,
+        timeouts=timeouts,
+        control_transport=control_transport,
+    ) as api:
+        if isinstance(destination, (str, os.PathLike)):
+            return _download_to_path(
+                api,
+                handoff.project_id,
+                Path(destination),
+                plan,
+                timeouts,
+                transport,
+            )
+        _require_writer(destination)
+        with tempfile.SpooledTemporaryFile(
+            max_size=_DOWNLOAD_SPOOL_MEMORY_LIMIT,
+            mode="w+b",
+        ) as staged:
+            count = _download_to_stream(
+                api,
+                handoff.project_id,
+                staged,
+                plan,
+                timeouts,
+                transport,
+            )
+            staged.seek(0)
+            _commit_staged_stream(destination, staged, count)
+            return count
 
 
 def _download_to_path(
     api: AudaligoTransferAPI,
     project_id: str,
-    file_id: str,
-    transfer_continuation: str,
     destination: Path,
     plan: Any,
     timeouts: TransferTimeouts,
@@ -223,8 +309,6 @@ def _download_to_path(
             count = _download_to_stream(
                 api,
                 project_id,
-                file_id,
-                transfer_continuation,
                 stream,
                 plan,
                 timeouts,
@@ -245,8 +329,6 @@ def _download_to_path(
 def _download_to_stream(
     api: AudaligoTransferAPI,
     project_id: str,
-    file_id: str,
-    transfer_continuation: str,
     destination: BinaryIO,
     plan: Any,
     timeouts: TransferTimeouts,
@@ -254,19 +336,11 @@ def _download_to_stream(
 ) -> int:
     written = 0
     for chunk in plan.chunks:
-        capability = api.read_capability(
+        ciphertext = _download_ciphertext_chunk(
+            api,
             project_id=project_id,
             object_id=plan.object_id,
-            chunk_index=chunk.index,
-            transfer_continuation=transfer_continuation,
-        )
-        url, headers = _validate_capability(
-            capability, operation="GET", object_id=plan.object_id, chunk=chunk
-        )
-        ciphertext = get_ciphertext(
-            url,
-            headers,
-            chunk.ciphertext_size,
+            chunk=chunk,
             timeouts=timeouts,
             transport=transport,
         )
@@ -279,6 +353,41 @@ def _download_to_stream(
     if written != plan.plaintext_size:
         raise TransferSizeMismatch()
     return written
+
+
+def _download_ciphertext_chunk(
+    api: AudaligoTransferAPI,
+    *,
+    project_id: str,
+    object_id: str,
+    chunk: ChunkMetadata,
+    timeouts: TransferTimeouts,
+    transport: TransferTransport,
+) -> bytes:
+    for attempt in range(2):
+        capability = api.read_capability(
+            project_id=project_id,
+            object_id=object_id,
+            chunk_index=chunk.index,
+        )
+        url, headers = _validate_capability(
+            capability, operation="GET", object_id=object_id, chunk=chunk
+        )
+        try:
+            return get_ciphertext(
+                url,
+                headers,
+                chunk.ciphertext_size,
+                timeouts=timeouts,
+                transport=transport,
+            )
+        except TransferHTTPError as error:
+            # A GET has no caller-visible effect and is buffered before decryption. Only
+            # rejected, expiring capabilities may be reacquired, and only once.
+            if attempt == 0 and error.status in {401, 403}:
+                continue
+            raise
+    raise TransferError("download capability reacquisition failed")
 
 
 def _validate_capability(
@@ -374,6 +483,29 @@ def _write_all(destination: BinaryIO, data: bytes) -> None:
         written += count
 
 
+def _commit_staged_stream(
+    destination: BinaryIO,
+    staged: BinaryIO,
+    expected_size: int,
+) -> None:
+    rollback = _append_rollback_position(destination)
+    copied = 0
+    try:
+        while copied < expected_size:
+            data = staged.read(min(_DOWNLOAD_COPY_SIZE, expected_size - copied))
+            if not isinstance(data, bytes) or not data:
+                raise TransferSizeMismatch(
+                    "staged plaintext size does not match manifest"
+                )
+            _write_all(destination, data)
+            copied += len(data)
+        if staged.read(1):
+            raise TransferSizeMismatch("staged plaintext size does not match manifest")
+    except BaseException:
+        _rollback_stream(destination, rollback)
+        raise
+
+
 def _append_rollback_position(destination: BinaryIO) -> int | None:
     try:
         position = destination.tell()
@@ -394,13 +526,6 @@ def _rollback_stream(destination: BinaryIO, position: int | None) -> None:
         pass
 
 
-def _mapping(value: Mapping[str, Any], key: str) -> Mapping[str, Any]:
-    result = value.get(key)
-    if not isinstance(result, Mapping):
-        raise TransferError(f"{key} must be an object")
-    return result
-
-
 def _string(value: Mapping[str, Any], key: str) -> str:
     result = value.get(key)
     if not isinstance(result, str) or not result:
@@ -414,12 +539,16 @@ def _integer(value: Mapping[str, Any], key: str) -> int:
         raise TransferError(f"{key} must be an integer")
     if isinstance(raw, int):
         result = raw
-    elif isinstance(raw, str) and raw.isdecimal():
+    elif (
+        isinstance(raw, str)
+        and raw.isdecimal()
+        and (len(raw) == 1 or not raw.startswith("0"))
+    ):
         result = int(raw)
     else:
         raise TransferError(f"{key} must be an integer")
-    if not 0 <= result <= MAXIMUM_WIRE_INTEGER:
-        raise TransferError(f"{key} must be between 0 and {MAXIMUM_WIRE_INTEGER}")
+    if not 0 <= result <= 9_007_199_254_740_991:
+        raise TransferError("capability integer exceeds the wire limit")
     return result
 
 

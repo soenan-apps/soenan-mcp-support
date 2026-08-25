@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -11,6 +12,7 @@ from ._http import (
     DEFAULT_TIMEOUTS,
     DEFAULT_TRANSPORT,
     TransferError,
+    TransferHTTPError,
     TransferTimeouts,
     TransferTransport,
     post_control_json,
@@ -37,6 +39,7 @@ def redeem_file_key_claim(
     expected_project_id: str,
     expected_object_id: str,
     expected_epoch: int,
+    expected_origin: str,
     timeouts: TransferTimeouts = DEFAULT_TIMEOUTS,
     transport: TransferTransport = DEFAULT_TRANSPORT,
 ) -> FileKeyClaim:
@@ -45,16 +48,24 @@ def redeem_file_key_claim(
     if descriptor.get("protocol") != _PROTOCOL:
         raise TransferError("file key claim protocol is unsupported")
     expires_at_raw = descriptor.get("expiresAtUnixMilliseconds")
-    if isinstance(expires_at_raw, str) and expires_at_raw.isdecimal():
+    if (
+        isinstance(expires_at_raw, str)
+        and expires_at_raw.isdecimal()
+        and (len(expires_at_raw) == 1 or not expires_at_raw.startswith("0"))
+    ):
         expires_at = int(expires_at_raw)
     else:
         expires_at = expires_at_raw
     if (
         isinstance(expires_at, bool)
         or not isinstance(expires_at, int)
-        or expires_at <= 0
+        or expires_at <= int(time.time() * 1000)
     ):
-        raise TransferError("file key claim expiry is invalid")
+        raise TransferError(
+            "file key claim has expired",
+            code="claim_expired",
+            recoverable=True,
+        )
     raw_url = descriptor.get("url")
     if not isinstance(raw_url, str) or not raw_url or len(raw_url) > 8192:
         raise TransferError("file key claim URL is invalid")
@@ -78,13 +89,25 @@ def redeem_file_key_claim(
     ):
         raise TransferError("file key claim URL is invalid")
     redemption_url = urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
-    encoded = post_control_json(
-        redemption_url,
-        {"audaligo-key-claim": secret},
-        maximum_response_bytes=4096,
-        timeouts=timeouts,
-        transport=transport,
-    )
+    claim_origin = urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
+    if claim_origin != expected_origin:
+        raise TransferError("file key claim origin does not match control origin")
+    try:
+        encoded = post_control_json(
+            redemption_url,
+            {"audaligo-key-claim": secret},
+            maximum_response_bytes=4096,
+            timeouts=timeouts,
+            transport=transport,
+        )
+    except TransferHTTPError as error:
+        if error.status in {404, 409, 410}:
+            raise TransferError(
+                "file key claim is unavailable",
+                code="claim_unavailable",
+                recoverable=True,
+            ) from None
+        raise
     try:
         value = json.loads(encoded, object_pairs_hook=_strict_object)
     except (UnicodeDecodeError, json.JSONDecodeError, ValueError):

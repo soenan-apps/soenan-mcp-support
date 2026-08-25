@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "soenan-audaligo-support"
 version = "0.1.0"
-description = "Generated Audaligo API client and direct encrypted transfer support"
+description = "MCP-authorized client-side encrypted Audaligo transfers"
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "Soenan" }]
