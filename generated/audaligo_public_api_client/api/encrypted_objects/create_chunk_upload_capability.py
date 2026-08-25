@@ -4,7 +4,7 @@ from urllib.parse import quote
 
 import httpx
 
-from ...client import AuthenticatedClient, Client
+from ...client import Client
 from ...models.capability_response import CapabilityResponse
 from ...models.create_chunk_upload_capability_sec_fetch_site import (
     CreateChunkUploadCapabilitySecFetchSite,
@@ -45,7 +45,7 @@ def _get_kwargs(
 
 
 def _parse_response(
-    *, client: AuthenticatedClient | Client, response: httpx.Response
+    *, client: Client, response: httpx.Response
 ) -> CapabilityResponse | ErrorEnvelope:
     if response.status_code == 200:
         response_200 = CapabilityResponse.from_dict(response.json())
@@ -58,7 +58,7 @@ def _parse_response(
 
 
 def _build_response(
-    *, client: AuthenticatedClient | Client, response: httpx.Response
+    *, client: Client, response: httpx.Response
 ) -> Response[CapabilityResponse | ErrorEnvelope]:
     return Response(
         status_code=HTTPStatus(response.status_code),
@@ -73,7 +73,7 @@ def sync_detailed(
     upload: str,
     chunk: int,
     *,
-    client: AuthenticatedClient,
+    client: Client,
     origin: str,
     audaligo_transfer_continuation: str | Unset = UNSET,
     sec_fetch_site: CreateChunkUploadCapabilitySecFetchSite | Unset = UNSET,
@@ -116,7 +116,7 @@ def sync(
     upload: str,
     chunk: int,
     *,
-    client: AuthenticatedClient,
+    client: Client,
     origin: str,
     audaligo_transfer_continuation: str | Unset = UNSET,
     sec_fetch_site: CreateChunkUploadCapabilitySecFetchSite | Unset = UNSET,
@@ -154,7 +154,7 @@ async def asyncio_detailed(
     upload: str,
     chunk: int,
     *,
-    client: AuthenticatedClient,
+    client: Client,
     origin: str,
     audaligo_transfer_continuation: str | Unset = UNSET,
     sec_fetch_site: CreateChunkUploadCapabilitySecFetchSite | Unset = UNSET,
@@ -195,7 +195,7 @@ async def asyncio(
     upload: str,
     chunk: int,
     *,
-    client: AuthenticatedClient,
+    client: Client,
     origin: str,
     audaligo_transfer_continuation: str | Unset = UNSET,
     sec_fetch_site: CreateChunkUploadCapabilitySecFetchSite | Unset = UNSET,

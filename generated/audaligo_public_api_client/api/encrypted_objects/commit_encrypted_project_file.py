@@ -4,7 +4,7 @@ from urllib.parse import quote
 
 import httpx
 
-from ...client import AuthenticatedClient, Client
+from ...client import Client
 from ...models.commit_encrypted_project_file_sec_fetch_site import (
     CommitEncryptedProjectFileSecFetchSite,
 )
@@ -49,7 +49,7 @@ def _get_kwargs(
 
 
 def _parse_response(
-    *, client: AuthenticatedClient | Client, response: httpx.Response
+    *, client: Client, response: httpx.Response
 ) -> EncryptedProjectFileResponse | ErrorEnvelope:
     if response.status_code == 200:
         response_200 = EncryptedProjectFileResponse.from_dict(response.json())
@@ -67,7 +67,7 @@ def _parse_response(
 
 
 def _build_response(
-    *, client: AuthenticatedClient | Client, response: httpx.Response
+    *, client: Client, response: httpx.Response
 ) -> Response[EncryptedProjectFileResponse | ErrorEnvelope]:
     return Response(
         status_code=HTTPStatus(response.status_code),
@@ -81,7 +81,7 @@ def sync_detailed(
     project: str,
     file: str,
     *,
-    client: AuthenticatedClient,
+    client: Client,
     body: CommitProjectFileRequest,
     origin: str,
     audaligo_transfer_continuation: str | Unset = UNSET,
@@ -124,7 +124,7 @@ def sync(
     project: str,
     file: str,
     *,
-    client: AuthenticatedClient,
+    client: Client,
     body: CommitProjectFileRequest,
     origin: str,
     audaligo_transfer_continuation: str | Unset = UNSET,
@@ -162,7 +162,7 @@ async def asyncio_detailed(
     project: str,
     file: str,
     *,
-    client: AuthenticatedClient,
+    client: Client,
     body: CommitProjectFileRequest,
     origin: str,
     audaligo_transfer_continuation: str | Unset = UNSET,
@@ -203,7 +203,7 @@ async def asyncio(
     project: str,
     file: str,
     *,
-    client: AuthenticatedClient,
+    client: Client,
     body: CommitProjectFileRequest,
     origin: str,
     audaligo_transfer_continuation: str | Unset = UNSET,

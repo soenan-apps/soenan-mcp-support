@@ -15,12 +15,41 @@ from urllib.parse import SplitResult, urlsplit
 class TransferError(Exception):
     """A transfer failed without disclosing its bearer capability."""
 
+    code = "transfer_failed"
+    recoverable = False
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str | None = None,
+        recoverable: bool | None = None,
+    ) -> None:
+        super().__init__(message)
+        if code is not None:
+            self.code = code
+        if recoverable is not None:
+            self.recoverable = recoverable
+
+    def wire_value(self) -> dict[str, object]:
+        return {
+            "error": {
+                "code": self.code,
+                "message": str(self),
+                "recoverable": self.recoverable,
+            }
+        }
+
 
 class TransferSizeMismatch(TransferError):
-    """A ciphertext byte count differs from the signed capability."""
+    """A local or remote byte count differs from the authorized descriptor."""
 
-    def __init__(self) -> None:
-        super().__init__("ciphertext byte count does not match capability")
+    code = "size_mismatch"
+
+    def __init__(
+        self, message: str = "ciphertext byte count does not match capability"
+    ) -> None:
+        super().__init__(message)
 
 
 class TransferHTTPError(TransferError):
@@ -28,14 +57,21 @@ class TransferHTTPError(TransferError):
 
     def __init__(self, status: int) -> None:
         self.status = status
-        super().__init__(f"remote endpoint returned HTTP {status}")
+        super().__init__(
+            f"remote endpoint returned HTTP {status}",
+            code="authorization_expired" if status in {401, 403} else "remote_error",
+            recoverable=status in {401, 403, 408, 429, 500, 502, 503, 504},
+        )
 
 
 class TransferTimeoutError(TransferError):
-    """The configured direct Bucket transfer deadline elapsed."""
+    """The configured direct transfer deadline elapsed."""
+
+    code = "timeout"
+    recoverable = True
 
     def __init__(self) -> None:
-        super().__init__("direct Bucket transfer deadline elapsed")
+        super().__init__("direct transfer deadline elapsed")
 
 
 @dataclass(frozen=True)
