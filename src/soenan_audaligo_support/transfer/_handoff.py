@@ -424,8 +424,17 @@ def _fields(
     value: Mapping[str, Any], required: set[str], allowed: set[str], label: str
 ) -> None:
     actual = set(value)
-    if not required.issubset(actual) or not actual.issubset(allowed):
-        raise TransferError(f"{label} fields do not match the transfer contract")
+    missing = required - actual
+    unexpected = actual - allowed
+    if missing or unexpected:
+        details = []
+        if missing:
+            details.append("missing=" + ",".join(sorted(missing)))
+        if unexpected:
+            details.append("unexpected=" + ",".join(sorted(unexpected)))
+        raise TransferError(
+            f"{label} fields do not match the transfer contract ({'; '.join(details)})"
+        )
 
 
 def _bounded_string(value: Mapping[str, Any], key: str, maximum: int) -> str:
