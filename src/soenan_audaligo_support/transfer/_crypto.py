@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import os
+import hmac
 import struct
 from base64 import urlsafe_b64decode, urlsafe_b64encode
 from binascii import Error as BinasciiError
@@ -190,7 +190,13 @@ def build_encryption_plan(
     if not 1 <= chunk_count <= MAXIMUM_CHUNKS:
         raise EncryptionContractError("plaintext exceeds the managed transfer limit")
 
-    nonce_base = _nonzero_random(8)
+    nonce_base = _replay_stable_nonce_base(
+        data_key,
+        project_id=project_id,
+        file_id=file_id,
+        object_id=object_id,
+        epoch=epoch,
+    )
 
     start = stream.tell()
     chunks: list[ChunkMetadata] = []
@@ -471,11 +477,20 @@ def _validate_identity(value: str) -> None:
     _context(value)
 
 
-def _nonzero_random(length: int) -> bytes:
-    while True:
-        value = os.urandom(length)
-        if any(value):
-            return value
+def _replay_stable_nonce_base(
+    data_key: bytes,
+    *,
+    project_id: str,
+    file_id: str,
+    object_id: str,
+    epoch: int,
+) -> bytes:
+    context = bytearray(b"audaligo:managed:nonce-base:v1")
+    for value in (project_id, file_id, object_id):
+        _append_string(context, value)
+    context.extend(struct.pack(">Q", epoch))
+    nonce_base = hmac.digest(data_key, context, "sha256")[:8]
+    return nonce_base if any(nonce_base) else b"\x00\x00\x00\x00\x00\x00\x00\x01"
 
 
 def _read_exact(stream: BinaryIO, length: int) -> bytes:

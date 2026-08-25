@@ -96,7 +96,7 @@ def put_ciphertext(
     timeouts: TransferTimeouts,
     transport: TransferTransport,
 ) -> None:
-    parsed = _parse_url(url)
+    parsed = _parse_url(url, transport)
     deadline = time.monotonic() + timeouts.total
     connection = _connection(parsed, timeouts, deadline, transport)
     watchdog = _deadline_watchdog(connection, deadline)
@@ -146,7 +146,7 @@ def get_ciphertext(
 ) -> bytes:
     if expected_length <= 0:
         raise ValueError("expected_length must be positive")
-    parsed = _parse_url(url)
+    parsed = _parse_url(url, transport)
     deadline = time.monotonic() + timeouts.total
     connection = _connection(parsed, timeouts, deadline, transport)
     watchdog = _deadline_watchdog(connection, deadline)
@@ -207,7 +207,7 @@ def post_control_json(
         raise TransferError("control-plane request exceeds its size limit")
     if not 1 <= maximum_response_bytes <= 1_048_576:
         raise ValueError("maximum_response_bytes is outside the control-plane limit")
-    parsed = _parse_url(url)
+    parsed = _parse_url(url, transport)
     deadline = time.monotonic() + timeouts.total
     connection = _connection(parsed, timeouts, deadline, transport)
     watchdog = _deadline_watchdog(connection, deadline)
@@ -259,7 +259,7 @@ def post_control_json(
         connection.close()
 
 
-def _parse_url(url: str) -> SplitResult:
+def _parse_url(url: str, transport: TransferTransport) -> SplitResult:
     if not isinstance(url, str) or not url or len(url) > 8192 or "#" in url:
         raise TransferError("Bucket capability URL is invalid")
     parsed = urlsplit(url)
@@ -271,12 +271,26 @@ def _parse_url(url: str) -> SplitResult:
     ):
         raise TransferError("Bucket capability URL is invalid")
     try:
-        _ = parsed.port
+        port = parsed.port
     except ValueError:
         raise TransferError("Bucket capability URL is invalid") from None
+    if port is not None and not 1 <= port <= 65535:
+        raise TransferError("Bucket capability URL is invalid")
+    if parsed.scheme == "http" and (
+        not _is_loopback(parsed.hostname)
+        or (
+            transport.connect_host is not None
+            and not _is_loopback(transport.connect_host)
+        )
+    ):
+        raise TransferError("Bucket capability URL must use HTTPS")
     if parsed.path == "" or any(character in url for character in ("\r", "\n", "\x00")):
         raise TransferError("Bucket capability URL is invalid")
     return parsed
+
+
+def _is_loopback(host: str) -> bool:
+    return host.lower() in {"localhost", "127.0.0.1", "::1"}
 
 
 def _validated_headers(headers: Mapping[str, str]) -> dict[str, str]:

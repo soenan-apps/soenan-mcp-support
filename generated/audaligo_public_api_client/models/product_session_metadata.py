@@ -6,8 +6,10 @@ from typing import Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 
-from ..models.product_session_metadata_client_kind import ProductSessionMetadataClientKind
-from ..types import UNSET, Unset
+from ..models.product_session_metadata_client_kind import (
+    ProductSessionMetadataClientKind,
+)
+from ..types import UNSET, Unset, parse_datetime
 
 T = TypeVar("T", bound="ProductSessionMetadata")
 
@@ -88,9 +90,9 @@ class ProductSessionMetadata:
         d = dict(src_dict)
         id = d.pop("id")
 
-        issued_at = datetime.datetime.fromisoformat(d.pop("issuedAt"))
+        issued_at = parse_datetime(d.pop("issuedAt"))
 
-        access_expires_at = datetime.datetime.fromisoformat(d.pop("accessExpiresAt"))
+        access_expires_at = parse_datetime(d.pop("accessExpiresAt"))
 
         refreshable = d.pop("refreshable")
 
@@ -106,7 +108,7 @@ class ProductSessionMetadata:
             try:
                 if not isinstance(data, str):
                     raise TypeError()
-                refresh_expires_at_type_1 = datetime.datetime.fromisoformat(data)
+                refresh_expires_at_type_1 = parse_datetime(data)
 
                 return refresh_expires_at_type_1
             except (TypeError, ValueError, AttributeError, KeyError):
@@ -123,7 +125,7 @@ class ProductSessionMetadata:
             try:
                 if not isinstance(data, str):
                     raise TypeError()
-                refresh_recommended_after_type_1 = datetime.datetime.fromisoformat(data)
+                refresh_recommended_after_type_1 = parse_datetime(data)
 
                 return refresh_recommended_after_type_1
             except (TypeError, ValueError, AttributeError, KeyError):

@@ -8,6 +8,7 @@ from attrs import define as _attrs_define
 
 from ..models.invitation_summary_access_role import InvitationSummaryAccessRole
 from ..models.invitation_summary_state import InvitationSummaryState
+from ..types import parse_datetime
 
 T = TypeVar("T", bound="InvitationSummary")
 
@@ -82,11 +83,11 @@ class InvitationSummary:
 
         token_generation = d.pop("tokenGeneration")
 
-        issued_at = datetime.datetime.fromisoformat(d.pop("issuedAt"))
+        issued_at = parse_datetime(d.pop("issuedAt"))
 
-        expires_at = datetime.datetime.fromisoformat(d.pop("expiresAt"))
+        expires_at = parse_datetime(d.pop("expiresAt"))
 
-        created_at = datetime.datetime.fromisoformat(d.pop("createdAt"))
+        created_at = parse_datetime(d.pop("createdAt"))
 
         invitation_summary = cls(
             id=id,

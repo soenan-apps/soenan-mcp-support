@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 
+from ..types import parse_datetime
+
 if TYPE_CHECKING:
     from ..models.comment_reply import CommentReply
     from ..models.member_actor import MemberActor
@@ -131,7 +133,7 @@ class TimelineComment:
 
         resolved = d.pop("resolved")
 
-        created_at = datetime.datetime.fromisoformat(d.pop("createdAt"))
+        created_at = parse_datetime(d.pop("createdAt"))
 
         replies = []
         _replies = d.pop("replies")

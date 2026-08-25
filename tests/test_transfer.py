@@ -10,18 +10,28 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
+from audaligo_public_api_client.models.bucket_capability import BucketCapability
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from soenan_audaligo_support.transfer import (
     AudaligoTransferAPI,
+    TransferError,
     TransferTimeouts,
+    TransferTransport,
     _api,
     _cli,
     download_file,
     upload_file,
 )
-from soenan_audaligo_support.transfer._crypto import CHUNK_SIZE, chunk_aad, chunk_nonce
+from soenan_audaligo_support.transfer._crypto import (
+    CHUNK_SIZE,
+    build_encryption_plan,
+    chunk_aad,
+    chunk_nonce,
+)
+from soenan_audaligo_support.transfer._http import put_ciphertext
 
 
 @pytest.fixture
@@ -105,6 +115,54 @@ def test_managed_chunk_encryption_matches_audaligo_vector() -> None:
     )
 
 
+def test_generated_client_parses_rfc3339_utc_z() -> None:
+    capability = BucketCapability.from_dict(
+        {
+            "contract": "audaligo.railway-bucket-capability",
+            "v": 1,
+            "operation": "PUT",
+            "objectId": "upload_123",
+            "chunkIndex": 0,
+            "expiresAt": "2026-07-30T00:00:00Z",
+            "contentLength": 17,
+            "url": "https://bucket.example/upload",
+            "headers": {},
+        }
+    )
+
+    assert capability.expires_at.isoformat() == "2026-07-30T00:00:00+00:00"
+
+
+def test_encryption_plan_is_stable_for_operation_replay() -> None:
+    plaintext = b"replayed upload"
+    arguments = {
+        "project_id": "project_123",
+        "file_id": "operation_123",
+        "object_id": "upload_123",
+        "epoch": 7,
+        "data_key": bytes(range(1, 33)),
+        "wrapped_nonce": bytes(range(1, 13)),
+        "wrapped_data_key": bytes(range(33, 81)),
+        "plaintext_size": len(plaintext),
+    }
+    first = build_encryption_plan(io.BytesIO(plaintext), **arguments)
+    replay = build_encryption_plan(io.BytesIO(plaintext), **arguments)
+
+    assert first.manifest() == replay.manifest()
+    assert first.seal_chunk(plaintext, 0) == replay.seal_chunk(plaintext, 0)
+
+
+def test_capability_plaintext_requires_loopback() -> None:
+    with pytest.raises(TransferError, match="must use HTTPS"):
+        put_ciphertext(
+            "http://bucket.example/upload?signature=secret",
+            {},
+            b"ciphertext",
+            timeouts=TransferTimeouts(connect=1, read=1, total=1),
+            transport=TransferTransport(),
+        )
+
+
 def test_api_allows_plaintext_only_for_exact_loopback_hosts() -> None:
     for endpoint in (
         "http://localhost.attacker.example",
@@ -117,6 +175,39 @@ def test_api_allows_plaintext_only_for_exact_loopback_hosts() -> None:
                 access_token="a" * 43,
                 timeouts=TransferTimeouts(connect=1, read=1, total=1),
             )
+    for endpoint in ("https://", "https://audaligo.example:invalid"):
+        with pytest.raises(ValueError):
+            AudaligoTransferAPI(
+                base_url=endpoint,
+                access_token="a" * 43,
+                timeouts=TransferTimeouts(connect=1, read=1, total=1),
+            )
+
+
+def test_api_translates_generated_transport_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unavailable(*args: object, **arguments: object) -> object:
+        raise httpx.ConnectError("connection failed")
+
+    monkeypatch.setattr(
+        _api.create_encrypted_object_upload,
+        "sync_detailed",
+        unavailable,
+    )
+    api = AudaligoTransferAPI(
+        base_url="https://audaligo.example",
+        access_token="a" * 43,
+        timeouts=TransferTimeouts(connect=1, read=1, total=1),
+    )
+    with pytest.raises(TransferError, match="Audaligo API request failed"):
+        api.begin_upload(
+            project_id="project_123",
+            operation_id="operation_123",
+            mix_version_id=None,
+            filename="mix.wav",
+            plaintext_size=4096,
+        )
 
 
 def test_preview_upload_uses_generated_contract_values(

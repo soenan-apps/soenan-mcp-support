@@ -7,7 +7,7 @@ from typing import Any, TypeVar, cast
 from attrs import define as _attrs_define
 
 from ..models.chat_event_type import ChatEventType
-from ..types import UNSET, Unset
+from ..types import UNSET, Unset, parse_datetime
 
 T = TypeVar("T", bound="ChatEvent")
 
@@ -103,7 +103,7 @@ class ChatEvent:
 
         revision = d.pop("revision")
 
-        committed_at = datetime.datetime.fromisoformat(d.pop("committedAt"))
+        committed_at = parse_datetime(d.pop("committedAt"))
 
         def _parse_body(data: object) -> None | str | Unset:
             if data is None:

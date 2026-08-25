@@ -6,6 +6,8 @@ from typing import Any, TypeVar
 
 from attrs import define as _attrs_define
 
+from ..types import parse_datetime
+
 T = TypeVar("T", bound="TermsVersion")
 
 
@@ -81,9 +83,9 @@ class TermsVersion:
 
         language_tag = d.pop("languageTag")
 
-        published_at = datetime.datetime.fromisoformat(d.pop("publishedAt"))
+        published_at = parse_datetime(d.pop("publishedAt"))
 
-        effective_at = datetime.datetime.fromisoformat(d.pop("effectiveAt"))
+        effective_at = parse_datetime(d.pop("effectiveAt"))
 
         terms_version = cls(
             id=id,

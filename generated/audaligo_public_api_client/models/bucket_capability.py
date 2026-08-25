@@ -8,6 +8,7 @@ from attrs import define as _attrs_define
 
 from ..models.bucket_capability_contract import BucketCapabilityContract
 from ..models.bucket_capability_operation import BucketCapabilityOperation
+from ..types import parse_datetime
 
 if TYPE_CHECKING:
     from ..models.capability_headers import CapabilityHeaders
@@ -93,7 +94,7 @@ class BucketCapability:
 
         chunk_index = d.pop("chunkIndex")
 
-        expires_at = datetime.datetime.fromisoformat(d.pop("expiresAt"))
+        expires_at = parse_datetime(d.pop("expiresAt"))
 
         content_length = d.pop("contentLength")
 

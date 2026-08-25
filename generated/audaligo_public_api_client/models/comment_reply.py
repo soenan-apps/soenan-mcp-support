@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 
+from ..types import parse_datetime
+
 if TYPE_CHECKING:
     from ..models.member_actor import MemberActor
 
@@ -61,7 +63,7 @@ class CommentReply:
 
         author = MemberActor.from_dict(d.pop("author"))
 
-        created_at = datetime.datetime.fromisoformat(d.pop("createdAt"))
+        created_at = parse_datetime(d.pop("createdAt"))
 
         comment_reply = cls(
             id=id,

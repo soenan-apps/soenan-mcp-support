@@ -7,6 +7,7 @@ from typing import Any, TypeVar
 from attrs import define as _attrs_define
 
 from ..models.accepted_invitation_state_state import AcceptedInvitationStateState
+from ..types import parse_datetime
 
 T = TypeVar("T", bound="AcceptedInvitationState")
 
@@ -57,7 +58,7 @@ class AcceptedInvitationState:
 
         state = AcceptedInvitationStateState(d.pop("state"))
 
-        consumed_at = datetime.datetime.fromisoformat(d.pop("consumedAt"))
+        consumed_at = parse_datetime(d.pop("consumedAt"))
 
         accepted_invitation_state = cls(
             id=id,

@@ -8,7 +8,7 @@ from attrs import define as _attrs_define
 
 from ..models.project_detail_status import ProjectDetailStatus
 from ..models.project_participation_policy import ProjectParticipationPolicy
-from ..types import UNSET, Unset
+from ..types import UNSET, Unset, parse_datetime
 
 if TYPE_CHECKING:
     from ..models.current_membership import CurrentMembership
@@ -135,9 +135,9 @@ class ProjectDetail:
 
         responsibility = Responsibility.from_dict(d.pop("responsibility"))
 
-        created_at = datetime.datetime.fromisoformat(d.pop("createdAt"))
+        created_at = parse_datetime(d.pop("createdAt"))
 
-        updated_at = datetime.datetime.fromisoformat(d.pop("updatedAt"))
+        updated_at = parse_datetime(d.pop("updatedAt"))
 
         brief = ProjectBrief.from_dict(d.pop("brief"))
 

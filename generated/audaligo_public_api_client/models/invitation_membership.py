@@ -8,7 +8,7 @@ from attrs import define as _attrs_define
 
 from ..models.invitation_membership_access_role import InvitationMembershipAccessRole
 from ..models.invitation_membership_state import InvitationMembershipState
-from ..types import UNSET, Unset
+from ..types import UNSET, Unset, parse_datetime
 
 T = TypeVar("T", bound="InvitationMembership")
 
@@ -107,7 +107,7 @@ class InvitationMembership:
             try:
                 if not isinstance(data, str):
                     raise TypeError()
-                joined_at_type_1 = datetime.datetime.fromisoformat(data)
+                joined_at_type_1 = parse_datetime(data)
 
                 return joined_at_type_1
             except (TypeError, ValueError, AttributeError, KeyError):
@@ -124,7 +124,7 @@ class InvitationMembership:
             try:
                 if not isinstance(data, str):
                     raise TypeError()
-                removed_at_type_1 = datetime.datetime.fromisoformat(data)
+                removed_at_type_1 = parse_datetime(data)
 
                 return removed_at_type_1
             except (TypeError, ValueError, AttributeError, KeyError):

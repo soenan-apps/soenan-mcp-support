@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from http import HTTPStatus
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 from audaligo_public_api_client import AuthenticatedClient
@@ -40,16 +40,28 @@ class AudaligoTransferAPI:
         control_transport: httpx.BaseTransport | None = None,
     ) -> None:
         parsed = urlsplit(base_url)
-        if parsed.username is not None or parsed.password is not None:
-            raise ValueError("Audaligo API URL must not contain user information")
+        try:
+            port = parsed.port
+        except ValueError:
+            raise ValueError("Audaligo API URL is invalid") from None
+        if (
+            not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+            or parsed.path not in ("", "/")
+            or (port is not None and not 1 <= port <= 65535)
+        ):
+            raise ValueError("Audaligo API URL is invalid")
         if parsed.scheme != "https" and not (
             parsed.scheme == "http"
-            and parsed.hostname in {"localhost", "127.0.0.1"}
+            and parsed.hostname.lower() in {"localhost", "127.0.0.1", "::1"}
         ):
             raise ValueError("Audaligo API URL must use HTTPS")
         if len(access_token.encode("utf-8")) != 43:
             raise ValueError("Audaligo access token is invalid")
-        self._origin = base_url.rstrip("/")
+        self._origin = urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
         self._client = AuthenticatedClient(
             base_url=self._origin,
             token=access_token,
@@ -90,9 +102,9 @@ class AudaligoTransferAPI:
         body = CreateUploadRequest.from_dict(
             {} if preview_intent is None else {"previewIntent": preview_intent}
         )
-        response = create_encrypted_object_upload.sync_detailed(
+        response = self._request(
+            create_encrypted_object_upload.sync_detailed,
             project_id,
-            client=self._client,
             body=body,
             origin=self._origin,
             idempotency_key=operation_id,
@@ -102,10 +114,10 @@ class AudaligoTransferAPI:
     def put_manifest(
         self, *, project_id: str, upload_id: str, manifest: Mapping[str, Any]
     ) -> Mapping[str, Any]:
-        response = put_encrypted_object_manifest.sync_detailed(
+        response = self._request(
+            put_encrypted_object_manifest.sync_detailed,
             project_id,
             upload_id,
-            client=self._client,
             body=PutManifestRequest.from_dict({"manifest": dict(manifest)}),
             origin=self._origin,
         )
@@ -114,20 +126,20 @@ class AudaligoTransferAPI:
     def upload_capability(
         self, *, project_id: str, upload_id: str, chunk_index: int
     ) -> Mapping[str, Any]:
-        response = create_chunk_upload_capability.sync_detailed(
+        response = self._request(
+            create_chunk_upload_capability.sync_detailed,
             project_id,
             upload_id,
             chunk_index,
-            client=self._client,
             origin=self._origin,
         )
         return self._capability(response)
 
     def complete_upload(self, *, project_id: str, upload_id: str) -> Mapping[str, Any]:
-        response = complete_encrypted_object_chunks.sync_detailed(
+        response = self._request(
+            complete_encrypted_object_chunks.sync_detailed,
             project_id,
             upload_id,
-            client=self._client,
             origin=self._origin,
         )
         return self._body(response, HTTPStatus.OK)
@@ -150,18 +162,20 @@ class AudaligoTransferAPI:
         }
         if mix_version_id is not None:
             value["mixVersionId"] = mix_version_id
-        response = commit_encrypted_project_file.sync_detailed(
+        response = self._request(
+            commit_encrypted_project_file.sync_detailed,
             project_id,
             file_id,
-            client=self._client,
             body=CommitProjectFileRequest.from_dict(value),
             origin=self._origin,
         )
         return self._body(response, HTTPStatus.OK, HTTPStatus.CREATED)
 
     def read_descriptor(self, *, project_id: str, file_id: str) -> Mapping[str, Any]:
-        response = get_encrypted_project_file_read_descriptor.sync_detailed(
-            project_id, file_id, client=self._client
+        response = self._request(
+            get_encrypted_project_file_read_descriptor.sync_detailed,
+            project_id,
+            file_id,
         )
         body = self._body(response, HTTPStatus.OK)
         descriptor = _mapping(body, "descriptor")
@@ -181,10 +195,24 @@ class AudaligoTransferAPI:
         object_id: str,
         chunk_index: int,
     ) -> Mapping[str, Any]:
-        response = get_chunk_read_capability.sync_detailed(
-            project_id, object_id, chunk_index, client=self._client
+        response = self._request(
+            get_chunk_read_capability.sync_detailed,
+            project_id,
+            object_id,
+            chunk_index,
         )
         return self._capability(response)
+
+    def _request(
+        self,
+        operation: Any,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Response[Any]:
+        try:
+            return operation(*args, client=self._client, **kwargs)
+        except httpx.HTTPError:
+            raise TransferError("Audaligo API request failed") from None
 
     @staticmethod
     def _body(response: Response[Any], *expected: HTTPStatus) -> Mapping[str, Any]:

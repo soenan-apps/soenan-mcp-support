@@ -7,7 +7,7 @@ from typing import Any, TypeVar, cast
 from attrs import define as _attrs_define
 
 from ..models.encrypted_project_file_file_kind import EncryptedProjectFileFileKind
-from ..types import UNSET, Unset
+from ..types import UNSET, Unset, parse_datetime
 
 T = TypeVar("T", bound="EncryptedProjectFile")
 
@@ -108,9 +108,9 @@ class EncryptedProjectFile:
 
         mime_type = d.pop("mimeType")
 
-        created_at = datetime.datetime.fromisoformat(d.pop("createdAt"))
+        created_at = parse_datetime(d.pop("createdAt"))
 
-        updated_at = datetime.datetime.fromisoformat(d.pop("updatedAt"))
+        updated_at = parse_datetime(d.pop("updatedAt"))
 
         def _parse_mix_version_id(data: object) -> None | str | Unset:
             if data is None:

@@ -8,7 +8,7 @@ from attrs import define as _attrs_define
 
 from ..models.project_participation_policy import ProjectParticipationPolicy
 from ..models.project_summary_status import ProjectSummaryStatus
-from ..types import UNSET, Unset
+from ..types import UNSET, Unset, parse_datetime
 
 if TYPE_CHECKING:
     from ..models.responsibility import Responsibility
@@ -111,9 +111,9 @@ class ProjectSummary:
 
         responsibility = Responsibility.from_dict(d.pop("responsibility"))
 
-        created_at = datetime.datetime.fromisoformat(d.pop("createdAt"))
+        created_at = parse_datetime(d.pop("createdAt"))
 
-        updated_at = datetime.datetime.fromisoformat(d.pop("updatedAt"))
+        updated_at = parse_datetime(d.pop("updatedAt"))
 
         def _parse_deadline_date(data: object) -> None | str | Unset:
             if data is None:
