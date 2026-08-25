@@ -240,10 +240,18 @@ def post_control_json(
                 raise TransferHTTPError(response.status)
             if response.status != 200:
                 raise TransferHTTPError(response.status)
-            response_body = response.read(maximum_response_bytes + 1)
+            response_body = bytearray()
+            while len(response_body) <= maximum_response_bytes:
+                _set_socket_timeout(connection, timeouts, deadline)
+                chunk = response.read1(
+                    min(65_536, maximum_response_bytes + 1 - len(response_body))
+                )
+                if not chunk:
+                    break
+                response_body.extend(chunk)
             if len(response_body) > maximum_response_bytes:
                 raise TransferError("key claim response exceeds its size limit")
-            return response_body
+            return bytes(response_body)
         finally:
             response.close()
     except TransferError:

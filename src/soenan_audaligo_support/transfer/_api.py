@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from collections.abc import Mapping
 from http import HTTPStatus
 from typing import Any
@@ -24,13 +25,13 @@ from audaligo_public_api_client.models.put_manifest_request import PutManifestRe
 from audaligo_public_api_client.types import Response
 from typing_extensions import Self
 
-from ._http import TransferError, TransferTimeouts
+from ._http import TransferError, TransferTimeoutError, TransferTimeouts
 
 
 class AudaligoTransferAPI:
     """Typed control-plane access generated from Audaligo's public OpenAPI contract."""
 
-    __slots__ = ("_client", "_origin")
+    __slots__ = ("_client", "_origin", "_total_timeout")
 
     def __init__(
         self,
@@ -63,12 +64,12 @@ class AudaligoTransferAPI:
         if len(access_token.encode("utf-8")) != 43:
             raise ValueError("Audaligo access token is invalid")
         self._origin = urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
+        self._total_timeout = timeouts.total
         self._client = AuthenticatedClient(
             base_url=self._origin,
             token=access_token,
             prefix="Bearer",
             timeout=httpx.Timeout(
-                timeout=timeouts.total,
                 connect=timeouts.connect,
                 read=timeouts.read,
                 write=timeouts.read,
@@ -220,10 +221,38 @@ class AudaligoTransferAPI:
         *args: Any,
         **kwargs: Any,
     ) -> Response[Any]:
-        try:
-            return operation(*args, client=self._client, **kwargs)
-        except (AttributeError, httpx.HTTPError, KeyError, TypeError, ValueError):
+        result: list[Response[Any] | Exception] = []
+        completed = threading.Event()
+
+        def invoke() -> None:
+            try:
+                result.append(operation(*args, client=self._client, **kwargs))
+            except (
+                TransferError,
+                AttributeError,
+                httpx.HTTPError,
+                KeyError,
+                TypeError,
+                ValueError,
+            ) as error:
+                result.append(error)
+            finally:
+                completed.set()
+
+        threading.Thread(target=invoke, daemon=True).start()
+        if not completed.wait(self._total_timeout):
+            raise TransferTimeoutError()
+        if not result:
+            raise TransferError("Audaligo API request failed")
+        outcome = result[0]
+        if isinstance(outcome, TransferError):
+            raise outcome
+        if isinstance(
+            outcome,
+            (AttributeError, httpx.HTTPError, KeyError, TypeError, ValueError),
+        ):
             raise TransferError("Audaligo API request failed") from None
+        return outcome
 
     @staticmethod
     def _body(response: Response[Any], *expected: HTTPStatus) -> Mapping[str, Any]:

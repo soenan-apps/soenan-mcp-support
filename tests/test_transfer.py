@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import threading
+import time
 from base64 import urlsafe_b64encode
 from collections.abc import Mapping
 from contextlib import nullcontext
@@ -19,6 +20,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from soenan_audaligo_support.transfer import (
     AudaligoTransferAPI,
     TransferError,
+    TransferTimeoutError,
     TransferTimeouts,
     TransferTransport,
     _api,
@@ -215,6 +217,35 @@ def test_api_translates_generated_transport_failures(
         )
 
 
+def test_generated_control_calls_enforce_the_total_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def slow_response(*args: object, **arguments: object) -> object:
+        time.sleep(0.2)
+        return object()
+
+    monkeypatch.setattr(
+        _api.create_encrypted_object_upload,
+        "sync_detailed",
+        slow_response,
+    )
+    api = AudaligoTransferAPI(
+        base_url="https://audaligo.example",
+        access_token="a" * 43,
+        timeouts=TransferTimeouts(connect=1, read=1, total=0.02),
+    )
+    started = time.monotonic()
+    with pytest.raises(TransferTimeoutError):
+        api.begin_upload(
+            project_id="project_123",
+            operation_id="operation_123",
+            mix_version_id=None,
+            filename="mix.wav",
+            plaintext_size=4096,
+        )
+    assert time.monotonic() - started < 0.15
+
+
 def test_api_translates_generated_response_parsing_failures(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -287,6 +318,58 @@ def test_key_claim_accepts_ipv6_loopback(
     assert claim.data_key == bytes(range(1, 33))
 
 
+def test_claim_response_read_enforces_the_total_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Socket:
+        def settimeout(self, timeout: float) -> None:
+            pass
+
+    class Response:
+        status = 200
+
+        def read1(self, size: int) -> bytes:
+            time.sleep(0.02)
+            return b"x"
+
+        def close(self) -> None:
+            pass
+
+    class Connection:
+        sock = Socket()
+
+        def connect(self) -> None:
+            pass
+
+        def putrequest(self, *args: object, **arguments: object) -> None:
+            pass
+
+        def putheader(self, *args: object) -> None:
+            pass
+
+        def endheaders(self) -> None:
+            pass
+
+        def send(self, body: bytes) -> None:
+            pass
+
+        def getresponse(self) -> Response:
+            return Response()
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(_http, "_connection", lambda *args: Connection())
+    with pytest.raises(TransferTimeoutError):
+        _http.post_control_json(
+            "http://127.0.0.1/claim",
+            {"audaligo-key-claim": "a" * 43},
+            maximum_response_bytes=1_024,
+            timeouts=TransferTimeouts(connect=1, read=1, total=0.03),
+            transport=TransferTransport(),
+        )
+
+
 def test_ipv6_authority_is_bracketed_and_malformed_urls_are_sanitized() -> None:
     parsed = _http._parse_url("http://[::1]:8081/claim", TransferTransport())
     assert _http._authority(parsed) == "[::1]:8081"
@@ -319,6 +402,36 @@ def test_epoch_rejects_values_outside_the_wire_integer_contract() -> None:
             wrapped_data_key=bytes(range(33, 81)),
             plaintext_size=1,
         )
+
+
+def test_upload_rejects_oversized_epoch_before_consuming_claim(
+    bucket: tuple[str, dict[str, bytes], dict[str, dict[str, object]]],
+) -> None:
+    endpoint, _, claims = bucket
+    claims["/claims/upload"] = _key_claim(
+        "upload",
+        bytes(range(1, 33)),
+        bytes(range(1, 13)),
+        bytes(range(33, 81)),
+    )
+
+    class OversizedEpochAPI:
+        def begin_upload(self, **arguments: object) -> Mapping[str, Any]:
+            return {
+                "uploadId": "upload_123",
+                "keyEpoch": MAXIMUM_WIRE_INTEGER + 1,
+                "keyClaim": _key_claim_descriptor(endpoint, "upload"),
+            }
+
+    with pytest.raises(TransferError, match="must be between"):
+        upload_file(
+            OversizedEpochAPI(),
+            project_id="project_123",
+            filename="mix.wav",
+            source=io.BytesIO(b"x"),
+            operation_id="file_123",
+        )
+    assert "/claims/upload" in claims
 
 
 def test_upload_replay_commits_an_already_ready_object(

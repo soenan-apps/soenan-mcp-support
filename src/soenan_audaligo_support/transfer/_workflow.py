@@ -10,6 +10,7 @@ from typing import Any, BinaryIO, TypeAlias
 from ._api import AudaligoTransferAPI
 from ._claim import redeem_file_key_claim
 from ._crypto import (
+    MAXIMUM_WIRE_INTEGER,
     ChunkMetadata,
     EncryptionContractError,
     build_encryption_plan,
@@ -378,8 +379,8 @@ def _integer(value: Mapping[str, Any], key: str) -> int:
         result = int(raw)
     else:
         raise TransferError(f"{key} must be an integer")
-    if result < 0:
-        raise TransferError(f"{key} must be nonnegative")
+    if not 0 <= result <= MAXIMUM_WIRE_INTEGER:
+        raise TransferError(f"{key} must be between 0 and {MAXIMUM_WIRE_INTEGER}")
     return result
 
 
