@@ -13,8 +13,8 @@ from typing import Any
 import pytest
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from soenan_mcp_support.transfer import download_file, upload_file
-from soenan_mcp_support.transfer._crypto import CHUNK_SIZE, chunk_aad, chunk_nonce
+from soenan_audaligo_support.transfer import download_file, upload_file
+from soenan_audaligo_support.transfer._crypto import CHUNK_SIZE, chunk_aad, chunk_nonce
 
 
 @pytest.fixture
@@ -107,31 +107,49 @@ def test_sdk_encrypts_locally_and_transfers_ciphertext_directly(
     wrapped_nonce = bytes(range(1, 13))
     wrapped_data_key = bytes(range(65, 113))
     plaintext = bytes((index * 37) % 251 for index in range(CHUNK_SIZE + 17))
-    manifest: dict[str, Any] | None = None
+    state: dict[str, Any] = {"manifest": None}
     calls: list[str] = []
 
-    def call_tool(name: str, arguments: Mapping[str, object]) -> Mapping[str, Any]:
-        nonlocal manifest
-        calls.append(name)
-        if name == "audaligo_begin_file_upload":
-            assert arguments["plaintextSize"] == len(plaintext)
+    class FakeAudaligoAPI:
+        def begin_upload(self, **arguments: object) -> Mapping[str, Any]:
+            calls.append("begin_upload")
+            assert arguments["plaintext_size"] == len(plaintext)
             claims["/claims/upload"] = _key_claim(
                 "upload", data_key, wrapped_nonce, wrapped_data_key
             )
             return {
                 "uploadId": "upload_123",
+                "keyEpoch": 0,
                 "keyClaim": _key_claim_descriptor(endpoint, "upload"),
             }
-        if name == "audaligo_put_file_upload_manifest":
-            manifest = json.loads(str(arguments["manifestJson"]))
-            return {"objectId": "upload_123", "state": "manifest_stored"}
-        if name == "audaligo_create_file_upload_chunk_capability":
-            index = int(arguments["chunkIndex"])
-            return _capability(endpoint, "put", index, int(arguments["contentLength"]))
-        if name == "audaligo_complete_file_upload_chunks":
-            assert arguments["chunkIndexes"] == [0, 1]
-            return {"objectId": "upload_123", "state": "chunks_complete"}
-        if name == "audaligo_commit_file_upload":
+
+        def put_manifest(
+            self, *, project_id: str, upload_id: str, manifest: Mapping[str, Any]
+        ) -> Mapping[str, Any]:
+            calls.append("put_manifest")
+            assert set(manifest) == {"v", "type", "suite_id", "encryption", "object"}
+            assert manifest["v"] == 1
+            assert manifest["suite_id"] == "aes-256-gcm-audaligo-v1"
+            state["manifest"] = dict(manifest)
+            return {"objectId": upload_id, "state": "manifest_stored"}
+
+        def upload_capability(
+            self, *, project_id: str, upload_id: str, chunk_index: int
+        ) -> Mapping[str, Any]:
+            calls.append("upload_capability")
+            manifest = state["manifest"]
+            assert isinstance(manifest, Mapping)
+            length = int(manifest["object"]["chunks"][chunk_index]["ciphertext_size"])
+            return _capability(endpoint, "PUT", chunk_index, length)
+
+        def complete_upload(
+            self, *, project_id: str, upload_id: str
+        ) -> Mapping[str, Any]:
+            calls.append("complete_upload")
+            return {"objectId": upload_id, "state": "chunks_complete"}
+
+        def commit_file(self, **arguments: object) -> Mapping[str, Any]:
+            calls.append("commit_file")
             return {
                 "file": {
                     "projectId": "project_123",
@@ -139,40 +157,42 @@ def test_sdk_encrypts_locally_and_transfers_ciphertext_directly(
                     "encryptedObjectId": "upload_123",
                     "originalFilename": "mix.wav",
                     "originalPlaintextSize": str(len(plaintext)),
-                    "mimeType": "application/octet-stream",
-                    "createdAtUnixMilliseconds": "1",
-                    "updatedAtUnixMilliseconds": "1",
                 },
                 "idempotent": False,
             }
-        if name == "audaligo_begin_file_download":
-            assert manifest is not None
+
+        def read_descriptor(
+            self, *, project_id: str, file_id: str
+        ) -> Mapping[str, Any]:
+            calls.append("read_descriptor")
+            manifest = state["manifest"]
+            assert isinstance(manifest, Mapping)
             claims["/claims/download"] = _key_claim(
                 "download", data_key, wrapped_nonce, wrapped_data_key
             )
             return {
                 "file": {
-                    "projectId": "project_123",
-                    "fileId": "file_123",
+                    "projectId": project_id,
+                    "fileId": file_id,
                     "encryptedObjectId": "upload_123",
-                    "originalFilename": "mix.wav",
-                    "originalPlaintextSize": str(len(plaintext)),
-                    "mimeType": "application/octet-stream",
-                    "createdAtUnixMilliseconds": "1",
-                    "updatedAtUnixMilliseconds": "1",
                 },
-                "manifest": _protobuf_json_manifest(manifest),
+                "manifest": manifest,
                 "keyClaim": _key_claim_descriptor(endpoint, "download"),
             }
-        if name == "audaligo_create_file_read_chunk_capability":
-            assert manifest is not None
-            index = int(arguments["chunkIndex"])
-            length = int(manifest["chunks"][index]["ciphertextSize"])
-            return _capability(endpoint, "get", index, length)
-        raise AssertionError(f"unexpected tool: {name}")
+
+        def read_capability(
+            self, *, project_id: str, object_id: str, chunk_index: int
+        ) -> Mapping[str, Any]:
+            calls.append("read_capability")
+            manifest = state["manifest"]
+            assert isinstance(manifest, Mapping)
+            length = int(manifest["object"]["chunks"][chunk_index]["ciphertext_size"])
+            return _capability(endpoint, "GET", chunk_index, length)
+
+    api = FakeAudaligoAPI()
 
     upload_result = upload_file(
-        call_tool,
+        api,
         project_id="project_123",
         filename="mix.wav",
         source=io.BytesIO(plaintext),
@@ -185,14 +205,14 @@ def test_sdk_encrypts_locally_and_transfers_ciphertext_directly(
 
     destination = tmp_path / "download.wav"
     assert download_file(
-        call_tool,
+        api,
         project_id="project_123",
         file_id="file_123",
         destination=destination,
     ) == len(plaintext)
     assert destination.read_bytes() == plaintext
-    assert calls.count("audaligo_create_file_upload_chunk_capability") == 2
-    assert calls.count("audaligo_create_file_read_chunk_capability") == 2
+    assert calls.count("upload_capability") == 2
+    assert calls.count("read_capability") == 2
     assert claims == {}
 
 
@@ -232,27 +252,11 @@ def _b64url(value: bytes) -> str:
 def _capability(
     endpoint: str, operation: str, index: int, content_length: int
 ) -> dict[str, object]:
-    capability: dict[str, object] = {
+    return {
         "operation": operation,
         "objectId": "upload_123",
-        "expiresAtUnixMilliseconds": "4102444800000",
-        "contentLength": str(content_length),
+        "chunkIndex": index,
+        "contentLength": content_length,
         "url": f"{endpoint}/upload_123/{index}?signature=test",
+        "headers": {},
     }
-    if index:
-        capability["chunkIndex"] = index
-    return capability
-
-
-def _protobuf_json_manifest(manifest: Mapping[str, Any]) -> dict[str, Any]:
-    result = json.loads(json.dumps(manifest))
-    result["encryptionMode"] = "managed_encryption"
-    if result["epoch"] == "0":
-        del result["epoch"]
-    for chunk in result["chunks"]:
-        for key in ("chunkIndex", "ciphertextOffset", "plaintextOffset"):
-            if chunk[key] in (0, "0"):
-                del chunk[key]
-        if chunk["finalChunk"] is False:
-            del chunk["finalChunk"]
-    return result
