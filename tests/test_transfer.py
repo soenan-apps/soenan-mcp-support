@@ -266,6 +266,156 @@ def test_timed_out_control_mutation_is_cancelled_before_return_and_worker_joins(
     assert not worker.is_alive()
 
 
+def test_suppressed_request_cancellation_terminalizes_worker_without_late_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cancellation_seen = threading.Event()
+    mutated = threading.Event()
+
+    async def cancellation_resistant(*args: object, **arguments: object) -> object:
+        try:
+            await asyncio.sleep(1)
+        except asyncio.CancelledError:
+            cancellation_seen.set()
+            await asyncio.sleep(0.2)
+            mutated.set()
+            return object()
+
+    monkeypatch.setattr(
+        _api.create_encrypted_object_upload,
+        "asyncio_detailed",
+        cancellation_resistant,
+    )
+    api = AudaligoTransferAPI(
+        base_url="https://audaligo.example",
+        access_token="a" * 43,
+        timeouts=TransferTimeouts(connect=1, read=1, total=0.02),
+    )
+    worker = api._thread
+
+    started = time.monotonic()
+    with pytest.raises(
+        TransferTimeoutError, match="direct Bucket transfer deadline elapsed"
+    ):
+        api.begin_upload(
+            project_id="project_123",
+            operation_id="operation_123",
+            mix_version_id=None,
+            filename="mix.wav",
+            plaintext_size=4096,
+        )
+
+    assert time.monotonic() - started < 0.5
+    assert cancellation_seen.is_set()
+    assert worker.daemon
+    assert not worker.is_alive()
+    time.sleep(0.25)
+    assert not mutated.is_set()
+    with pytest.raises(TransferError, match="Audaligo API close failed"):
+        api.close()
+
+
+def test_hung_async_transport_close_bounds_all_concurrent_closers() -> None:
+    close_started = threading.Event()
+
+    class HungCloseTransport(httpx.MockTransport):
+        async def aclose(self) -> None:
+            close_started.set()
+            try:
+                await asyncio.sleep(1)
+            except asyncio.CancelledError:
+                await asyncio.sleep(1)
+
+    transport = HungCloseTransport(lambda request: httpx.Response(204))
+    api = AudaligoTransferAPI(
+        base_url="https://audaligo.example",
+        access_token="a" * 43,
+        timeouts=TransferTimeouts(connect=1, read=1, total=0.02),
+        control_transport=transport,
+    )
+    worker = api._thread
+    errors: list[BaseException] = []
+
+    def close_api() -> None:
+        try:
+            api.close()
+        except BaseException as error:  # noqa: BLE001
+            errors.append(error)
+
+    first = threading.Thread(target=close_api)
+    second = threading.Thread(target=close_api)
+    started = time.monotonic()
+    first.start()
+    assert close_started.wait(0.5)
+    second.start()
+    first.join(timeout=0.5)
+    second.join(timeout=0.5)
+
+    assert time.monotonic() - started < 0.5
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert len(errors) == 2
+    assert all(type(error) is TransferError for error in errors)
+    assert all(str(error) == "Audaligo API close failed" for error in errors)
+    assert worker.daemon
+    assert not worker.is_alive()
+
+
+def test_timeout_close_race_has_bounded_sanitized_terminal_outcomes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request_started = threading.Event()
+
+    async def cancellation_resistant(*args: object, **arguments: object) -> object:
+        request_started.set()
+        try:
+            await asyncio.sleep(1)
+        except asyncio.CancelledError:
+            await asyncio.sleep(1)
+            return object()
+
+    monkeypatch.setattr(
+        _api.create_encrypted_object_upload,
+        "asyncio_detailed",
+        cancellation_resistant,
+    )
+    api = AudaligoTransferAPI(
+        base_url="https://audaligo.example",
+        access_token="a" * 43,
+        timeouts=TransferTimeouts(connect=1, read=1, total=0.02),
+    )
+    worker = api._thread
+    request_errors: list[BaseException] = []
+
+    def request() -> None:
+        try:
+            api.begin_upload(
+                project_id="project_123",
+                operation_id="operation_123",
+                mix_version_id=None,
+                filename="mix.wav",
+                plaintext_size=4096,
+            )
+        except BaseException as error:  # noqa: BLE001
+            request_errors.append(error)
+
+    requester = threading.Thread(target=request)
+    started = time.monotonic()
+    requester.start()
+    assert request_started.wait(0.5)
+    with pytest.raises(TransferError, match="Audaligo API close failed"):
+        api.close()
+    requester.join(timeout=0.5)
+
+    assert time.monotonic() - started < 0.5
+    assert not requester.is_alive()
+    assert len(request_errors) == 1
+    assert type(request_errors[0]) is TransferTimeoutError
+    assert str(request_errors[0]) == "direct Bucket transfer deadline elapsed"
+    assert worker.daemon
+    assert not worker.is_alive()
+
+
 def test_api_translates_generated_response_parsing_failures(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -80,12 +80,16 @@ class AudaligoTransferAPI:
     """Typed control-plane access generated from Audaligo's public OpenAPI contract."""
 
     __slots__ = (
+        "_cancel_grace",
         "_client",
         "_close_complete",
-        "_closed",
         "_lifecycle_lock",
         "_loop",
+        "_loop_closed",
         "_origin",
+        "_shutdown_grace",
+        "_state",
+        "_terminal_error",
         "_thread",
         "_total_timeout",
     )
@@ -122,9 +126,13 @@ class AudaligoTransferAPI:
             raise ValueError("Audaligo access token is invalid")
         self._origin = urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
         self._total_timeout = timeouts.total
-        self._closed = False
+        self._cancel_grace = max(0.05, min(timeouts.total, 1.0))
+        self._shutdown_grace = self._cancel_grace
+        self._state = "running"
+        self._terminal_error = False
         self._close_complete = threading.Event()
         self._lifecycle_lock = threading.Lock()
+        self._loop_closed = False
         self._client = AuthenticatedClient(
             base_url=self._origin,
             token=access_token,
@@ -152,34 +160,111 @@ class AudaligoTransferAPI:
         self._thread = threading.Thread(
             target=run_loop,
             name="audaligo-transfer-control",
+            daemon=True,
         )
         self._thread.start()
-        ready.wait()
+        if not ready.wait(self._shutdown_grace):
+            self._terminalize(failed=True)
+            raise TransferError("Audaligo API worker failed to start")
 
     def close(self) -> None:
+        future: Any | None = None
+        wait_for_close = False
+        schedule_failed = False
         with self._lifecycle_lock:
-            if self._closed:
+            if self._state == "running":
+                self._state = "closing"
+                close_operation = self._close_async()
+                try:
+                    future = asyncio.run_coroutine_threadsafe(
+                        close_operation, self._loop
+                    )
+                except RuntimeError:
+                    close_operation.close()
+                    schedule_failed = True
+            elif self._state == "closing":
                 wait_for_close = True
             else:
-                self._closed = True
-                wait_for_close = False
-        if wait_for_close:
-            self._close_complete.wait()
-            return
-        close_error: BaseException | None = None
-        try:
-            future = asyncio.run_coroutine_threadsafe(self._close_async(), self._loop)
-            future.result()
-        # Third-party transports have no narrower close exception contract.
-        except Exception as error:  # noqa: BLE001
-            close_error = error
-        finally:
-            self._loop.call_soon_threadsafe(self._loop.stop)
-            self._thread.join()
-            self._loop.close()
-            self._close_complete.set()
-        if close_error is not None:
+                wait_for_close = not self._close_complete.is_set()
+
+        if schedule_failed:
+            self._terminalize(failed=True)
+        elif wait_for_close:
+            if not self._close_complete.wait(3 * self._shutdown_grace):
+                self._terminalize(failed=True)
+        elif future is not None:
+            close_failed = False
+            try:
+                future.result(timeout=self._shutdown_grace)
+            # Third-party transports have no narrower close exception contract.
+            except Exception:  # noqa: BLE001
+                close_failed = True
+                future.cancel()
+            self._terminalize(failed=close_failed)
+
+        with self._lifecycle_lock:
+            terminal_error = self._terminal_error
+        if terminal_error:
             raise TransferError("Audaligo API close failed") from None
+
+    def _terminalize(self, *, failed: bool) -> None:
+        with self._lifecycle_lock:
+            self._state = "terminal"
+            self._terminal_error = self._terminal_error or failed
+            should_stop = not self._loop_closed and self._thread.is_alive()
+
+        if should_stop:
+
+            def cancel_pending_and_stop() -> None:
+                current = asyncio.current_task()
+                pending = [
+                    task
+                    for task in asyncio.all_tasks()
+                    if task is not current and not task.done()
+                ]
+                for task in pending:
+                    task.cancel()
+                if pending:
+                    self._loop.call_later(self._shutdown_grace, self._loop.stop)
+                else:
+                    self._loop.stop()
+
+            try:
+                self._loop.call_soon_threadsafe(cancel_pending_and_stop)
+            except RuntimeError:
+                with self._lifecycle_lock:
+                    self._terminal_error = True
+
+        self._thread.join(timeout=2 * self._shutdown_grace)
+        pending: list[asyncio.Task[Any]] = []
+        if not self._thread.is_alive():
+            pending = [
+                task for task in asyncio.all_tasks(self._loop) if not task.done()
+            ]
+            if pending:
+                for task in pending:
+                    task.cancel()
+                self._loop.run_until_complete(
+                    asyncio.wait(pending, timeout=self._shutdown_grace)
+                )
+                pending = [task for task in pending if not task.done()]
+            if pending:
+                for task in pending:
+                    task.cancel()
+                self._loop.run_until_complete(asyncio.sleep(0))
+                pending = [task for task in pending if not task.done()]
+
+        with self._lifecycle_lock:
+            if self._thread.is_alive() or pending:
+                self._terminal_error = True
+            elif not self._loop_closed:
+                try:
+                    self._loop.close()
+                except RuntimeError:
+                    self._terminal_error = True
+                else:
+                    self._loop_closed = True
+            self._close_complete.set()
 
     async def _close_async(self) -> None:
         current = asyncio.current_task()
@@ -334,13 +419,28 @@ class AudaligoTransferAPI:
             args,
             {"client": self._client, **kwargs},
         )
+        schedule_failed = False
         with self._lifecycle_lock:
-            if self._closed:
+            if self._state != "running":
                 raise TransferError("Audaligo API is closed")
-            self._loop.call_soon_threadsafe(request.start)
+            try:
+                self._loop.call_soon_threadsafe(request.start)
+            except RuntimeError:
+                schedule_failed = True
+        if schedule_failed:
+            self._terminalize(failed=True)
+            raise TransferError("Audaligo API request failed") from None
+
         if not request.completed.wait(self._total_timeout):
-            self._loop.call_soon_threadsafe(request.cancel)
-            request.completed.wait()
+            cancellation_failed = False
+            with self._lifecycle_lock:
+                if self._state == "running":
+                    try:
+                        self._loop.call_soon_threadsafe(request.cancel)
+                    except RuntimeError:
+                        cancellation_failed = True
+            if cancellation_failed or not request.completed.wait(self._cancel_grace):
+                self._terminalize(failed=True)
             raise TransferTimeoutError()
         try:
             return request.result()
