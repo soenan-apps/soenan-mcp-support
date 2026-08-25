@@ -58,15 +58,18 @@ def redeem_file_key_claim(
     raw_url = descriptor.get("url")
     if not isinstance(raw_url, str) or not raw_url or len(raw_url) > 8192:
         raise TransferError("file key claim URL is invalid")
-    parsed = urlsplit(raw_url)
+    try:
+        parsed = urlsplit(raw_url)
+    except ValueError:
+        raise TransferError("file key claim URL is invalid") from None
     secret = parsed.fragment
     if (
         parsed.scheme not in ("http", "https")
+        or not parsed.hostname
         or (
             parsed.scheme == "http"
-            and parsed.hostname not in ("localhost", "127.0.0.1")
+            and parsed.hostname.lower() not in ("localhost", "127.0.0.1", "::1")
         )
-        or not parsed.hostname
         or parsed.username
         or parsed.password
         or parsed.query

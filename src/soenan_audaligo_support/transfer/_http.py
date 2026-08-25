@@ -262,7 +262,10 @@ def post_control_json(
 def _parse_url(url: str, transport: TransferTransport) -> SplitResult:
     if not isinstance(url, str) or not url or len(url) > 8192 or "#" in url:
         raise TransferError("Bucket capability URL is invalid")
-    parsed = urlsplit(url)
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        raise TransferError("Bucket capability URL is invalid") from None
     if (
         parsed.scheme not in ("http", "https")
         or not parsed.hostname
@@ -373,8 +376,11 @@ def _authority(parsed: SplitResult) -> str:
     if hostname is None:
         raise TransferError("Bucket capability URL is invalid")
     default_port = 443 if parsed.scheme == "https" else 80
+    authority_host = f"[{hostname}]" if ":" in hostname else hostname
     return (
-        hostname if parsed.port in (None, default_port) else f"{hostname}:{parsed.port}"
+        authority_host
+        if parsed.port in (None, default_port)
+        else f"{authority_host}:{parsed.port}"
     )
 
 

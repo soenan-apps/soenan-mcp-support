@@ -5,6 +5,7 @@ import json
 import threading
 from base64 import urlsafe_b64encode
 from collections.abc import Mapping
+from contextlib import nullcontext
 from hashlib import sha256
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -21,12 +22,16 @@ from soenan_audaligo_support.transfer import (
     TransferTimeouts,
     TransferTransport,
     _api,
+    _claim,
     _cli,
+    _http,
     download_file,
     upload_file,
 )
 from soenan_audaligo_support.transfer._crypto import (
     CHUNK_SIZE,
+    MAXIMUM_WIRE_INTEGER,
+    EncryptionContractError,
     build_encryption_plan,
     chunk_aad,
     chunk_nonce,
@@ -210,6 +215,157 @@ def test_api_translates_generated_transport_failures(
         )
 
 
+def test_api_translates_generated_response_parsing_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def malformed(*args: object, **arguments: object) -> object:
+        raise AttributeError("timestamp was not a string")
+
+    monkeypatch.setattr(
+        _api.create_encrypted_object_upload,
+        "sync_detailed",
+        malformed,
+    )
+    api = AudaligoTransferAPI(
+        base_url="https://audaligo.example",
+        access_token="a" * 43,
+        timeouts=TransferTimeouts(connect=1, read=1, total=1),
+    )
+    with pytest.raises(TransferError, match="Audaligo API request failed"):
+        api.begin_upload(
+            project_id="project_123",
+            operation_id="operation_123",
+            mix_version_id=None,
+            filename="mix.wav",
+            plaintext_size=4096,
+        )
+
+
+def test_api_context_closes_the_control_transport() -> None:
+    class RecordingTransport(httpx.MockTransport):
+        closed = False
+
+        def close(self) -> None:
+            self.closed = True
+            super().close()
+
+    transport = RecordingTransport(lambda request: httpx.Response(204))
+    with AudaligoTransferAPI(
+        base_url="https://audaligo.example",
+        access_token="a" * 43,
+        timeouts=TransferTimeouts(connect=1, read=1, total=1),
+        control_transport=transport,
+    ):
+        pass
+    assert transport.closed
+
+
+def test_key_claim_accepts_ipv6_loopback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    encoded = json.dumps(
+        _key_claim(
+            "upload",
+            bytes(range(1, 33)),
+            bytes(range(1, 13)),
+            bytes(range(33, 81)),
+        )
+    ).encode("ascii")
+    monkeypatch.setattr(_claim, "post_control_json", lambda *args, **kwargs: encoded)
+
+    claim = _claim.redeem_file_key_claim(
+        {
+            "url": f"http://[::1]/claims/upload#{'a' * 43}",
+            "expiresAtUnixMilliseconds": 4_102_444_800_000,
+            "protocol": "audaligo.file-key-claim.v1",
+        },
+        expected_direction="upload",
+        expected_project_id="project_123",
+        expected_object_id="upload_123",
+        expected_epoch=0,
+    )
+    assert claim.data_key == bytes(range(1, 33))
+
+
+def test_ipv6_authority_is_bracketed_and_malformed_urls_are_sanitized() -> None:
+    parsed = _http._parse_url("http://[::1]:8081/claim", TransferTransport())
+    assert _http._authority(parsed) == "[::1]:8081"
+    with pytest.raises(TransferError, match="URL is invalid"):
+        _http._parse_url("http://[::1", TransferTransport())
+    with pytest.raises(TransferError, match="claim URL is invalid"):
+        _claim.redeem_file_key_claim(
+            {
+                "url": f"http://[::1/claim#{'a' * 43}",
+                "expiresAtUnixMilliseconds": 4_102_444_800_000,
+                "protocol": "audaligo.file-key-claim.v1",
+            },
+            expected_direction="upload",
+            expected_project_id="project_123",
+            expected_object_id="upload_123",
+            expected_epoch=0,
+        )
+
+
+def test_epoch_rejects_values_outside_the_wire_integer_contract() -> None:
+    with pytest.raises(EncryptionContractError, match="canonical wire integer"):
+        build_encryption_plan(
+            io.BytesIO(b"x"),
+            project_id="project_123",
+            file_id="file_123",
+            object_id="upload_123",
+            epoch=MAXIMUM_WIRE_INTEGER + 1,
+            data_key=bytes(range(1, 33)),
+            wrapped_nonce=bytes(range(1, 13)),
+            wrapped_data_key=bytes(range(33, 81)),
+            plaintext_size=1,
+        )
+
+
+def test_upload_replay_commits_an_already_ready_object(
+    bucket: tuple[str, dict[str, bytes], dict[str, dict[str, object]]],
+) -> None:
+    endpoint, _, claims = bucket
+    calls: list[str] = []
+
+    class ReadyAPI:
+        def begin_upload(self, **arguments: object) -> Mapping[str, Any]:
+            claims["/claims/upload"] = _key_claim(
+                "upload",
+                bytes(range(1, 33)),
+                bytes(range(1, 13)),
+                bytes(range(33, 81)),
+            )
+            return {
+                "uploadId": "upload_123",
+                "keyEpoch": 0,
+                "keyClaim": _key_claim_descriptor(endpoint, "upload"),
+            }
+
+        def put_manifest(self, **arguments: object) -> Mapping[str, Any]:
+            calls.append("put_manifest")
+            return {"objectId": "upload_123", "state": "ready"}
+
+        def upload_capability(self, **arguments: object) -> Mapping[str, Any]:
+            raise AssertionError("ready uploads must not request PUT capabilities")
+
+        def complete_upload(self, **arguments: object) -> Mapping[str, Any]:
+            raise AssertionError("ready uploads must not be completed again")
+
+        def commit_file(self, **arguments: object) -> Mapping[str, Any]:
+            calls.append("commit_file")
+            return {"file": {"fileId": "file_123"}, "idempotent": True}
+
+    result = upload_file(
+        ReadyAPI(),
+        project_id="project_123",
+        filename="mix.wav",
+        source=io.BytesIO(b"ready"),
+        operation_id="file_123",
+    )
+    assert result["file"]["fileId"] == "file_123"
+    assert calls == ["put_manifest", "commit_file"]
+
+
 def test_preview_upload_uses_generated_contract_values(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -256,7 +412,11 @@ def test_cli_reads_committed_file_id_from_response_envelope(
     source = tmp_path / "mix.wav"
     source.write_bytes(b"audio")
     monkeypatch.setenv("AUDALIGO_ACCESS_TOKEN", "a" * 43)
-    monkeypatch.setattr(_cli, "AudaligoTransferAPI", lambda **arguments: object())
+    monkeypatch.setattr(
+        _cli,
+        "AudaligoTransferAPI",
+        lambda **arguments: nullcontext(object()),
+    )
     monkeypatch.setattr(
         _cli,
         "upload_file",

@@ -13,6 +13,7 @@ dependencies = [
   "attrs>=22.2.0",
   "cryptography==50.0.0",
   "httpx>=0.23.1,<0.29.0",
+  "typing-extensions>=4.7.1",
 ]
 classifiers = [
   "Development Status :: 3 - Alpha",

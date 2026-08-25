@@ -74,20 +74,19 @@ from soenan_audaligo_support.transfer import (
     upload_file,
 )
 
-api = AudaligoTransferAPI(
+with AudaligoTransferAPI(
     base_url="https://audaligo.soenan.app",
     access_token=access_token,
     timeouts=DEFAULT_TIMEOUTS,
-)
-
-result = upload_file(
-    api,
-    project_id=project_id,
-    filename="recording.wav",
-    source="./recording.wav",
-    operation_id=operation_id,
-    timeouts=TransferTimeouts(connect=10, read=60, total=900),
-)
+) as api:
+    result = upload_file(
+        api,
+        project_id=project_id,
+        filename="recording.wav",
+        source="./recording.wav",
+        operation_id=operation_id,
+        timeouts=TransferTimeouts(connect=10, read=60, total=900),
+    )
 ```
 
 `download_file` uses the same `AudaligoTransferAPI`. Callers provide identifiers and paths; the workflow owns API response parsing, claim redemption, key handling, capability validation, and transfer sequencing.

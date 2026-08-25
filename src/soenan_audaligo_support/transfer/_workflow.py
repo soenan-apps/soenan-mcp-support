@@ -75,30 +75,31 @@ def upload_file(
             wrapped_data_key=key_claim.wrapped_data_key,
             plaintext_size=plaintext_size,
         )
-        api.put_manifest(
+        manifest = api.put_manifest(
             project_id=project_id,
             upload_id=upload_id,
             manifest=plan.manifest(),
         )
+        ready = manifest.get("state") == "ready"
 
-        for chunk in plan.chunks:
-            cleartext = _read_exact(stream, chunk.plaintext_size)
-            ciphertext = plan.seal_chunk(cleartext, chunk.index)
-            capability = api.upload_capability(
-                project_id=project_id,
-                upload_id=upload_id,
-                chunk_index=chunk.index,
-            )
-            url, headers = _validate_capability(
-                capability, operation="PUT", object_id=upload_id, chunk=chunk
-            )
-            put_ciphertext(
-                url, headers, ciphertext, timeouts=timeouts, transport=transport
-            )
-        if stream.read(1):
-            raise TransferSizeMismatch()
-
-        api.complete_upload(project_id=project_id, upload_id=upload_id)
+        if not ready:
+            for chunk in plan.chunks:
+                cleartext = _read_exact(stream, chunk.plaintext_size)
+                ciphertext = plan.seal_chunk(cleartext, chunk.index)
+                capability = api.upload_capability(
+                    project_id=project_id,
+                    upload_id=upload_id,
+                    chunk_index=chunk.index,
+                )
+                url, headers = _validate_capability(
+                    capability, operation="PUT", object_id=upload_id, chunk=chunk
+                )
+                put_ciphertext(
+                    url, headers, ciphertext, timeouts=timeouts, transport=transport
+                )
+            if stream.read(1):
+                raise TransferSizeMismatch()
+            api.complete_upload(project_id=project_id, upload_id=upload_id)
         return api.commit_file(
             project_id=project_id,
             file_id=operation_id,

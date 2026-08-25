@@ -21,6 +21,7 @@ WRAP_ALGORITHM = "a256gcm-project-epoch-v1"
 SHARE_ID = "project_file_managed_v1"
 CHUNK_SIZE = 8 * 1024 * 1024
 MAXIMUM_CHUNKS = 4096
+MAXIMUM_WIRE_INTEGER = 9_007_199_254_740_991
 _TAG_SIZE = 16
 
 
@@ -180,6 +181,8 @@ def build_encryption_plan(
     _validate_identity(project_id)
     _validate_identity(file_id)
     _validate_identity(object_id)
+    if isinstance(epoch, bool) or not 0 <= epoch <= MAXIMUM_WIRE_INTEGER:
+        raise EncryptionContractError("epoch must be a canonical wire integer")
     if len(data_key) != 32 or not any(data_key):
         raise EncryptionContractError("data key must be a nonzero 256-bit key")
     if len(wrapped_nonce) != 12 or len(wrapped_data_key) != 48:
@@ -534,8 +537,12 @@ def _string(value: Mapping[str, Any], key: str) -> str:
 
 def _integer(value: Mapping[str, Any], key: str) -> int:
     raw = value.get(key)
-    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
-        raise EncryptionContractError(f"{key} must be a nonnegative integer")
+    if (
+        isinstance(raw, bool)
+        or not isinstance(raw, int)
+        or not 0 <= raw <= MAXIMUM_WIRE_INTEGER
+    ):
+        raise EncryptionContractError(f"{key} must be a canonical wire integer")
     return raw
 
 

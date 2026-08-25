@@ -22,34 +22,34 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(f"set the access token in {arguments.access_token_env}")
 
     try:
-        api = AudaligoTransferAPI(
+        with AudaligoTransferAPI(
             base_url=endpoint,
             access_token=access_token,
             timeouts=DEFAULT_TIMEOUTS,
-        )
-        if arguments.command == "upload":
-            source = Path(arguments.source)
-            result = upload_file(
-                api,
-                project_id=arguments.project_id,
-                filename=arguments.filename or source.name,
-                source=source,
-                operation_id=arguments.operation_id,
-                mix_version_id=arguments.mix_version_id,
-            )
-            file = result.get("file")
-            file_id = file.get("fileId") if isinstance(file, dict) else None
-            if not isinstance(file_id, str) or not file_id:
-                raise TransferError("Audaligo upload response omitted the file ID")
-            print(json.dumps({"fileId": file_id}, separators=(",", ":")))
-        else:
-            written = download_file(
-                api,
-                project_id=arguments.project_id,
-                file_id=arguments.file_id,
-                destination=Path(arguments.destination),
-            )
-            print(json.dumps({"writtenBytes": written}, separators=(",", ":")))
+        ) as api:
+            if arguments.command == "upload":
+                source = Path(arguments.source)
+                result = upload_file(
+                    api,
+                    project_id=arguments.project_id,
+                    filename=arguments.filename or source.name,
+                    source=source,
+                    operation_id=arguments.operation_id,
+                    mix_version_id=arguments.mix_version_id,
+                )
+                file = result.get("file")
+                file_id = file.get("fileId") if isinstance(file, dict) else None
+                if not isinstance(file_id, str) or not file_id:
+                    raise TransferError("Audaligo upload response omitted the file ID")
+                print(json.dumps({"fileId": file_id}, separators=(",", ":")))
+            else:
+                written = download_file(
+                    api,
+                    project_id=arguments.project_id,
+                    file_id=arguments.file_id,
+                    destination=Path(arguments.destination),
+                )
+                print(json.dumps({"writtenBytes": written}, separators=(",", ":")))
         return 0
     except OSError:
         print("soenan-audaligo-transfer: local file operation failed", file=sys.stderr)

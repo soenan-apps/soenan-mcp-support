@@ -22,6 +22,7 @@ from audaligo_public_api_client.models.commit_project_file_request import (
 from audaligo_public_api_client.models.create_upload_request import CreateUploadRequest
 from audaligo_public_api_client.models.put_manifest_request import PutManifestRequest
 from audaligo_public_api_client.types import Response
+from typing_extensions import Self
 
 from ._http import TransferError, TransferTimeouts
 
@@ -79,6 +80,16 @@ class AudaligoTransferAPI:
                 {} if control_transport is None else {"transport": control_transport}
             ),
         )
+
+    def close(self) -> None:
+        self._client.get_httpx_client().close()
+
+    def __enter__(self) -> Self:
+        self._client.__enter__()
+        return self
+
+    def __exit__(self, *args: object, **kwargs: Any) -> None:
+        self._client.__exit__(*args, **kwargs)
 
     def begin_upload(
         self,
@@ -211,7 +222,7 @@ class AudaligoTransferAPI:
     ) -> Response[Any]:
         try:
             return operation(*args, client=self._client, **kwargs)
-        except httpx.HTTPError:
+        except (AttributeError, httpx.HTTPError, KeyError, TypeError, ValueError):
             raise TransferError("Audaligo API request failed") from None
 
     @staticmethod
