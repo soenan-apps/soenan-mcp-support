@@ -8,12 +8,12 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, BinaryIO, TypeAlias
 
+from ._claim import redeem_file_key_claim
 from ._crypto import (
     ChunkMetadata,
     EncryptionContractError,
     build_encryption_plan,
     parse_decryption_plan,
-    project_key_for_epoch,
 )
 from ._http import (
     DEFAULT_TIMEOUTS,
@@ -43,6 +43,7 @@ def upload_file(
     mix_version_id: str | None = None,
     timeouts: TransferTimeouts = DEFAULT_TIMEOUTS,
     transport: TransferTransport = DEFAULT_TRANSPORT,
+    claim_transport: TransferTransport = DEFAULT_TRANSPORT,
 ) -> ToolResult:
     """Encrypt locally and upload ciphertext directly to Railway Bucket capabilities."""
     stream, close_stream, plaintext_size = _open_upload_source(source)
@@ -58,15 +59,24 @@ def upload_file(
         begin = _call_tool(call_tool, "audaligo_begin_file_upload", begin_arguments)
         upload_id = _string(begin, "uploadId")
         epoch = _integer_or_zero(begin, "keyEpoch")
-        keyring = _mapping(begin, "keyring")
-        project_key = project_key_for_epoch(keyring, project_id, epoch)
+        key_claim = redeem_file_key_claim(
+            _mapping(begin, "keyClaim"),
+            expected_direction="upload",
+            expected_project_id=project_id,
+            expected_object_id=upload_id,
+            expected_epoch=epoch,
+            timeouts=timeouts,
+            transport=claim_transport,
+        )
         plan = build_encryption_plan(
             stream,
             project_id=project_id,
             file_id=operation_id,
             object_id=upload_id,
             epoch=epoch,
-            project_key=project_key,
+            data_key=key_claim.data_key,
+            wrapped_nonce=key_claim.wrapped_nonce,
+            wrapped_data_key=key_claim.wrapped_data_key,
             plaintext_size=plaintext_size,
         )
         _call_tool(
@@ -140,6 +150,7 @@ def download_file(
     destination: DownloadDestination,
     timeouts: TransferTimeouts = DEFAULT_TIMEOUTS,
     transport: TransferTransport = DEFAULT_TRANSPORT,
+    claim_transport: TransferTransport = DEFAULT_TRANSPORT,
 ) -> int:
     """Download ciphertext directly from Railway Bucket and decrypt locally."""
     begin = _call_tool(
@@ -149,15 +160,30 @@ def download_file(
     )
     file_value = _mapping(begin, "file")
     manifest = _mapping(begin, "manifest")
-    keyring = _mapping(begin, "keyring")
+    object_id = _string(manifest, "objectId")
+    epoch = _integer_or_zero(manifest, "epoch")
     if (
         _string(file_value, "projectId") != project_id
         or _string(file_value, "fileId") != file_id
         or _string(file_value, "encryptedObjectId") != _string(manifest, "objectId")
     ):
         raise TransferError("download metadata does not match the requested file")
+    key_claim = redeem_file_key_claim(
+        _mapping(begin, "keyClaim"),
+        expected_direction="download",
+        expected_project_id=project_id,
+        expected_object_id=object_id,
+        expected_epoch=epoch,
+        timeouts=timeouts,
+        transport=claim_transport,
+    )
     try:
-        plan = parse_decryption_plan(manifest, keyring)
+        plan = parse_decryption_plan(
+            manifest,
+            data_key=key_claim.data_key,
+            wrapped_nonce=key_claim.wrapped_nonce,
+            wrapped_data_key=key_claim.wrapped_data_key,
+        )
     except EncryptionContractError as error:
         raise TransferError(str(error)) from None
     if plan.project_id != project_id or plan.file_id != file_id:

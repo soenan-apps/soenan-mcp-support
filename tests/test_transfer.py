@@ -3,7 +3,7 @@ from __future__ import annotations
 import io
 import json
 import threading
-from base64 import b64encode
+from base64 import urlsafe_b64encode
 from collections.abc import Mapping
 from hashlib import sha256
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -18,8 +18,9 @@ from soenan_mcp_support.transfer._crypto import CHUNK_SIZE, chunk_aad, chunk_non
 
 
 @pytest.fixture
-def bucket() -> tuple[str, dict[str, bytes]]:
+def bucket() -> tuple[str, dict[str, bytes], dict[str, dict[str, object]]]:
     objects: dict[str, bytes] = {}
+    claims: dict[str, dict[str, object]] = {}
 
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -38,6 +39,16 @@ def bucket() -> tuple[str, dict[str, bytes]]:
             self.end_headers()
             self.wfile.write(value)
 
+        def do_POST(self) -> None:
+            assert self.headers["audaligo-key-claim"] == "a" * 43
+            value = claims.pop(self.path)
+            encoded = json.dumps(value, separators=(",", ":")).encode("ascii")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+
         def log_message(self, format: str, *args: object) -> None:
             pass
 
@@ -46,7 +57,7 @@ def bucket() -> tuple[str, dict[str, bytes]]:
     thread.start()
     try:
         host, port = server.server_address
-        yield f"http://{host}:{port}", objects
+        yield f"http://{host}:{port}", objects, claims
     finally:
         server.shutdown()
         thread.join()
@@ -88,10 +99,13 @@ def test_managed_chunk_encryption_matches_audaligo_vector() -> None:
 
 
 def test_sdk_encrypts_locally_and_transfers_ciphertext_directly(
-    bucket: tuple[str, dict[str, bytes]], tmp_path: Path
+    bucket: tuple[str, dict[str, bytes], dict[str, dict[str, object]]],
+    tmp_path: Path,
 ) -> None:
-    endpoint, objects = bucket
-    project_key = bytes(range(1, 33))
+    endpoint, objects, claims = bucket
+    data_key = bytes(range(33, 65))
+    wrapped_nonce = bytes(range(1, 13))
+    wrapped_data_key = bytes(range(65, 113))
     plaintext = bytes((index * 37) % 251 for index in range(CHUNK_SIZE + 17))
     manifest: dict[str, Any] | None = None
     calls: list[str] = []
@@ -101,12 +115,12 @@ def test_sdk_encrypts_locally_and_transfers_ciphertext_directly(
         calls.append(name)
         if name == "audaligo_begin_file_upload":
             assert arguments["plaintextSize"] == len(plaintext)
+            claims["/claims/upload"] = _key_claim(
+                "upload", data_key, wrapped_nonce, wrapped_data_key
+            )
             return {
                 "uploadId": "upload_123",
-                "keyring": {
-                    "projectId": "project_123",
-                    "keys": [{"key": b64encode(project_key).decode("ascii")}],
-                },
+                "keyClaim": _key_claim_descriptor(endpoint, "upload"),
             }
         if name == "audaligo_put_file_upload_manifest":
             manifest = json.loads(str(arguments["manifestJson"]))
@@ -133,6 +147,9 @@ def test_sdk_encrypts_locally_and_transfers_ciphertext_directly(
             }
         if name == "audaligo_begin_file_download":
             assert manifest is not None
+            claims["/claims/download"] = _key_claim(
+                "download", data_key, wrapped_nonce, wrapped_data_key
+            )
             return {
                 "file": {
                     "projectId": "project_123",
@@ -145,10 +162,7 @@ def test_sdk_encrypts_locally_and_transfers_ciphertext_directly(
                     "updatedAtUnixMilliseconds": "1",
                 },
                 "manifest": _protobuf_json_manifest(manifest),
-                "keyring": {
-                    "projectId": "project_123",
-                    "keys": [{"key": b64encode(project_key).decode("ascii")}],
-                },
+                "keyClaim": _key_claim_descriptor(endpoint, "download"),
             }
         if name == "audaligo_create_file_read_chunk_capability":
             assert manifest is not None
@@ -179,6 +193,40 @@ def test_sdk_encrypts_locally_and_transfers_ciphertext_directly(
     assert destination.read_bytes() == plaintext
     assert calls.count("audaligo_create_file_upload_chunk_capability") == 2
     assert calls.count("audaligo_create_file_read_chunk_capability") == 2
+    assert claims == {}
+
+
+def _key_claim_descriptor(endpoint: str, direction: str) -> dict[str, object]:
+    return {
+        "url": f"{endpoint}/claims/{direction}#{'a' * 43}",
+        "expiresAtUnixMilliseconds": 4_102_444_800_000,
+        "protocol": "audaligo.file-key-claim.v1",
+    }
+
+
+def _key_claim(
+    direction: str,
+    data_key: bytes,
+    wrapped_nonce: bytes,
+    wrapped_data_key: bytes,
+) -> dict[str, object]:
+    return {
+        "version": 1,
+        "protocol": "audaligo.file-key-claim.v1",
+        "direction": direction,
+        "projectId": "project_123",
+        "objectId": "upload_123",
+        "epoch": 0,
+        "dataKey": _b64url(data_key),
+        "wrappedDataKey": {
+            "nonce": _b64url(wrapped_nonce),
+            "ciphertext": _b64url(wrapped_data_key),
+        },
+    }
+
+
+def _b64url(value: bytes) -> str:
+    return urlsafe_b64encode(value).decode("ascii").rstrip("=")
 
 
 def _capability(

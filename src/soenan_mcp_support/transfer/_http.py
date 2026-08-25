@@ -24,11 +24,11 @@ class TransferSizeMismatch(TransferError):
 
 
 class TransferHTTPError(TransferError):
-    """Railway Bucket returned an unsuccessful response."""
+    """A direct control or Bucket endpoint returned an unsuccessful response."""
 
     def __init__(self, status: int) -> None:
         self.status = status
-        super().__init__(f"Railway Bucket returned HTTP {status}")
+        super().__init__(f"remote endpoint returned HTTP {status}")
 
 
 class TransferTimeoutError(TransferError):
@@ -188,6 +188,71 @@ def get_ciphertext(
         if time.monotonic() >= deadline:
             raise TransferTimeoutError() from None
         raise TransferError("direct Bucket download failed") from None
+    finally:
+        watchdog.cancel()
+        connection.close()
+
+def post_control_json(
+    url: str,
+    headers: Mapping[str, str],
+    *,
+    body: bytes = b"",
+    allowed_headers: frozenset[str] = frozenset({"audaligo-key-claim"}),
+    maximum_response_bytes: int,
+    timeouts: TransferTimeouts,
+    transport: TransferTransport,
+) -> bytes:
+    if len(body) > 1_048_576:
+        raise TransferError("control-plane request exceeds its size limit")
+    if not 1 <= maximum_response_bytes <= 1_048_576:
+        raise ValueError("maximum_response_bytes is outside the control-plane limit")
+    parsed = _parse_url(url)
+    deadline = time.monotonic() + timeouts.total
+    connection = _connection(parsed, timeouts, deadline, transport)
+    watchdog = _deadline_watchdog(connection, deadline)
+    try:
+        connection.connect()
+        _set_socket_timeout(connection, timeouts, deadline)
+        connection.putrequest(
+            "POST", _request_target(parsed), skip_host=True, skip_accept_encoding=True
+        )
+        connection.putheader("Host", _authority(parsed))
+        for name, value in headers.items():
+            if not isinstance(name, str) or not isinstance(value, str):
+                raise TransferError("control-plane header is invalid")
+            normalized_name = name.lower()
+            if (
+                normalized_name not in allowed_headers
+                or not value
+                or len(value) > 8_192
+                or any(character in value for character in ("\r", "\n", "\x00"))
+            ):
+                raise TransferError("control-plane header is invalid")
+            connection.putheader(name, value)
+        connection.putheader("Content-Length", str(len(body)))
+        connection.endheaders()
+        if body:
+            connection.send(body)
+        response = connection.getresponse()
+        try:
+            if 300 <= response.status < 400:
+                raise TransferHTTPError(response.status)
+            if response.status != 200:
+                raise TransferHTTPError(response.status)
+            response_body = response.read(maximum_response_bytes + 1)
+            if len(response_body) > maximum_response_bytes:
+                raise TransferError("key claim response exceeds its size limit")
+            return response_body
+        finally:
+            response.close()
+    except TransferError:
+        raise
+    except TimeoutError:
+        raise TransferTimeoutError() from None
+    except (OSError, http.client.HTTPException, ssl.SSLError):
+        if time.monotonic() >= deadline:
+            raise TransferTimeoutError() from None
+        raise TransferError("key claim redemption failed") from None
     finally:
         watchdog.cancel()
         connection.close()

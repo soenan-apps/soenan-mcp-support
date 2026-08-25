@@ -167,26 +167,25 @@ def build_encryption_plan(
     file_id: str,
     object_id: str,
     epoch: int,
-    project_key: bytes,
+    data_key: bytes,
+    wrapped_nonce: bytes,
+    wrapped_data_key: bytes,
     plaintext_size: int,
 ) -> EncryptionPlan:
     _validate_identity(project_id)
     _validate_identity(file_id)
     _validate_identity(object_id)
-    if len(project_key) != 32 or not any(project_key):
-        raise EncryptionContractError("project key must be a nonzero 256-bit key")
+    if len(data_key) != 32 or not any(data_key):
+        raise EncryptionContractError("data key must be a nonzero 256-bit key")
+    if len(wrapped_nonce) != 12 or len(wrapped_data_key) != 48:
+        raise EncryptionContractError("wrapped data key is invalid")
     if plaintext_size <= 0:
         raise EncryptionContractError("plaintext size must be positive")
     chunk_count = (plaintext_size + CHUNK_SIZE - 1) // CHUNK_SIZE
     if not 1 <= chunk_count <= MAXIMUM_CHUNKS:
         raise EncryptionContractError("plaintext exceeds the managed transfer limit")
 
-    data_key = AESGCM.generate_key(bit_length=256)
     nonce_base = _nonzero_random(8)
-    wrapped_nonce = os.urandom(12)
-    wrapped_data_key = AESGCM(project_key).encrypt(
-        wrapped_nonce, data_key, key_aad(project_id, epoch, object_id)
-    )
 
     start = stream.tell()
     chunks: list[ChunkMetadata] = []
@@ -244,7 +243,11 @@ def build_encryption_plan(
 
 
 def parse_decryption_plan(
-    manifest: Mapping[str, Any], keyring: Mapping[str, Any]
+    manifest: Mapping[str, Any],
+    *,
+    data_key: bytes,
+    wrapped_nonce: bytes,
+    wrapped_data_key: bytes,
 ) -> DecryptionPlan:
     manifest_fields = {
         "version",
@@ -364,36 +367,16 @@ def parse_decryption_plan(
     ):
         raise EncryptionContractError("managed manifest totals do not match chunks")
 
-    if _string(keyring, "projectId") != project_id:
-        raise EncryptionContractError("project key ring does not match manifest")
-    raw_keys = keyring.get("keys")
-    if not isinstance(raw_keys, Sequence) or isinstance(raw_keys, (str, bytes)):
-        raise EncryptionContractError("project key ring keys must be an array")
-    project_key: bytes | None = None
-    for raw_key in raw_keys:
-        if isinstance(raw_key, Mapping) and _integer_or_zero(raw_key, "epoch") == epoch:
-            project_key = _base64_bytes(raw_key, "key", 32)
-            break
-    if project_key is None or not any(project_key):
-        raise EncryptionContractError(
-            "project key ring does not contain the manifest epoch"
-        )
-
+    if len(data_key) != 32 or not any(data_key):
+        raise EncryptionContractError("data key must be a nonzero 256-bit key")
     wrapped = manifest.get("wrappedDataKey")
     if not isinstance(wrapped, Mapping):
         raise EncryptionContractError("wrapped data key must be an object")
-    wrapped_nonce = _base64_bytes(wrapped, "nonce", 12)
-    wrapped_ciphertext = _base64_bytes(wrapped, "ciphertext", 48)
-    try:
-        data_key = AESGCM(project_key).decrypt(
-            wrapped_nonce,
-            wrapped_ciphertext,
-            key_aad(project_id, epoch, object_id),
-        )
-    except InvalidTag:
-        raise EncryptionContractError(
-            "wrapped data key authentication failed"
-        ) from None
+    if (
+        _base64_bytes(wrapped, "nonce", 12) != wrapped_nonce
+        or _base64_bytes(wrapped, "ciphertext", 48) != wrapped_data_key
+    ):
+        raise EncryptionContractError("file key claim does not match manifest")
     return DecryptionPlan(
         project_id=project_id,
         file_id=file_id,
@@ -407,29 +390,6 @@ def parse_decryption_plan(
     )
 
 
-def project_key_for_epoch(
-    keyring: Mapping[str, Any], project_id: str, epoch: int
-) -> bytes:
-    if _string(keyring, "projectId") != project_id:
-        raise EncryptionContractError("project key ring does not match upload")
-    raw_keys = keyring.get("keys")
-    if not isinstance(raw_keys, Sequence) or isinstance(raw_keys, (str, bytes)):
-        raise EncryptionContractError("project key ring keys must be an array")
-    for raw_key in raw_keys:
-        if isinstance(raw_key, Mapping) and _integer_or_zero(raw_key, "epoch") == epoch:
-            key = _base64_bytes(raw_key, "key", 32)
-            if any(key):
-                return key
-    raise EncryptionContractError("project key ring does not contain the upload epoch")
-
-
-def key_aad(project_id: str, epoch: int, object_id: str) -> bytes:
-    output = bytearray(b"audaligo-project-key-v1\x00\x01")
-    for value in (project_id, str(epoch), object_id):
-        encoded = _context(value)
-        output.extend(struct.pack(">I", len(encoded)))
-        output.extend(encoded)
-    return bytes(output)
 
 
 def chunk_nonce(nonce_base: bytes, index: int) -> bytes:

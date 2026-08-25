@@ -25,6 +25,9 @@ classifiers = [
 [project.urls]
 Repository = "https://github.com/soenan-apps/soenan-mcp-support"
 
+[project.scripts]
+soenan-mcp-transfer = "soenan_mcp_support.transfer._cli:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
