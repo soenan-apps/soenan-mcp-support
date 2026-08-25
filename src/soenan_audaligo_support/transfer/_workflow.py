@@ -38,6 +38,9 @@ PathSource: TypeAlias = str | os.PathLike[str]
 UploadSource: TypeAlias = PathSource | BinaryIO
 DownloadDestination: TypeAlias = PathSource | BinaryIO
 
+_DOWNLOAD_SPOOL_MEMORY_LIMIT = 8 * 1024 * 1024
+_DOWNLOAD_COPY_SIZE = 1024 * 1024
+
 
 def upload_file(
     structured_content: Mapping[str, Any],
@@ -272,19 +275,21 @@ def _download(
                 transport,
             )
         _require_writer(destination)
-        rollback = _append_rollback_position(destination)
-        try:
-            return _download_to_stream(
+        with tempfile.SpooledTemporaryFile(
+            max_size=_DOWNLOAD_SPOOL_MEMORY_LIMIT,
+            mode="w+b",
+        ) as staged:
+            count = _download_to_stream(
                 api,
                 handoff.project_id,
-                destination,
+                staged,
                 plan,
                 timeouts,
                 transport,
             )
-        except BaseException:
-            _rollback_stream(destination, rollback)
-            raise
+            staged.seek(0)
+            _commit_staged_stream(destination, staged, count)
+            return count
 
 
 def _download_to_path(
@@ -476,6 +481,29 @@ def _write_all(destination: BinaryIO, data: bytes) -> None:
         if not isinstance(count, int) or count <= 0:
             raise TransferError("destination rejected plaintext")
         written += count
+
+
+def _commit_staged_stream(
+    destination: BinaryIO,
+    staged: BinaryIO,
+    expected_size: int,
+) -> None:
+    rollback = _append_rollback_position(destination)
+    copied = 0
+    try:
+        while copied < expected_size:
+            data = staged.read(min(_DOWNLOAD_COPY_SIZE, expected_size - copied))
+            if not isinstance(data, bytes) or not data:
+                raise TransferSizeMismatch(
+                    "staged plaintext size does not match manifest"
+                )
+            _write_all(destination, data)
+            copied += len(data)
+        if staged.read(1):
+            raise TransferSizeMismatch("staged plaintext size does not match manifest")
+    except BaseException:
+        _rollback_stream(destination, rollback)
+        raise
 
 
 def _append_rollback_position(destination: BinaryIO) -> int | None:

@@ -3,14 +3,18 @@ from __future__ import annotations
 import io
 import json
 import struct
+import time
 from base64 import urlsafe_b64encode
 from hashlib import sha256
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
 import pytest
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from typing_extensions import Self
+
 from soenan_audaligo_support.transfer import _cli, _workflow
 from soenan_audaligo_support.transfer._api import AudaligoTransferAPI
 from soenan_audaligo_support.transfer._crypto import (
@@ -24,6 +28,8 @@ from soenan_audaligo_support.transfer._http import (
     DEFAULT_TIMEOUTS,
     TransferError,
     TransferHTTPError,
+    TransferTimeoutError,
+    TransferTimeouts,
 )
 
 
@@ -120,6 +126,116 @@ def test_continuation_control_client_never_sends_authorization_header() -> None:
     assert len(requests) == 1
     assert "authorization" not in requests[0].headers
     assert requests[0].headers["Audaligo-Transfer-Continuation"] == "c" * 43
+
+
+def test_control_request_total_deadline_includes_dribbling_response_parse() -> None:
+    payload = json.dumps(
+        {
+            "capability": {
+                "contract": "audaligo.railway-bucket-capability",
+                "v": 1,
+                "operation": "GET",
+                "objectId": "object_1",
+                "chunkIndex": 0,
+                "expiresAt": "2030-01-01T00:00:00Z",
+                "contentLength": 21,
+                "url": "https://bucket.example/chunk",
+                "headers": {},
+            }
+        }
+    ).encode()
+
+    class DribblingStream(httpx.SyncByteStream):
+        def __iter__(self) -> Any:
+            for offset in range(0, len(payload), 8):
+                time.sleep(0.01)
+                yield payload[offset : offset + 8]
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, stream=DribblingStream())
+
+    started = time.monotonic()
+    with (
+        pytest.raises(TransferTimeoutError) as captured,
+        AudaligoTransferAPI(
+            control_origin="https://audaligo.example",
+            continuation="c" * 43,
+            timeouts=TransferTimeouts(connect=0.05, read=0.05, total=0.05),
+            control_transport=httpx.MockTransport(handle),
+        ) as api,
+    ):
+        api.read_capability(
+            project_id="project_1",
+            object_id="object_1",
+            chunk_index=0,
+        )
+    assert time.monotonic() - started < 0.25
+    assert captured.value.wire_value() == {
+        "error": {
+            "code": "timeout",
+            "message": "direct transfer deadline elapsed",
+            "recoverable": True,
+        }
+    }
+
+
+def test_later_chunk_failure_writes_nothing_to_nonseekable_destination(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class API:
+        def __init__(self, **kwargs: object) -> None:
+            pass
+
+        def __enter__(self) -> Self:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            pass
+
+    class NonseekableDestination:
+        def __init__(self) -> None:
+            self.value = bytearray()
+
+        def write(self, value: bytes) -> int:
+            self.value.extend(value)
+            return len(value)
+
+    chunks = [SimpleNamespace(index=0), SimpleNamespace(index=1)]
+    plan = SimpleNamespace(
+        chunks=chunks,
+        object_id="object_1",
+        plaintext_size=2,
+        open_chunk=lambda ciphertext, index: ciphertext,
+    )
+    calls = 0
+
+    def download_chunk(*args: object, **kwargs: object) -> bytes:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise TransferError("later chunk failed")
+        return b"a"
+
+    monkeypatch.setattr(_workflow, "AudaligoTransferAPI", API)
+    monkeypatch.setattr(_workflow, "_download_ciphertext_chunk", download_chunk)
+    destination = NonseekableDestination()
+
+    with pytest.raises(TransferError, match="later chunk failed"):
+        _workflow._download(
+            SimpleNamespace(
+                control_origin="https://audaligo.example",
+                continuation="c" * 43,
+                project_id="project_1",
+            ),
+            destination,
+            plan,
+            DEFAULT_TIMEOUTS,
+            _workflow.DEFAULT_TRANSPORT,
+            None,
+        )
+
+    assert calls == 2
+    assert destination.value == b""
 
 
 def test_claim_expiry_prevents_any_transfer_engine_start(

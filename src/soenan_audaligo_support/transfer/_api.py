@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+import threading
+import time
+from collections.abc import Callable, Mapping
 from http import HTTPStatus
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
@@ -28,7 +30,16 @@ from ._http import TransferError, TransferTimeoutError, TransferTimeouts
 class AudaligoTransferAPI:
     """Continuation-authorized access to Audaligo transfer control endpoints."""
 
-    __slots__ = ("_client", "_continuation", "_origin")
+    __slots__ = (
+        "_client",
+        "_continuation",
+        "_operation_lock",
+        "_origin",
+        "_state_lock",
+        "_terminal",
+        "_total",
+        "_transport_closing",
+    )
 
     def __init__(
         self,
@@ -40,6 +51,11 @@ class AudaligoTransferAPI:
     ) -> None:
         self._origin = _validate_control_origin(control_origin)
         self._continuation = _validate_transfer_continuation(continuation)
+        self._total = timeouts.total
+        self._operation_lock = threading.Lock()
+        self._state_lock = threading.Lock()
+        self._terminal = False
+        self._transport_closing = False
         self._client = Client(
             base_url=self._origin,
             timeout=httpx.Timeout(
@@ -56,16 +72,25 @@ class AudaligoTransferAPI:
         )
 
     def close(self) -> None:
-        try:
-            self._client.get_httpx_client().close()
-        except (httpx.HTTPError, RuntimeError):
+        with self._state_lock:
+            if self._terminal:
+                return
+            self._terminal = True
+        done, errors = self._start_transport_close()
+        if not done.wait(self._total):
+            raise TransferTimeoutError() from None
+        if errors:
             raise TransferError("Audaligo control client close failed") from None
 
     def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *args: object, **kwargs: Any) -> None:
-        self.close()
+        try:
+            self.close()
+        except TransferError:
+            if not args or args[0] is None:
+                raise
 
     def put_manifest(
         self,
@@ -162,25 +187,97 @@ class AudaligoTransferAPI:
 
     def _request(
         self,
-        operation: Any,
+        operation: Callable[..., Response[Any]],
         *args: Any,
         **kwargs: Any,
     ) -> Response[Any]:
-        try:
-            return operation(*args, client=self._client, **kwargs)
-        except httpx.TimeoutException:
+        deadline = time.monotonic() + self._total
+        done = threading.Event()
+        outcome: list[tuple[float, bool, object]] = []
+
+        def run() -> None:
+            try:
+                with self._operation_lock:
+                    with self._state_lock:
+                        if self._terminal:
+                            raise TransferError("Audaligo control client is closed")
+                    value: object = operation(*args, client=self._client, **kwargs)
+                success = True
+            except Exception as error:  # noqa: BLE001
+                # Generated clients do not share one response-decoding error hierarchy.
+                value = error
+                success = False
+            outcome.append((time.monotonic(), success, value))
+            done.set()
+
+        threading.Thread(
+            target=run,
+            name="audaligo-transfer-control",
+            daemon=True,
+        ).start()
+        remaining = deadline - time.monotonic()
+        if remaining <= 0 or not done.wait(remaining):
+            self._expire()
             raise TransferTimeoutError() from None
-        except TransferError:
-            raise
-        except (
-            AttributeError,
-            httpx.HTTPError,
-            KeyError,
-            RuntimeError,
-            TypeError,
-            ValueError,
+        completed_at, success, value = outcome[0]
+        if completed_at > deadline:
+            self._expire()
+            raise TransferTimeoutError() from None
+        if success:
+            return value  # type: ignore[return-value]
+        self._raise_control_error(value)
+
+    def _expire(self) -> None:
+        with self._state_lock:
+            self._terminal = True
+        self._start_transport_close()
+
+    def _start_transport_close(self) -> tuple[threading.Event, list[Exception]]:
+        done = threading.Event()
+        errors: list[Exception] = []
+        with self._state_lock:
+            if self._transport_closing:
+                done.set()
+                return done, errors
+            self._transport_closing = True
+
+        def close_transport() -> None:
+            try:
+                self._client.get_httpx_client().close()
+            except Exception as error:  # noqa: BLE001
+                # Custom transports do not share a narrower close-error hierarchy.
+                errors.append(error)
+            finally:
+                done.set()
+
+        threading.Thread(
+            target=close_transport,
+            name="audaligo-transfer-control-close",
+            daemon=True,
+        ).start()
+        return done, errors
+
+    @staticmethod
+    def _raise_control_error(value: object) -> Any:
+        if isinstance(value, httpx.TimeoutException):
+            raise TransferTimeoutError() from None
+        if isinstance(value, TransferError):
+            raise value
+        if isinstance(
+            value,
+            (
+                AttributeError,
+                httpx.HTTPError,
+                KeyError,
+                RuntimeError,
+                TypeError,
+                ValueError,
+            ),
         ):
             raise TransferError("Audaligo control request failed") from None
+        if isinstance(value, Exception):
+            raise TransferError("Audaligo control request failed") from None
+        raise TransferError("Audaligo control request failed") from None
 
     @staticmethod
     def _body(response: Response[Any], *expected: HTTPStatus) -> Mapping[str, Any]:
