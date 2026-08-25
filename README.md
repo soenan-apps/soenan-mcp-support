@@ -1,107 +1,102 @@
-# Soenan MCP Support SDK for Python
+# Audaligo transfer CLI and Python support
 
-`soenan-mcp-support` provides client-side managed encryption and direct Railway Bucket transfer orchestration for applications and agents that use Soenan MCP.
-
-The package does not include an MCP client. Your existing client remains responsible for OAuth and MCP JSON-RPC. Pass its authenticated `call_tool` function to the transfer SDK.
+`soenan-audaligo-support` encrypts and decrypts Audaligo files locally. It calls Audaligo's generated public API for transfer control and sends ciphertext directly to Railway Bucket. Product workflow details and key material do not pass through an agent model or Soenan MCP.
 
 ## Requirements
 
 - Python 3.10 or later
-- An MCP client authorized for the Audaligo file tools
-- Direct network access to the presigned Railway Bucket URLs returned by Audaligo
+- An OAuth access token whose resource is the Audaligo origin
+- `audaligo:files:write` for uploads
+- `audaligo:files:read` for downloads
+- Direct network access to Audaligo and the presigned Railway Bucket URLs
 
-The SDK uses `cryptography==50.0.0` for AES-256-GCM interoperability with the Audaligo managed encryption contract.
+The package uses `cryptography==50.0.0` for AES-256-GCM interoperability with Audaligo's managed encryption contract.
 
-## Installation
+## Install from Git
 
-Before a package release, install the source by pinning its full 40-character commit instead of a branch or mutable tag:
-
-```console
-python -m pip install 'soenan-mcp-support @ git+https://github.com/soenan-apps/soenan-mcp-support.git@<40-character-commit>'
-```
-
-After publishing a package version, install that exact version:
+Pin the full 40-character commit. Do not install from a branch or mutable tag.
 
 ```console
-python -m pip install 'soenan-mcp-support==0.1.0'
+python -m pip install 'soenan-audaligo-support @ git+https://github.com/soenan-apps/soenan-mcp-support.git@<40-character-commit>'
 ```
+
+## Configure the CLI
+
+Keep the OAuth access token out of command arguments and process listings:
+
+```console
+export AUDALIGO_API_URL=https://audaligo.soenan.app
+export AUDALIGO_ACCESS_TOKEN='...'
+```
+
+The token's OAuth resource must exactly match `AUDALIGO_API_URL`. An MCP-audience token is not accepted by Audaligo.
 
 ## Upload a file
 
-Pass your MCP client's authenticated tool caller and a path or seekable binary stream to `upload_file`:
-
-```python
-from soenan_mcp_support.transfer import upload_file
-
-
-def call_tool(name: str, arguments: dict[str, object]) -> dict[str, object]:
-    return mcp_client.call_tool(name, arguments)
-
-
-result = upload_file(
-    call_tool,
-    project_id=project_id,
-    filename="recording.wav",
-    source=source_path,
-    operation_id=operation_id,
-)
+```console
+soenan-audaligo-transfer upload \
+  --project-id prj_... \
+  --source ./recording.wav \
+  --operation-id 00000000-0000-4000-8000-000000000001
 ```
 
-The SDK performs the following operations:
+Use `--filename` to override the local basename or `--mix-version-id` to attach the committed file to a mix version.
 
-1. Calls `audaligo_begin_file_upload` to obtain upload state and the project key ring.
-2. Generates a file data key and encrypts the plaintext locally with the Audaligo AES-256-GCM chunk contract.
-3. Calls `audaligo_put_file_upload_manifest` with the ciphertext manifest.
+The command:
+
+1. Starts an upload through Audaligo's generated public API and receives an opaque, one-time key claim descriptor.
+2. Redeems the claim directly with Audaligo and receives the operation-bound file data key.
+3. Encrypts the file locally and submits the manifest containing Audaligo's wrapped key.
 4. Obtains one short-lived Railway Bucket write capability per chunk.
-5. Sends each ciphertext chunk directly from the caller to Railway Bucket.
-6. Confirms the uploaded chunks and commits the file through MCP control-plane tools.
+5. Sends each ciphertext chunk directly to Railway Bucket.
+6. Completes and commits the upload through Audaligo's public API.
 
-The source must be seekable. The SDK reads the source twice: once to compute the encrypted manifest and once to upload the same deterministic ciphertext. It keeps at most one 8 MiB plaintext chunk and its ciphertext in memory. Neither plaintext nor ciphertext passes through the Soenan MCP server.
+The source is read twice: once to build the encrypted manifest and once to upload the same deterministic ciphertext. The command keeps at most one 8 MiB plaintext chunk and its ciphertext in memory.
 
 ## Download a file
 
-Pass a destination path to get atomic replacement in the destination directory:
-
-```python
-from soenan_mcp_support.transfer import download_file
-
-written = download_file(
-    call_tool,
-    project_id=project_id,
-    file_id=file_id,
-    destination=destination_path,
-)
+```console
+soenan-audaligo-transfer download \
+  --project-id prj_... \
+  --file-id file_... \
+  --destination ./recording.wav
 ```
 
-The SDK obtains the encrypted manifest and project key ring through `audaligo_begin_file_download`. It obtains one short-lived Railway Bucket read capability per chunk, downloads ciphertext directly, validates its length and SHA-256 digest, authenticates and decrypts it locally, and writes plaintext to the destination.
+The command obtains the encrypted manifest and key claim descriptor from Audaligo, redeems the claim directly, downloads ciphertext from Railway Bucket, validates every chunk, decrypts locally, and atomically replaces the destination.
 
-For a destination path, the SDK writes a private temporary sibling, flushes the completed file, and atomically replaces the destination. It removes the temporary file after any failure and leaves an existing destination unchanged. For a seekable binary stream, it restores the original length after a failed download when the stream supports truncation.
-
-## Timeouts
-
-Every direct Bucket request uses finite socket-connect, socket-read, and total deadlines:
+## Python API
 
 ```python
-from soenan_mcp_support.transfer import TransferTimeouts, upload_file
-
-upload_file(
-    call_tool,
-    project_id=project_id,
-    filename="recording.wav",
-    source=source_path,
-    operation_id=operation_id,
-    timeouts=TransferTimeouts(connect=10, read=60, total=900),
+from soenan_audaligo_support.transfer import (
+    DEFAULT_TIMEOUTS,
+    AudaligoTransferAPI,
+    TransferTimeouts,
+    upload_file,
 )
+
+with AudaligoTransferAPI(
+    base_url="https://audaligo.soenan.app",
+    access_token=access_token,
+    timeouts=DEFAULT_TIMEOUTS,
+) as api:
+    result = upload_file(
+        api,
+        project_id=project_id,
+        filename="recording.wav",
+        source="./recording.wav",
+        operation_id=operation_id,
+        timeouts=TransferTimeouts(connect=10, read=60, total=900),
+    )
 ```
 
-The SDK does not retry a Bucket request after it starts. The caller can invoke the capability tool again after a failed or ambiguous request if Audaligo permits a replacement capability for the current upload state.
+`download_file` uses the same `AudaligoTransferAPI`. Callers provide identifiers and paths; the workflow owns API response parsing, claim redemption, key handling, capability validation, and transfer sequencing.
 
 ## Security invariants
 
-- The caller performs encryption and decryption. Soenan MCP handles only control-plane tool calls and small key or manifest payloads.
-- Plaintext and ciphertext file bodies travel directly between the caller and Railway Bucket.
-- The SDK validates the project, file, object, epoch, chunk layout, ciphertext length, SHA-256 digest, and AES-GCM authentication tag before accepting a download.
-- The SDK does not log project keys, data keys, presigned URLs, capability headers, manifests, filenames, or file content.
-- The SDK rejects redirects and does not retry a request after transmission starts.
+- Plaintext stays in the local process. Ciphertext bodies travel directly between the caller and Railway Bucket.
+- Audaligo stores only a wrapped file data key in short-lived claim state. Claim redemption returns the exact operation-bound key over TLS.
+- The command validates project, file, object, epoch, wrapped key, chunk layout, ciphertext length, SHA-256 digest, and AES-GCM authentication before accepting a download.
+- The command does not log access tokens, key claims, data keys, presigned URLs, capability headers, manifests, filenames, or file content.
+- The command rejects redirects and does not retry a Bucket request after transmission starts.
 - A download path changes only after every chunk passes validation.
-- Presigned URLs and headers are bearer authority. Do not serialize, log, trace, cache, or send them through an agent model.
+- Treat key claim descriptors, presigned URLs, and capability headers as bearer authority. Do not log, persist, or reproduce them outside the transfer.

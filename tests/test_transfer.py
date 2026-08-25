@@ -1,25 +1,56 @@
 from __future__ import annotations
 
+import asyncio
 import io
 import json
+import ssl
 import threading
-from base64 import b64encode
+import time
+from base64 import urlsafe_b64encode
 from collections.abc import Mapping
+from contextlib import nullcontext
 from hashlib import sha256
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
+from audaligo_public_api_client.models.bucket_capability import BucketCapability
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from soenan_mcp_support.transfer import download_file, upload_file
-from soenan_mcp_support.transfer._crypto import CHUNK_SIZE, chunk_aad, chunk_nonce
+from soenan_audaligo_support.transfer import (
+    AudaligoTransferAPI,
+    TransferError,
+    TransferTimeoutError,
+    TransferTimeouts,
+    TransferTransport,
+    _api,
+    _claim,
+    _cli,
+    _http,
+    download_file,
+    upload_file,
+)
+from soenan_audaligo_support.transfer._crypto import (
+    CHUNK_SIZE,
+    MAXIMUM_CHUNKS,
+    MAXIMUM_WIRE_INTEGER,
+    EncryptionContractError,
+    build_encryption_plan,
+    chunk_aad,
+    chunk_nonce,
+    parse_decryption_plan,
+)
+from soenan_audaligo_support.transfer._http import put_ciphertext
+
+TRANSFER_CONTINUATION = "T" * 43
 
 
 @pytest.fixture
-def bucket() -> tuple[str, dict[str, bytes]]:
+def bucket() -> tuple[str, dict[str, bytes], dict[str, dict[str, object]]]:
     objects: dict[str, bytes] = {}
+    claims: dict[str, dict[str, object]] = {}
 
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -38,6 +69,16 @@ def bucket() -> tuple[str, dict[str, bytes]]:
             self.end_headers()
             self.wfile.write(value)
 
+        def do_POST(self) -> None:
+            assert self.headers["audaligo-key-claim"] == "a" * 43
+            value = claims.pop(self.path)
+            encoded = json.dumps(value, separators=(",", ":")).encode("ascii")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+
         def log_message(self, format: str, *args: object) -> None:
             pass
 
@@ -46,7 +87,7 @@ def bucket() -> tuple[str, dict[str, bytes]]:
     thread.start()
     try:
         host, port = server.server_address
-        yield f"http://{host}:{port}", objects
+        yield f"http://{host}:{port}", objects, claims
     finally:
         server.shutdown()
         thread.join()
@@ -87,37 +128,1080 @@ def test_managed_chunk_encryption_matches_audaligo_vector() -> None:
     )
 
 
-def test_sdk_encrypts_locally_and_transfers_ciphertext_directly(
-    bucket: tuple[str, dict[str, bytes]], tmp_path: Path
-) -> None:
-    endpoint, objects = bucket
-    project_key = bytes(range(1, 33))
-    plaintext = bytes((index * 37) % 251 for index in range(CHUNK_SIZE + 17))
-    manifest: dict[str, Any] | None = None
-    calls: list[str] = []
+def test_generated_client_parses_rfc3339_utc_z() -> None:
+    capability = BucketCapability.from_dict(
+        {
+            "contract": "audaligo.railway-bucket-capability",
+            "v": 1,
+            "operation": "PUT",
+            "objectId": "upload_123",
+            "chunkIndex": 0,
+            "expiresAt": "2026-07-30T00:00:00Z",
+            "contentLength": 17,
+            "url": "https://bucket.example/upload",
+            "headers": {},
+        }
+    )
 
-    def call_tool(name: str, arguments: Mapping[str, object]) -> Mapping[str, Any]:
-        nonlocal manifest
-        calls.append(name)
-        if name == "audaligo_begin_file_upload":
-            assert arguments["plaintextSize"] == len(plaintext)
+    assert capability.expires_at.isoformat() == "2026-07-30T00:00:00+00:00"
+
+
+def test_encryption_plan_is_stable_for_operation_replay() -> None:
+    plaintext = b"replayed upload"
+    arguments = {
+        "project_id": "project_123",
+        "file_id": "operation_123",
+        "object_id": "upload_123",
+        "epoch": 7,
+        "data_key": bytes(range(1, 33)),
+        "wrapped_nonce": bytes(range(1, 13)),
+        "wrapped_data_key": bytes(range(33, 81)),
+        "plaintext_size": len(plaintext),
+    }
+    first = build_encryption_plan(io.BytesIO(plaintext), **arguments)
+    replay = build_encryption_plan(io.BytesIO(plaintext), **arguments)
+
+    assert first.manifest() == replay.manifest()
+    assert first.seal_chunk(plaintext, 0) == replay.seal_chunk(plaintext, 0)
+
+
+def test_capability_plaintext_requires_loopback() -> None:
+    with pytest.raises(TransferError, match="must use HTTPS"):
+        put_ciphertext(
+            "http://bucket.example/upload?signature=secret",
+            {},
+            b"ciphertext",
+            timeouts=TransferTimeouts(connect=1, read=1, total=1),
+            transport=TransferTransport(),
+        )
+
+
+def test_api_allows_plaintext_only_for_exact_loopback_hosts() -> None:
+    for endpoint in (
+        "http://localhost.attacker.example",
+        "http://127.0.0.1.attacker.example",
+        "http://user@localhost",
+    ):
+        with pytest.raises(ValueError):
+            AudaligoTransferAPI(
+                base_url=endpoint,
+                access_token="a" * 43,
+                timeouts=TransferTimeouts(connect=1, read=1, total=1),
+            )
+    for endpoint in ("https://", "https://audaligo.example:invalid"):
+        with pytest.raises(ValueError):
+            AudaligoTransferAPI(
+                base_url=endpoint,
+                access_token="a" * 43,
+                timeouts=TransferTimeouts(connect=1, read=1, total=1),
+            )
+
+
+def test_api_translates_generated_transport_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def unavailable(*args: object, **arguments: object) -> object:
+        raise httpx.ConnectError("connection failed")
+
+    monkeypatch.setattr(
+        _api.create_encrypted_object_upload,
+        "asyncio_detailed",
+        unavailable,
+    )
+    with (
+        AudaligoTransferAPI(
+            base_url="https://audaligo.example",
+            access_token="a" * 43,
+            timeouts=TransferTimeouts(connect=1, read=1, total=1),
+        ) as api,
+        pytest.raises(TransferError, match="Audaligo API request failed"),
+    ):
+        api.begin_upload(
+            project_id="project_123",
+            operation_id="operation_123",
+            mix_version_id=None,
+            filename="mix.wav",
+            plaintext_size=4096,
+        )
+
+
+def test_timed_out_control_mutation_is_cancelled_before_return_and_worker_joins(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cancelled = threading.Event()
+    mutated = threading.Event()
+
+    async def slow_mutation(*args: object, **arguments: object) -> object:
+        try:
+            await asyncio.sleep(0.2)
+            mutated.set()
+            return object()
+        finally:
+            cancelled.set()
+
+    monkeypatch.setattr(
+        _api.create_encrypted_object_upload,
+        "asyncio_detailed",
+        slow_mutation,
+    )
+    api = AudaligoTransferAPI(
+        base_url="https://audaligo.example",
+        access_token="a" * 43,
+        timeouts=TransferTimeouts(connect=1, read=1, total=0.02),
+    )
+    worker = api._thread
+    started = time.monotonic()
+    with api:
+        with pytest.raises(TransferTimeoutError):
+            api.begin_upload(
+                project_id="project_123",
+                operation_id="operation_123",
+                mix_version_id=None,
+                filename="mix.wav",
+                plaintext_size=4096,
+            )
+        assert cancelled.is_set()
+        assert not mutated.is_set()
+        time.sleep(0.05)
+        assert not mutated.is_set()
+    assert time.monotonic() - started < 0.15
+    assert not worker.is_alive()
+
+
+def test_suppressed_request_cancellation_terminalizes_worker_without_late_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cancellation_seen = threading.Event()
+    mutated = threading.Event()
+
+    async def cancellation_resistant(*args: object, **arguments: object) -> object:
+        try:
+            await asyncio.sleep(1)
+        except asyncio.CancelledError:
+            cancellation_seen.set()
+            await asyncio.sleep(0.2)
+            mutated.set()
+            return object()
+
+    monkeypatch.setattr(
+        _api.create_encrypted_object_upload,
+        "asyncio_detailed",
+        cancellation_resistant,
+    )
+    api = AudaligoTransferAPI(
+        base_url="https://audaligo.example",
+        access_token="a" * 43,
+        timeouts=TransferTimeouts(connect=1, read=1, total=0.02),
+    )
+    worker = api._thread
+
+    started = time.monotonic()
+    with pytest.raises(
+        TransferTimeoutError, match="direct Bucket transfer deadline elapsed"
+    ):
+        api.begin_upload(
+            project_id="project_123",
+            operation_id="operation_123",
+            mix_version_id=None,
+            filename="mix.wav",
+            plaintext_size=4096,
+        )
+
+    assert time.monotonic() - started < 0.5
+    assert cancellation_seen.is_set()
+    assert worker.daemon
+    assert not worker.is_alive()
+    time.sleep(0.25)
+    assert not mutated.is_set()
+    with pytest.raises(TransferError, match="Audaligo API close failed"):
+        api.close()
+
+
+def test_hung_async_transport_close_bounds_all_concurrent_closers() -> None:
+    close_started = threading.Event()
+
+    class HungCloseTransport(httpx.MockTransport):
+        async def aclose(self) -> None:
+            close_started.set()
+            try:
+                await asyncio.sleep(1)
+            except asyncio.CancelledError:
+                await asyncio.sleep(1)
+
+    transport = HungCloseTransport(lambda request: httpx.Response(204))
+    api = AudaligoTransferAPI(
+        base_url="https://audaligo.example",
+        access_token="a" * 43,
+        timeouts=TransferTimeouts(connect=1, read=1, total=0.02),
+        control_transport=transport,
+    )
+    worker = api._thread
+    errors: list[BaseException] = []
+
+    def close_api() -> None:
+        try:
+            api.close()
+        except BaseException as error:  # noqa: BLE001
+            errors.append(error)
+
+    first = threading.Thread(target=close_api)
+    second = threading.Thread(target=close_api)
+    started = time.monotonic()
+    first.start()
+    assert close_started.wait(0.5)
+    second.start()
+    first.join(timeout=0.5)
+    second.join(timeout=0.5)
+
+    assert time.monotonic() - started < 0.5
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert len(errors) == 2
+    assert all(type(error) is TransferError for error in errors)
+    assert all(str(error) == "Audaligo API close failed" for error in errors)
+    assert worker.daemon
+    assert not worker.is_alive()
+
+
+def test_timeout_close_race_has_bounded_sanitized_terminal_outcomes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request_started = threading.Event()
+
+    async def cancellation_resistant(*args: object, **arguments: object) -> object:
+        request_started.set()
+        try:
+            await asyncio.sleep(1)
+        except asyncio.CancelledError:
+            await asyncio.sleep(1)
+            return object()
+
+    monkeypatch.setattr(
+        _api.create_encrypted_object_upload,
+        "asyncio_detailed",
+        cancellation_resistant,
+    )
+    api = AudaligoTransferAPI(
+        base_url="https://audaligo.example",
+        access_token="a" * 43,
+        timeouts=TransferTimeouts(connect=1, read=1, total=0.02),
+    )
+    worker = api._thread
+    request_errors: list[BaseException] = []
+
+    def request() -> None:
+        try:
+            api.begin_upload(
+                project_id="project_123",
+                operation_id="operation_123",
+                mix_version_id=None,
+                filename="mix.wav",
+                plaintext_size=4096,
+            )
+        except BaseException as error:  # noqa: BLE001
+            request_errors.append(error)
+
+    requester = threading.Thread(target=request)
+    started = time.monotonic()
+    requester.start()
+    assert request_started.wait(0.5)
+    with pytest.raises(TransferError, match="Audaligo API close failed"):
+        api.close()
+    requester.join(timeout=0.5)
+
+    assert time.monotonic() - started < 0.5
+    assert not requester.is_alive()
+    assert len(request_errors) == 1
+    assert type(request_errors[0]) is TransferTimeoutError
+    assert str(request_errors[0]) == "direct Bucket transfer deadline elapsed"
+    assert worker.daemon
+    assert not worker.is_alive()
+
+
+def test_api_translates_generated_response_parsing_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def malformed(*args: object, **arguments: object) -> object:
+        raise AttributeError("timestamp was not a string")
+
+    monkeypatch.setattr(
+        _api.create_encrypted_object_upload,
+        "asyncio_detailed",
+        malformed,
+    )
+    with (
+        AudaligoTransferAPI(
+            base_url="https://audaligo.example",
+            access_token="a" * 43,
+            timeouts=TransferTimeouts(connect=1, read=1, total=1),
+        ) as api,
+        pytest.raises(TransferError, match="Audaligo API request failed"),
+    ):
+        api.begin_upload(
+            project_id="project_123",
+            operation_id="operation_123",
+            mix_version_id=None,
+            filename="mix.wav",
+            plaintext_size=4096,
+        )
+
+
+def test_api_context_closes_the_async_control_transport() -> None:
+    class RecordingTransport(httpx.MockTransport):
+        closed = False
+
+        async def aclose(self) -> None:
+            self.closed = True
+            await super().aclose()
+
+    transport = RecordingTransport(lambda request: httpx.Response(204))
+    with AudaligoTransferAPI(
+        base_url="https://audaligo.example",
+        access_token="a" * 43,
+        timeouts=TransferTimeouts(connect=1, read=1, total=1),
+        control_transport=transport,
+    ):
+        pass
+    assert transport.closed
+
+
+def test_managed_processing_read_descriptor_is_locally_decryptable() -> None:
+    manifest = _api._manifest_from_descriptor(
+        {
+            "object": {
+                "securityScope": "managed_processing",
+                "chunks": [],
+            },
+            "wrappedDataKey": {},
+        }
+    )
+
+    assert manifest["object"]["chunks"] == []
+
+
+def test_key_claim_accepts_ipv6_loopback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    encoded = json.dumps(
+        _key_claim(
+            "upload",
+            bytes(range(1, 33)),
+            bytes(range(1, 13)),
+            bytes(range(33, 81)),
+        )
+    ).encode("ascii")
+    monkeypatch.setattr(_claim, "post_control_json", lambda *args, **kwargs: encoded)
+
+    claim = _claim.redeem_file_key_claim(
+        {
+            "url": f"http://[::1]/claims/upload#{'a' * 43}",
+            "expiresAtUnixMilliseconds": 4_102_444_800_000,
+            "protocol": "audaligo.file-key-claim.v1",
+        },
+        expected_direction="upload",
+        expected_project_id="project_123",
+        expected_object_id="upload_123",
+        expected_epoch=0,
+    )
+    assert claim.data_key == bytes(range(1, 33))
+
+
+def test_key_claim_accepts_an_all_zero_wrapped_nonce(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    encoded = json.dumps(
+        _key_claim(
+            "upload",
+            bytes(range(1, 33)),
+            bytes(12),
+            bytes(48),
+        )
+    ).encode("ascii")
+    monkeypatch.setattr(_claim, "post_control_json", lambda *args, **kwargs: encoded)
+
+    claim = _claim.redeem_file_key_claim(
+        _key_claim_descriptor("http://127.0.0.1", "upload"),
+        expected_direction="upload",
+        expected_project_id="project_123",
+        expected_object_id="upload_123",
+        expected_epoch=0,
+    )
+
+    assert claim.wrapped_nonce == bytes(12)
+    assert claim.wrapped_data_key == bytes(48)
+
+
+def test_key_claim_requires_the_data_key_itself_to_be_nonzero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    encoded = json.dumps(
+        _key_claim(
+            "upload",
+            bytes(32),
+            bytes(12),
+            bytes(48),
+        )
+    ).encode("ascii")
+    monkeypatch.setattr(_claim, "post_control_json", lambda *args, **kwargs: encoded)
+
+    with pytest.raises(TransferError, match="key material is invalid"):
+        _claim.redeem_file_key_claim(
+            _key_claim_descriptor("http://127.0.0.1", "upload"),
+            expected_direction="upload",
+            expected_project_id="project_123",
+            expected_object_id="upload_123",
+            expected_epoch=0,
+        )
+
+
+def test_key_claim_rejects_wrapped_ciphertext_with_the_wrong_length(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    encoded = json.dumps(
+        _key_claim(
+            "upload",
+            bytes(range(1, 33)),
+            bytes(12),
+            bytes(47),
+        )
+    ).encode("ascii")
+    monkeypatch.setattr(_claim, "post_control_json", lambda *args, **kwargs: encoded)
+
+    with pytest.raises(TransferError, match="key material is invalid"):
+        _claim.redeem_file_key_claim(
+            _key_claim_descriptor("http://127.0.0.1", "upload"),
+            expected_direction="upload",
+            expected_project_id="project_123",
+            expected_object_id="upload_123",
+            expected_epoch=0,
+        )
+
+
+def test_claim_response_read_enforces_the_total_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Socket:
+        def settimeout(self, timeout: float) -> None:
+            pass
+
+    class Response:
+        status = 200
+
+        def read1(self, size: int) -> bytes:
+            time.sleep(0.02)
+            return b"x"
+
+        def close(self) -> None:
+            pass
+
+    class Connection:
+        sock = Socket()
+
+        def connect(self) -> None:
+            pass
+
+        def putrequest(self, *args: object, **arguments: object) -> None:
+            pass
+
+        def putheader(self, *args: object) -> None:
+            pass
+
+        def endheaders(self) -> None:
+            pass
+
+        def send(self, body: bytes) -> None:
+            pass
+
+        def getresponse(self) -> Response:
+            return Response()
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(_http, "_connection", lambda *args: Connection())
+    with pytest.raises(TransferTimeoutError):
+        _http.post_control_json(
+            "http://127.0.0.1/claim",
+            {"audaligo-key-claim": "a" * 43},
+            maximum_response_bytes=1_024,
+            timeouts=TransferTimeouts(connect=1, read=1, total=0.03),
+            transport=TransferTransport(),
+        )
+
+
+def test_tls_construction_failures_are_sanitized_as_transfer_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_tls_setup(*args: object, **kwargs: object) -> object:
+        raise ssl.SSLError("private TLS setup detail")
+
+    monkeypatch.setattr(_http, "_connection", fail_tls_setup)
+    timeouts = TransferTimeouts(connect=1, read=1, total=1)
+    transport = TransferTransport()
+    operations = (
+        (
+            lambda: _http.put_ciphertext(
+                "https://bucket.example/object",
+                {},
+                b"x",
+                timeouts=timeouts,
+                transport=transport,
+            ),
+            "direct Bucket upload failed",
+        ),
+        (
+            lambda: _http.get_ciphertext(
+                "https://bucket.example/object",
+                {},
+                1,
+                timeouts=timeouts,
+                transport=transport,
+            ),
+            "direct Bucket download failed",
+        ),
+        (
+            lambda: _http.post_control_json(
+                "https://audaligo.example/claim",
+                {"audaligo-key-claim": "a" * 43},
+                maximum_response_bytes=1024,
+                timeouts=timeouts,
+                transport=transport,
+            ),
+            "key claim redemption failed",
+        ),
+    )
+
+    for operation, message in operations:
+        with pytest.raises(TransferError, match=message) as caught:
+            operation()
+        assert "private TLS setup detail" not in str(caught.value)
+
+
+def test_ipv6_authority_is_bracketed_and_malformed_urls_are_sanitized() -> None:
+    parsed = _http._parse_url("http://[::1]:8081/claim", TransferTransport())
+    assert _http._authority(parsed) == "[::1]:8081"
+    with pytest.raises(TransferError, match="URL is invalid"):
+        _http._parse_url("http://[::1", TransferTransport())
+    with pytest.raises(TransferError, match="claim URL is invalid"):
+        _claim.redeem_file_key_claim(
+            {
+                "url": f"http://[::1/claim#{'a' * 43}",
+                "expiresAtUnixMilliseconds": 4_102_444_800_000,
+                "protocol": "audaligo.file-key-claim.v1",
+            },
+            expected_direction="upload",
+            expected_project_id="project_123",
+            expected_object_id="upload_123",
+            expected_epoch=0,
+        )
+
+
+def test_epoch_rejects_values_outside_the_wire_integer_contract() -> None:
+    with pytest.raises(EncryptionContractError, match="canonical wire integer"):
+        build_encryption_plan(
+            io.BytesIO(b"x"),
+            project_id="project_123",
+            file_id="file_123",
+            object_id="upload_123",
+            epoch=MAXIMUM_WIRE_INTEGER + 1,
+            data_key=bytes(range(1, 33)),
+            wrapped_nonce=bytes(range(1, 13)),
+            wrapped_data_key=bytes(range(33, 81)),
+            plaintext_size=1,
+        )
+
+
+def test_decryption_uses_the_validated_manifest_chunk_size_for_layout_and_aad() -> None:
+    plaintext = b"variable chunk manifest"
+    chunk_size = 4
+    chunk_count = (len(plaintext) + chunk_size - 1) // chunk_size
+    data_key = bytes(range(1, 33))
+    nonce_base = bytes(range(1, 9))
+    chunks: list[dict[str, object]] = []
+    ciphertext_chunks: list[bytes] = []
+    plaintext_offset = 0
+    ciphertext_offset = 0
+    for index in range(chunk_count):
+        cleartext = plaintext[plaintext_offset : plaintext_offset + chunk_size]
+        final = index + 1 == chunk_count
+        ciphertext = AESGCM(data_key).encrypt(
+            chunk_nonce(nonce_base, index),
+            cleartext,
+            chunk_aad(
+                project_id="project_123",
+                file_id="file_123",
+                object_id="object_123",
+                epoch=7,
+                total_plaintext_size=len(plaintext),
+                chunk_count=chunk_count,
+                chunk_size=chunk_size,
+                chunk_index=index,
+                plaintext_offset=plaintext_offset,
+                plaintext_length=len(cleartext),
+                final=final,
+            ),
+        )
+        chunks.append(
+            {
+                "chunk_index": index,
+                "ciphertext_offset": ciphertext_offset,
+                "ciphertext_sha256_b64u": _b64url(sha256(ciphertext).digest()),
+                "ciphertext_size": len(ciphertext),
+                "final_chunk": final,
+                "plaintext_offset": plaintext_offset,
+                "plaintext_size": len(cleartext),
+            }
+        )
+        ciphertext_chunks.append(ciphertext)
+        plaintext_offset += len(cleartext)
+        ciphertext_offset += len(ciphertext)
+    wrapped_nonce = bytes(12)
+    wrapped_data_key = bytes(48)
+    manifest = {
+        "v": 1,
+        "type": "audaligo.managed-encrypted-object-manifest",
+        "suite_id": "aes-256-gcm-audaligo-v1",
+        "encryption": {
+            "mode": "managed-project-key",
+            "content_key_alg": "A256GCM",
+            "wrap_alg": "a256gcm-project-epoch-v1",
+            "wrapped_data_key": {
+                "nonceB64u": _b64url(wrapped_nonce),
+                "ciphertextB64u": _b64url(wrapped_data_key),
+            },
+        },
+        "object": {
+            "chunk_count": chunk_count,
+            "chunk_size": chunk_size,
+            "chunks": chunks,
+            "ciphertext_size": ciphertext_offset,
+            "epoch": 7,
+            "file_id": "file_123",
+            "nonce_base_b64u": _b64url(nonce_base),
+            "object_id": "object_123",
+            "plaintext_size": len(plaintext),
+            "project_id": "project_123",
+            "share_id": "project_file_managed_v1",
+        },
+    }
+
+    plan = parse_decryption_plan(
+        manifest,
+        data_key=data_key,
+        wrapped_nonce=wrapped_nonce,
+        wrapped_data_key=wrapped_data_key,
+    )
+
+    assert plan.chunk_size == chunk_size
+    assert (
+        b"".join(
+            plan.open_chunk(ciphertext, index)
+            for index, ciphertext in enumerate(ciphertext_chunks)
+        )
+        == plaintext
+    )
+
+
+def test_upload_size_is_rejected_before_beginning_remote_state() -> None:
+    class OversizedSource:
+        position = 0
+
+        def tell(self) -> int:
+            return self.position
+
+        def seek(self, offset: int, whence: int = io.SEEK_SET) -> int:
+            self.position = (
+                CHUNK_SIZE * MAXIMUM_CHUNKS + 1 if whence == io.SEEK_END else offset
+            )
+            return self.position
+
+        def read(self, size: int = -1) -> bytes:
+            raise AssertionError("rejected source must not be read")
+
+    class NoRemoteStateAPI:
+        def begin_upload(self, **arguments: object) -> Mapping[str, Any]:
+            raise AssertionError("invalid source must not create remote upload state")
+
+    for source, message in (
+        (io.BytesIO(b""), "plaintext size must be positive"),
+        (OversizedSource(), "plaintext exceeds the managed transfer limit"),
+    ):
+        with pytest.raises(TransferError, match=message):
+            upload_file(
+                NoRemoteStateAPI(),
+                project_id="project_123",
+                filename="mix.wav",
+                source=source,
+                operation_id="file_123",
+            )
+
+
+def test_upload_rejects_oversized_epoch_before_consuming_claim(
+    bucket: tuple[str, dict[str, bytes], dict[str, dict[str, object]]],
+) -> None:
+    endpoint, _, claims = bucket
+    claims["/claims/upload"] = _key_claim(
+        "upload",
+        bytes(range(1, 33)),
+        bytes(range(1, 13)),
+        bytes(range(33, 81)),
+    )
+
+    class OversizedEpochAPI:
+        def begin_upload(self, **arguments: object) -> Mapping[str, Any]:
             return {
                 "uploadId": "upload_123",
-                "keyring": {
-                    "projectId": "project_123",
-                    "keys": [{"key": b64encode(project_key).decode("ascii")}],
-                },
+                "keyEpoch": MAXIMUM_WIRE_INTEGER + 1,
+                "keyClaim": _key_claim_descriptor(endpoint, "upload"),
+                "transferContinuation": TRANSFER_CONTINUATION,
             }
-        if name == "audaligo_put_file_upload_manifest":
-            manifest = json.loads(str(arguments["manifestJson"]))
-            return {"objectId": "upload_123", "state": "manifest_stored"}
-        if name == "audaligo_create_file_upload_chunk_capability":
-            index = int(arguments["chunkIndex"])
-            return _capability(endpoint, "put", index, int(arguments["contentLength"]))
-        if name == "audaligo_complete_file_upload_chunks":
-            assert arguments["chunkIndexes"] == [0, 1]
-            return {"objectId": "upload_123", "state": "chunks_complete"}
-        if name == "audaligo_commit_file_upload":
+
+    with pytest.raises(TransferError, match="must be between"):
+        upload_file(
+            OversizedEpochAPI(),
+            project_id="project_123",
+            filename="mix.wav",
+            source=io.BytesIO(b"x"),
+            operation_id="file_123",
+        )
+    assert "/claims/upload" in claims
+
+
+def test_upload_replay_commits_an_already_ready_object(
+    bucket: tuple[str, dict[str, bytes], dict[str, dict[str, object]]],
+) -> None:
+    endpoint, _, claims = bucket
+    calls: list[str] = []
+
+    class ReadyAPI:
+        def begin_upload(self, **arguments: object) -> Mapping[str, Any]:
+            claims["/claims/upload"] = _key_claim(
+                "upload",
+                bytes(range(1, 33)),
+                bytes(range(1, 13)),
+                bytes(range(33, 81)),
+            )
+            return {
+                "uploadId": "upload_123",
+                "keyEpoch": 0,
+                "keyClaim": _key_claim_descriptor(endpoint, "upload"),
+                "transferContinuation": TRANSFER_CONTINUATION,
+            }
+
+        def put_manifest(self, **arguments: object) -> Mapping[str, Any]:
+            calls.append("put_manifest")
+            assert arguments["transfer_continuation"] == TRANSFER_CONTINUATION
+            return {"objectId": "upload_123", "state": "ready"}
+
+        def upload_capability(self, **arguments: object) -> Mapping[str, Any]:
+            raise AssertionError("ready uploads must not request PUT capabilities")
+
+        def complete_upload(self, **arguments: object) -> Mapping[str, Any]:
+            raise AssertionError("ready uploads must not be completed again")
+
+        def commit_file(self, **arguments: object) -> Mapping[str, Any]:
+            calls.append("commit_file")
+            assert arguments["transfer_continuation"] == TRANSFER_CONTINUATION
+            return {"file": {"fileId": "file_123"}, "idempotent": True}
+
+    result = upload_file(
+        ReadyAPI(),
+        project_id="project_123",
+        filename="mix.wav",
+        source=io.BytesIO(b"ready"),
+        operation_id="file_123",
+    )
+    assert result["file"]["fileId"] == "file_123"
+    assert calls == ["put_manifest", "commit_file"]
+
+
+@pytest.mark.parametrize(
+    "transfer_continuation",
+    [
+        None,
+        "",
+        "a" * 42,
+        "a" * 44,
+        "a" * 42 + "=",
+        "a" * 42 + "/",
+        "é" * 43,
+    ],
+)
+def test_upload_rejects_invalid_transfer_continuation_before_follow_up(
+    transfer_continuation: object,
+) -> None:
+    class InvalidContinuationAPI:
+        def begin_upload(self, **arguments: object) -> Mapping[str, Any]:
+            return {
+                "uploadId": "upload_123",
+                "keyEpoch": 0,
+                "keyClaim": {},
+                "transferContinuation": transfer_continuation,
+            }
+
+        def put_manifest(self, **arguments: object) -> Mapping[str, Any]:
+            raise AssertionError("invalid continuation must prevent manifest mutation")
+
+    with pytest.raises(TransferError, match="invalid transfer continuation"):
+        upload_file(
+            InvalidContinuationAPI(),
+            project_id="project_123",
+            filename="mix.wav",
+            source=io.BytesIO(b"content"),
+            operation_id="file_123",
+        )
+
+
+@pytest.mark.parametrize(
+    "transfer_continuation",
+    [None, "", "a" * 42, "a" * 44, "a" * 42 + "=", "a" * 42 + "/"],
+)
+def test_download_rejects_invalid_transfer_continuation_before_capability_request(
+    transfer_continuation: object,
+) -> None:
+    class InvalidContinuationAPI:
+        def read_descriptor(
+            self, *, project_id: str, file_id: str
+        ) -> Mapping[str, Any]:
+            return {"transferContinuation": transfer_continuation}
+
+        def read_capability(self, **arguments: object) -> Mapping[str, Any]:
+            raise AssertionError("invalid continuation must prevent read capability")
+
+    with pytest.raises(TransferError, match="invalid transfer continuation"):
+        download_file(
+            InvalidContinuationAPI(),
+            project_id="project_123",
+            file_id="file_123",
+            destination=io.BytesIO(),
+        )
+
+
+def test_control_api_passes_continuation_to_every_delegated_follow_up(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, Any]] = []
+
+    def request(
+        self: AudaligoTransferAPI,
+        operation: object,
+        *args: object,
+        **arguments: Any,
+    ) -> object:
+        calls.append(arguments)
+        return object()
+
+    monkeypatch.setattr(AudaligoTransferAPI, "_request", request)
+    monkeypatch.setattr(
+        AudaligoTransferAPI,
+        "_body",
+        staticmethod(lambda response, *expected: {}),
+    )
+    monkeypatch.setattr(
+        AudaligoTransferAPI,
+        "_capability",
+        classmethod(lambda cls, response: {}),
+    )
+    monkeypatch.setattr(
+        _api.PutManifestRequest,
+        "from_dict",
+        staticmethod(lambda manifest: object()),
+    )
+
+    with AudaligoTransferAPI(
+        base_url="https://audaligo.example",
+        access_token="a" * 43,
+        timeouts=TransferTimeouts(connect=1, read=1, total=1),
+    ) as api:
+        api.put_manifest(
+            project_id="project_123",
+            upload_id="upload_123",
+            transfer_continuation=TRANSFER_CONTINUATION,
+            manifest={},
+        )
+        api.upload_capability(
+            project_id="project_123",
+            upload_id="upload_123",
+            chunk_index=0,
+            transfer_continuation=TRANSFER_CONTINUATION,
+        )
+        api.complete_upload(
+            project_id="project_123",
+            upload_id="upload_123",
+            transfer_continuation=TRANSFER_CONTINUATION,
+        )
+        api.commit_file(
+            project_id="project_123",
+            file_id="file_123",
+            upload_id="upload_123",
+            filename="mix.wav",
+            plaintext_size=7,
+            mix_version_id=None,
+            transfer_continuation=TRANSFER_CONTINUATION,
+        )
+        api.read_capability(
+            project_id="project_123",
+            object_id="upload_123",
+            chunk_index=0,
+            transfer_continuation=TRANSFER_CONTINUATION,
+        )
+
+    assert len(calls) == 5
+    assert all(
+        call["audaligo_transfer_continuation"] == TRANSFER_CONTINUATION
+        for call in calls
+    )
+
+
+def test_preview_upload_uses_generated_contract_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    async def begin(*args: object, **arguments: Any) -> object:
+        captured.update(arguments["body"].to_dict())
+        return object()
+
+    monkeypatch.setattr(_api.create_encrypted_object_upload, "asyncio_detailed", begin)
+    monkeypatch.setattr(
+        AudaligoTransferAPI,
+        "_body",
+        staticmethod(
+            lambda response, *expected: {"transferContinuation": TRANSFER_CONTINUATION}
+        ),
+    )
+    with AudaligoTransferAPI(
+        base_url="https://audaligo.example",
+        access_token="a" * 43,
+        timeouts=TransferTimeouts(connect=1, read=1, total=1),
+    ) as api:
+        api.begin_upload(
+            project_id="project_123",
+            operation_id="operation_123",
+            mix_version_id="mix_123",
+            filename="mix.wav",
+            plaintext_size=4096,
+        )
+
+    assert captured["previewIntent"] == {
+        "v": 1,
+        "profile": "aac-lc-128k-m4a-v1",
+        "filename": "mix.wav",
+        "mediaType": "audio/wav",
+        "plaintextSize": 4096,
+        "mixVersionId": "mix_123",
+    }
+
+
+def test_cli_reads_committed_file_id_from_response_envelope(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source = tmp_path / "mix.wav"
+    source.write_bytes(b"audio")
+    monkeypatch.setenv("AUDALIGO_ACCESS_TOKEN", "a" * 43)
+    monkeypatch.setattr(
+        _cli,
+        "AudaligoTransferAPI",
+        lambda **arguments: nullcontext(object()),
+    )
+    monkeypatch.setattr(
+        _cli,
+        "upload_file",
+        lambda *args, **arguments: {"file": {"fileId": "file_123"}},
+    )
+
+    assert (
+        _cli.main(
+            [
+                "--api-url",
+                "https://audaligo.example",
+                "upload",
+                "--project-id",
+                "project_123",
+                "--source",
+                str(source),
+                "--operation-id",
+                "operation_123",
+            ]
+        )
+        == 0
+    )
+    assert json.loads(capsys.readouterr().out) == {"fileId": "file_123"}
+
+
+def test_sdk_encrypts_locally_and_transfers_ciphertext_directly(
+    bucket: tuple[str, dict[str, bytes], dict[str, dict[str, object]]],
+    tmp_path: Path,
+) -> None:
+    endpoint, objects, claims = bucket
+    data_key = bytes(range(33, 65))
+    wrapped_nonce = bytes(range(1, 13))
+    wrapped_data_key = bytes(range(65, 113))
+    plaintext = bytes((index * 37) % 251 for index in range(CHUNK_SIZE + 17))
+    state: dict[str, Any] = {"manifest": None}
+    calls: list[str] = []
+
+    class FakeAudaligoAPI:
+        def begin_upload(self, **arguments: object) -> Mapping[str, Any]:
+            calls.append("begin_upload")
+            assert arguments["plaintext_size"] == len(plaintext)
+            claims["/claims/upload"] = _key_claim(
+                "upload", data_key, wrapped_nonce, wrapped_data_key
+            )
+            return {
+                "uploadId": "upload_123",
+                "keyEpoch": 0,
+                "keyClaim": _key_claim_descriptor(endpoint, "upload"),
+                "transferContinuation": TRANSFER_CONTINUATION,
+            }
+
+        def put_manifest(
+            self,
+            *,
+            project_id: str,
+            upload_id: str,
+            transfer_continuation: str,
+            manifest: Mapping[str, Any],
+        ) -> Mapping[str, Any]:
+            calls.append("put_manifest")
+            assert transfer_continuation == TRANSFER_CONTINUATION
+            assert set(manifest) == {"v", "type", "suite_id", "encryption", "object"}
+            assert manifest["v"] == 1
+            assert manifest["suite_id"] == "aes-256-gcm-audaligo-v1"
+            state["manifest"] = dict(manifest)
+            return {"objectId": upload_id, "state": "manifest_stored"}
+
+        def upload_capability(
+            self,
+            *,
+            project_id: str,
+            upload_id: str,
+            chunk_index: int,
+            transfer_continuation: str,
+        ) -> Mapping[str, Any]:
+            calls.append("upload_capability")
+            assert transfer_continuation == TRANSFER_CONTINUATION
+            manifest = state["manifest"]
+            assert isinstance(manifest, Mapping)
+            length = int(manifest["object"]["chunks"][chunk_index]["ciphertext_size"])
+            return _capability(endpoint, "PUT", chunk_index, length)
+
+        def complete_upload(
+            self,
+            *,
+            project_id: str,
+            upload_id: str,
+            transfer_continuation: str,
+        ) -> Mapping[str, Any]:
+            calls.append("complete_upload")
+            assert transfer_continuation == TRANSFER_CONTINUATION
+            return {"objectId": upload_id, "state": "chunks_complete"}
+
+        def commit_file(self, **arguments: object) -> Mapping[str, Any]:
+            calls.append("commit_file")
+            assert arguments["transfer_continuation"] == TRANSFER_CONTINUATION
             return {
                 "file": {
                     "projectId": "project_123",
@@ -125,40 +1209,49 @@ def test_sdk_encrypts_locally_and_transfers_ciphertext_directly(
                     "encryptedObjectId": "upload_123",
                     "originalFilename": "mix.wav",
                     "originalPlaintextSize": str(len(plaintext)),
-                    "mimeType": "application/octet-stream",
-                    "createdAtUnixMilliseconds": "1",
-                    "updatedAtUnixMilliseconds": "1",
                 },
                 "idempotent": False,
             }
-        if name == "audaligo_begin_file_download":
-            assert manifest is not None
+
+        def read_descriptor(
+            self, *, project_id: str, file_id: str
+        ) -> Mapping[str, Any]:
+            calls.append("read_descriptor")
+            manifest = state["manifest"]
+            assert isinstance(manifest, Mapping)
+            claims["/claims/download"] = _key_claim(
+                "download", data_key, wrapped_nonce, wrapped_data_key
+            )
             return {
                 "file": {
-                    "projectId": "project_123",
-                    "fileId": "file_123",
+                    "projectId": project_id,
+                    "fileId": file_id,
                     "encryptedObjectId": "upload_123",
-                    "originalFilename": "mix.wav",
-                    "originalPlaintextSize": str(len(plaintext)),
-                    "mimeType": "application/octet-stream",
-                    "createdAtUnixMilliseconds": "1",
-                    "updatedAtUnixMilliseconds": "1",
                 },
-                "manifest": _protobuf_json_manifest(manifest),
-                "keyring": {
-                    "projectId": "project_123",
-                    "keys": [{"key": b64encode(project_key).decode("ascii")}],
-                },
+                "manifest": manifest,
+                "keyClaim": _key_claim_descriptor(endpoint, "download"),
+                "transferContinuation": TRANSFER_CONTINUATION,
             }
-        if name == "audaligo_create_file_read_chunk_capability":
-            assert manifest is not None
-            index = int(arguments["chunkIndex"])
-            length = int(manifest["chunks"][index]["ciphertextSize"])
-            return _capability(endpoint, "get", index, length)
-        raise AssertionError(f"unexpected tool: {name}")
+
+        def read_capability(
+            self,
+            *,
+            project_id: str,
+            object_id: str,
+            chunk_index: int,
+            transfer_continuation: str,
+        ) -> Mapping[str, Any]:
+            calls.append("read_capability")
+            assert transfer_continuation == TRANSFER_CONTINUATION
+            manifest = state["manifest"]
+            assert isinstance(manifest, Mapping)
+            length = int(manifest["object"]["chunks"][chunk_index]["ciphertext_size"])
+            return _capability(endpoint, "GET", chunk_index, length)
+
+    api = FakeAudaligoAPI()
 
     upload_result = upload_file(
-        call_tool,
+        api,
         project_id="project_123",
         filename="mix.wav",
         source=io.BytesIO(plaintext),
@@ -171,40 +1264,58 @@ def test_sdk_encrypts_locally_and_transfers_ciphertext_directly(
 
     destination = tmp_path / "download.wav"
     assert download_file(
-        call_tool,
+        api,
         project_id="project_123",
         file_id="file_123",
         destination=destination,
     ) == len(plaintext)
     assert destination.read_bytes() == plaintext
-    assert calls.count("audaligo_create_file_upload_chunk_capability") == 2
-    assert calls.count("audaligo_create_file_read_chunk_capability") == 2
+    assert calls.count("upload_capability") == 2
+    assert calls.count("read_capability") == 2
+    assert claims == {}
+
+
+def _key_claim_descriptor(endpoint: str, direction: str) -> dict[str, object]:
+    return {
+        "url": f"{endpoint}/claims/{direction}#{'a' * 43}",
+        "expiresAtUnixMilliseconds": 4_102_444_800_000,
+        "protocol": "audaligo.file-key-claim.v1",
+    }
+
+
+def _key_claim(
+    direction: str,
+    data_key: bytes,
+    wrapped_nonce: bytes,
+    wrapped_data_key: bytes,
+) -> dict[str, object]:
+    return {
+        "version": 1,
+        "protocol": "audaligo.file-key-claim.v1",
+        "direction": direction,
+        "projectId": "project_123",
+        "objectId": "upload_123",
+        "epoch": 0,
+        "dataKey": _b64url(data_key),
+        "wrappedDataKey": {
+            "nonce": _b64url(wrapped_nonce),
+            "ciphertext": _b64url(wrapped_data_key),
+        },
+    }
+
+
+def _b64url(value: bytes) -> str:
+    return urlsafe_b64encode(value).decode("ascii").rstrip("=")
 
 
 def _capability(
     endpoint: str, operation: str, index: int, content_length: int
 ) -> dict[str, object]:
-    capability: dict[str, object] = {
+    return {
         "operation": operation,
         "objectId": "upload_123",
-        "expiresAtUnixMilliseconds": "4102444800000",
-        "contentLength": str(content_length),
+        "chunkIndex": index,
+        "contentLength": content_length,
         "url": f"{endpoint}/upload_123/{index}?signature=test",
+        "headers": {},
     }
-    if index:
-        capability["chunkIndex"] = index
-    return capability
-
-
-def _protobuf_json_manifest(manifest: Mapping[str, Any]) -> dict[str, Any]:
-    result = json.loads(json.dumps(manifest))
-    result["encryptionMode"] = "managed_encryption"
-    if result["epoch"] == "0":
-        del result["epoch"]
-    for chunk in result["chunks"]:
-        for key in ("chunkIndex", "ciphertextOffset", "plaintextOffset"):
-            if chunk[key] in (0, "0"):
-                del chunk[key]
-        if chunk["finalChunk"] is False:
-            del chunk["finalChunk"]
-    return result

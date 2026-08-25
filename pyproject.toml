@@ -3,13 +3,18 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "soenan-mcp-support"
+name = "soenan-audaligo-support"
 version = "0.1.0"
-description = "Support utilities for applications and agents that use Soenan MCP"
+description = "Generated Audaligo API client and direct encrypted transfer support"
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "Soenan" }]
-dependencies = ["cryptography==50.0.0"]
+dependencies = [
+  "attrs>=22.2.0",
+  "cryptography==50.0.0",
+  "httpx>=0.23.1,<0.29.0",
+  "typing-extensions>=4.7.1",
+]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
@@ -25,8 +30,11 @@ classifiers = [
 [project.urls]
 Repository = "https://github.com/soenan-apps/soenan-mcp-support"
 
+[project.scripts]
+soenan-audaligo-transfer = "soenan_audaligo_support.transfer._cli:main"
+
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["src", "generated"]
 
 [tool.setuptools.package-data]
-soenan_mcp_support = ["py.typed"]
+soenan_audaligo_support = ["py.typed"]
