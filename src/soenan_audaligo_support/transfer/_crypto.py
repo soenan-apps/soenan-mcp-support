@@ -126,6 +126,7 @@ class DecryptionPlan:
     epoch: int
     plaintext_size: int
     chunk_count: int
+    chunk_size: int
     nonce_base: bytes
     data_key: bytes
     chunks: tuple[ChunkMetadata, ...]
@@ -151,6 +152,7 @@ class DecryptionPlan:
                     epoch=self.epoch,
                     total_plaintext_size=self.plaintext_size,
                     chunk_count=self.chunk_count,
+                    chunk_size=self.chunk_size,
                     chunk_index=index,
                     plaintext_offset=chunk.plaintext_offset,
                     plaintext_length=chunk.plaintext_size,
@@ -320,8 +322,9 @@ def parse_decryption_plan(
         allowed=object_fields,
         label="manifest object",
     )
+    chunk_size = _integer(object_value, "chunk_size")
     if (
-        _integer(object_value, "chunk_size") != CHUNK_SIZE
+        not 1 <= chunk_size <= CHUNK_SIZE
         or _string(object_value, "share_id") != SHARE_ID
     ):
         raise EncryptionContractError("unsupported managed manifest object")
@@ -337,7 +340,7 @@ def parse_decryption_plan(
     if (
         epoch < 0
         or chunk_count > MAXIMUM_CHUNKS
-        or (plaintext_size - 1) // CHUNK_SIZE + 1 != chunk_count
+        or (plaintext_size - 1) // chunk_size + 1 != chunk_count
     ):
         raise EncryptionContractError("invalid managed manifest chunk count")
     nonce_base = _base64url_bytes(object_value, "nonce_base_b64u", 8)
@@ -375,7 +378,7 @@ def parse_decryption_plan(
             _integer(raw, "chunk_index") != index
             or _integer(raw, "plaintext_offset") != plaintext_offset
             or _integer(raw, "ciphertext_offset") != ciphertext_offset
-            or plaintext_length > CHUNK_SIZE
+            or plaintext_length != min(chunk_size, plaintext_size - plaintext_offset)
             or ciphertext_length != plaintext_length + _TAG_SIZE
             or not isinstance(final, bool)
             or final != (index + 1 == chunk_count)
@@ -416,6 +419,7 @@ def parse_decryption_plan(
         epoch=epoch,
         plaintext_size=plaintext_size,
         chunk_count=chunk_count,
+        chunk_size=chunk_size,
         nonce_base=nonce_base,
         data_key=data_key,
         chunks=tuple(chunks),
@@ -436,6 +440,7 @@ def chunk_aad(
     epoch: int,
     total_plaintext_size: int,
     chunk_count: int,
+    chunk_size: int = CHUNK_SIZE,
     chunk_index: int,
     plaintext_offset: int,
     plaintext_length: int,
@@ -450,7 +455,7 @@ def chunk_aad(
     output.extend(struct.pack(">Q", epoch))
     _append_string(output, object_id)
     output.extend(struct.pack(">Q", total_plaintext_size))
-    output.extend(struct.pack(">I", CHUNK_SIZE))
+    output.extend(struct.pack(">I", chunk_size))
     output.extend(struct.pack(">I", chunk_count))
     output.extend(struct.pack(">I", chunk_index))
     output.extend(struct.pack(">Q", plaintext_offset))

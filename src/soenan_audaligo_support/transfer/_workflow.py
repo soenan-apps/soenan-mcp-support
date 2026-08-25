@@ -10,6 +10,8 @@ from typing import Any, BinaryIO, TypeAlias
 from ._api import AudaligoTransferAPI
 from ._claim import redeem_file_key_claim
 from ._crypto import (
+    CHUNK_SIZE,
+    MAXIMUM_CHUNKS,
     MAXIMUM_WIRE_INTEGER,
     ChunkMetadata,
     EncryptionContractError,
@@ -47,6 +49,10 @@ def upload_file(
     """Encrypt locally and upload ciphertext directly to Railway Bucket capabilities."""
     stream, close_stream, plaintext_size = _open_upload_source(source)
     try:
+        if plaintext_size <= 0:
+            raise TransferError("plaintext size must be positive")
+        if plaintext_size > CHUNK_SIZE * MAXIMUM_CHUNKS:
+            raise TransferError("plaintext exceeds the managed transfer limit")
         begin = api.begin_upload(
             project_id=project_id,
             filename=filename,

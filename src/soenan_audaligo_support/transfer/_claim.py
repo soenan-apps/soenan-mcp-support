@@ -120,7 +120,7 @@ def redeem_file_key_claim(
         project_id=expected_project_id,
         object_id=expected_object_id,
         epoch=expected_epoch,
-        data_key=_decode_key(value.get("dataKey"), 32),
+        data_key=_decode_key(value.get("dataKey"), 32, require_nonzero=True),
         wrapped_nonce=_decode_key(wrapped.get("nonce"), 12),
         wrapped_data_key=_decode_key(wrapped.get("ciphertext"), 48),
     )
@@ -135,14 +135,16 @@ def _strict_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
     return value
 
 
-def _decode_key(value: object, expected_bytes: int) -> bytes:
+def _decode_key(
+    value: object, expected_bytes: int, *, require_nonzero: bool = False
+) -> bytes:
     if not isinstance(value, str) or not _is_base64url(value):
         raise TransferError("file key claim key encoding is invalid")
     try:
         decoded = base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
     except (ValueError, base64.binascii.Error):
         raise TransferError("file key claim key encoding is invalid") from None
-    if len(decoded) != expected_bytes or not any(decoded):
+    if len(decoded) != expected_bytes or (require_nonzero and not any(decoded)):
         raise TransferError("file key claim key material is invalid")
     return decoded
 

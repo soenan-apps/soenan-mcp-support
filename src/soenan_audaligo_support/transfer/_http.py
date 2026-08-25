@@ -98,9 +98,11 @@ def put_ciphertext(
 ) -> None:
     parsed = _parse_url(url, transport)
     deadline = time.monotonic() + timeouts.total
-    connection = _connection(parsed, timeouts, deadline, transport)
-    watchdog = _deadline_watchdog(connection, deadline)
+    connection: http.client.HTTPConnection | None = None
+    watchdog: threading.Timer | None = None
     try:
+        connection = _connection(parsed, timeouts, deadline, transport)
+        watchdog = _deadline_watchdog(connection, deadline)
         connection.connect()
         _set_socket_timeout(connection, timeouts, deadline)
         connection.putrequest(
@@ -132,8 +134,10 @@ def put_ciphertext(
             raise TransferTimeoutError() from None
         raise TransferError("direct Bucket upload failed") from None
     finally:
-        watchdog.cancel()
-        connection.close()
+        if watchdog is not None:
+            watchdog.cancel()
+        if connection is not None:
+            connection.close()
 
 
 def get_ciphertext(
@@ -148,9 +152,11 @@ def get_ciphertext(
         raise ValueError("expected_length must be positive")
     parsed = _parse_url(url, transport)
     deadline = time.monotonic() + timeouts.total
-    connection = _connection(parsed, timeouts, deadline, transport)
-    watchdog = _deadline_watchdog(connection, deadline)
+    connection: http.client.HTTPConnection | None = None
+    watchdog: threading.Timer | None = None
     try:
+        connection = _connection(parsed, timeouts, deadline, transport)
+        watchdog = _deadline_watchdog(connection, deadline)
         connection.connect()
         _set_socket_timeout(connection, timeouts, deadline)
         connection.putrequest(
@@ -189,8 +195,10 @@ def get_ciphertext(
             raise TransferTimeoutError() from None
         raise TransferError("direct Bucket download failed") from None
     finally:
-        watchdog.cancel()
-        connection.close()
+        if watchdog is not None:
+            watchdog.cancel()
+        if connection is not None:
+            connection.close()
 
 
 def post_control_json(
@@ -209,9 +217,11 @@ def post_control_json(
         raise ValueError("maximum_response_bytes is outside the control-plane limit")
     parsed = _parse_url(url, transport)
     deadline = time.monotonic() + timeouts.total
-    connection = _connection(parsed, timeouts, deadline, transport)
-    watchdog = _deadline_watchdog(connection, deadline)
+    connection: http.client.HTTPConnection | None = None
+    watchdog: threading.Timer | None = None
     try:
+        connection = _connection(parsed, timeouts, deadline, transport)
+        watchdog = _deadline_watchdog(connection, deadline)
         connection.connect()
         _set_socket_timeout(connection, timeouts, deadline)
         connection.putrequest(
@@ -263,8 +273,10 @@ def post_control_json(
             raise TransferTimeoutError() from None
         raise TransferError("key claim redemption failed") from None
     finally:
-        watchdog.cancel()
-        connection.close()
+        if watchdog is not None:
+            watchdog.cancel()
+        if connection is not None:
+            connection.close()
 
 
 def _parse_url(url: str, transport: TransferTransport) -> SplitResult:
