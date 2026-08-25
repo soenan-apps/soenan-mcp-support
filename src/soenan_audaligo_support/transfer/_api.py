@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import threading
 from collections.abc import Mapping
 from http import HTTPStatus
@@ -314,38 +315,62 @@ class AudaligoTransferAPI:
             origin=self._origin,
             idempotency_key=operation_id,
         )
-        return self._body(response, HTTPStatus.CREATED)
+        value = self._body(response, HTTPStatus.CREATED)
+        _transfer_continuation(value)
+        return value
 
     def put_manifest(
-        self, *, project_id: str, upload_id: str, manifest: Mapping[str, Any]
+        self,
+        *,
+        project_id: str,
+        upload_id: str,
+        transfer_continuation: str,
+        manifest: Mapping[str, Any],
     ) -> Mapping[str, Any]:
+        _validate_transfer_continuation(transfer_continuation)
         response = self._request(
             put_encrypted_object_manifest.asyncio_detailed,
             project_id,
             upload_id,
             body=PutManifestRequest.from_dict({"manifest": dict(manifest)}),
             origin=self._origin,
+            audaligo_transfer_continuation=transfer_continuation,
         )
         return self._body(response, HTTPStatus.OK, HTTPStatus.CREATED)
 
     def upload_capability(
-        self, *, project_id: str, upload_id: str, chunk_index: int
+        self,
+        *,
+        project_id: str,
+        upload_id: str,
+        chunk_index: int,
+        transfer_continuation: str,
     ) -> Mapping[str, Any]:
+        _validate_transfer_continuation(transfer_continuation)
         response = self._request(
             create_chunk_upload_capability.asyncio_detailed,
             project_id,
             upload_id,
             chunk_index,
             origin=self._origin,
+            audaligo_transfer_continuation=transfer_continuation,
         )
         return self._capability(response)
 
-    def complete_upload(self, *, project_id: str, upload_id: str) -> Mapping[str, Any]:
+    def complete_upload(
+        self,
+        *,
+        project_id: str,
+        upload_id: str,
+        transfer_continuation: str,
+    ) -> Mapping[str, Any]:
+        _validate_transfer_continuation(transfer_continuation)
         response = self._request(
             complete_encrypted_object_chunks.asyncio_detailed,
             project_id,
             upload_id,
             origin=self._origin,
+            audaligo_transfer_continuation=transfer_continuation,
         )
         return self._body(response, HTTPStatus.OK)
 
@@ -358,7 +383,9 @@ class AudaligoTransferAPI:
         filename: str,
         plaintext_size: int,
         mix_version_id: str | None,
+        transfer_continuation: str,
     ) -> Mapping[str, Any]:
+        _validate_transfer_continuation(transfer_continuation)
         value: dict[str, Any] = {
             "encryptedObjectId": upload_id,
             "fileKind": "project_file",
@@ -373,6 +400,7 @@ class AudaligoTransferAPI:
             file_id,
             body=CommitProjectFileRequest.from_dict(value),
             origin=self._origin,
+            audaligo_transfer_continuation=transfer_continuation,
         )
         return self._body(response, HTTPStatus.OK, HTTPStatus.CREATED)
 
@@ -383,6 +411,7 @@ class AudaligoTransferAPI:
             file_id,
         )
         body = self._body(response, HTTPStatus.OK)
+        transfer_continuation = _transfer_continuation(body)
         descriptor = _mapping(body, "descriptor")
         project_file = dict(_mapping(descriptor, "projectFile"))
         obj = _mapping(descriptor, "object")
@@ -391,6 +420,7 @@ class AudaligoTransferAPI:
             "file": project_file,
             "manifest": _manifest_from_descriptor(descriptor),
             "keyClaim": _mapping(body, "keyClaim"),
+            "transferContinuation": transfer_continuation,
         }
 
     def read_capability(
@@ -399,12 +429,15 @@ class AudaligoTransferAPI:
         project_id: str,
         object_id: str,
         chunk_index: int,
+        transfer_continuation: str,
     ) -> Mapping[str, Any]:
+        _validate_transfer_continuation(transfer_continuation)
         response = self._request(
             get_chunk_read_capability.asyncio_detailed,
             project_id,
             object_id,
             chunk_index,
+            audaligo_transfer_continuation=transfer_continuation,
         )
         return self._capability(response)
 
@@ -538,3 +571,18 @@ def _string(value: Mapping[str, Any], key: str) -> str:
     if not isinstance(result, str) or not result:
         raise TransferError("Audaligo API returned an invalid response")
     return result
+
+
+_TRANSFER_CONTINUATION_PATTERN = re.compile(r"[A-Za-z0-9_-]{43}", re.ASCII)
+
+
+def _transfer_continuation(value: Mapping[str, Any]) -> str:
+    return _validate_transfer_continuation(value.get("transferContinuation"))
+
+
+def _validate_transfer_continuation(continuation: Any) -> str:
+    if not isinstance(
+        continuation, str
+    ) or not _TRANSFER_CONTINUATION_PATTERN.fullmatch(continuation):
+        raise TransferError("Audaligo API returned an invalid transfer continuation")
+    return continuation

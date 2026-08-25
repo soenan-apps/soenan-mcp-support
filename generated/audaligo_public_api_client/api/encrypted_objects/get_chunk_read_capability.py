@@ -7,14 +7,19 @@ import httpx
 from ...client import AuthenticatedClient, Client
 from ...models.capability_response import CapabilityResponse
 from ...models.error_envelope import ErrorEnvelope
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     project: str,
     object_: str,
     chunk: int,
+    *,
+    audaligo_transfer_continuation: str | Unset = UNSET,
 ) -> dict[str, Any]:
+    headers: dict[str, Any] = {}
+    if not isinstance(audaligo_transfer_continuation, Unset):
+        headers["Audaligo-Transfer-Continuation"] = audaligo_transfer_continuation
 
     _kwargs: dict[str, Any] = {
         "method": "get",
@@ -25,6 +30,7 @@ def _get_kwargs(
         ),
     }
 
+    _kwargs["headers"] = headers
     return _kwargs
 
 
@@ -58,12 +64,14 @@ def sync_detailed(
     chunk: int,
     *,
     client: AuthenticatedClient,
+    audaligo_transfer_continuation: str | Unset = UNSET,
 ) -> Response[CapabilityResponse | ErrorEnvelope]:
     """
     Args:
         project (str):
         object_ (str):
         chunk (int):
+        audaligo_transfer_continuation (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -77,6 +85,7 @@ def sync_detailed(
         project=project,
         object_=object_,
         chunk=chunk,
+        audaligo_transfer_continuation=audaligo_transfer_continuation,
     )
 
     response = client.get_httpx_client().request(
@@ -92,12 +101,14 @@ def sync(
     chunk: int,
     *,
     client: AuthenticatedClient,
+    audaligo_transfer_continuation: str | Unset = UNSET,
 ) -> CapabilityResponse | ErrorEnvelope | None:
     """
     Args:
         project (str):
         object_ (str):
         chunk (int):
+        audaligo_transfer_continuation (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -112,6 +123,7 @@ def sync(
         object_=object_,
         chunk=chunk,
         client=client,
+        audaligo_transfer_continuation=audaligo_transfer_continuation,
     ).parsed
 
 
@@ -121,12 +133,14 @@ async def asyncio_detailed(
     chunk: int,
     *,
     client: AuthenticatedClient,
+    audaligo_transfer_continuation: str | Unset = UNSET,
 ) -> Response[CapabilityResponse | ErrorEnvelope]:
     """
     Args:
         project (str):
         object_ (str):
         chunk (int):
+        audaligo_transfer_continuation (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -140,6 +154,7 @@ async def asyncio_detailed(
         project=project,
         object_=object_,
         chunk=chunk,
+        audaligo_transfer_continuation=audaligo_transfer_continuation,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -153,12 +168,14 @@ async def asyncio(
     chunk: int,
     *,
     client: AuthenticatedClient,
+    audaligo_transfer_continuation: str | Unset = UNSET,
 ) -> CapabilityResponse | ErrorEnvelope | None:
     """
     Args:
         project (str):
         object_ (str):
         chunk (int):
+        audaligo_transfer_continuation (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -174,5 +191,6 @@ async def asyncio(
             object_=object_,
             chunk=chunk,
             client=client,
+            audaligo_transfer_continuation=audaligo_transfer_continuation,
         )
     ).parsed

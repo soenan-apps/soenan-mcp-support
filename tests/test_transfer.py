@@ -44,6 +44,8 @@ from soenan_audaligo_support.transfer._crypto import (
 )
 from soenan_audaligo_support.transfer._http import put_ciphertext
 
+TRANSFER_CONTINUATION = "T" * 43
+
 
 @pytest.fixture
 def bucket() -> tuple[str, dict[str, bytes], dict[str, dict[str, object]]]:
@@ -851,6 +853,7 @@ def test_upload_rejects_oversized_epoch_before_consuming_claim(
                 "uploadId": "upload_123",
                 "keyEpoch": MAXIMUM_WIRE_INTEGER + 1,
                 "keyClaim": _key_claim_descriptor(endpoint, "upload"),
+                "transferContinuation": TRANSFER_CONTINUATION,
             }
 
     with pytest.raises(TransferError, match="must be between"):
@@ -882,10 +885,12 @@ def test_upload_replay_commits_an_already_ready_object(
                 "uploadId": "upload_123",
                 "keyEpoch": 0,
                 "keyClaim": _key_claim_descriptor(endpoint, "upload"),
+                "transferContinuation": TRANSFER_CONTINUATION,
             }
 
         def put_manifest(self, **arguments: object) -> Mapping[str, Any]:
             calls.append("put_manifest")
+            assert arguments["transfer_continuation"] == TRANSFER_CONTINUATION
             return {"objectId": "upload_123", "state": "ready"}
 
         def upload_capability(self, **arguments: object) -> Mapping[str, Any]:
@@ -896,6 +901,7 @@ def test_upload_replay_commits_an_already_ready_object(
 
         def commit_file(self, **arguments: object) -> Mapping[str, Any]:
             calls.append("commit_file")
+            assert arguments["transfer_continuation"] == TRANSFER_CONTINUATION
             return {"file": {"fileId": "file_123"}, "idempotent": True}
 
     result = upload_file(
@@ -907,6 +913,144 @@ def test_upload_replay_commits_an_already_ready_object(
     )
     assert result["file"]["fileId"] == "file_123"
     assert calls == ["put_manifest", "commit_file"]
+
+
+@pytest.mark.parametrize(
+    "transfer_continuation",
+    [
+        None,
+        "",
+        "a" * 42,
+        "a" * 44,
+        "a" * 42 + "=",
+        "a" * 42 + "/",
+        "é" * 43,
+    ],
+)
+def test_upload_rejects_invalid_transfer_continuation_before_follow_up(
+    transfer_continuation: object,
+) -> None:
+    class InvalidContinuationAPI:
+        def begin_upload(self, **arguments: object) -> Mapping[str, Any]:
+            return {
+                "uploadId": "upload_123",
+                "keyEpoch": 0,
+                "keyClaim": {},
+                "transferContinuation": transfer_continuation,
+            }
+
+        def put_manifest(self, **arguments: object) -> Mapping[str, Any]:
+            raise AssertionError("invalid continuation must prevent manifest mutation")
+
+    with pytest.raises(TransferError, match="invalid transfer continuation"):
+        upload_file(
+            InvalidContinuationAPI(),
+            project_id="project_123",
+            filename="mix.wav",
+            source=io.BytesIO(b"content"),
+            operation_id="file_123",
+        )
+
+
+@pytest.mark.parametrize(
+    "transfer_continuation",
+    [None, "", "a" * 42, "a" * 44, "a" * 42 + "=", "a" * 42 + "/"],
+)
+def test_download_rejects_invalid_transfer_continuation_before_capability_request(
+    transfer_continuation: object,
+) -> None:
+    class InvalidContinuationAPI:
+        def read_descriptor(
+            self, *, project_id: str, file_id: str
+        ) -> Mapping[str, Any]:
+            return {"transferContinuation": transfer_continuation}
+
+        def read_capability(self, **arguments: object) -> Mapping[str, Any]:
+            raise AssertionError("invalid continuation must prevent read capability")
+
+    with pytest.raises(TransferError, match="invalid transfer continuation"):
+        download_file(
+            InvalidContinuationAPI(),
+            project_id="project_123",
+            file_id="file_123",
+            destination=io.BytesIO(),
+        )
+
+
+def test_control_api_passes_continuation_to_every_delegated_follow_up(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, Any]] = []
+
+    def request(
+        self: AudaligoTransferAPI,
+        operation: object,
+        *args: object,
+        **arguments: Any,
+    ) -> object:
+        calls.append(arguments)
+        return object()
+
+    monkeypatch.setattr(AudaligoTransferAPI, "_request", request)
+    monkeypatch.setattr(
+        AudaligoTransferAPI,
+        "_body",
+        staticmethod(lambda response, *expected: {}),
+    )
+    monkeypatch.setattr(
+        AudaligoTransferAPI,
+        "_capability",
+        classmethod(lambda cls, response: {}),
+    )
+    monkeypatch.setattr(
+        _api.PutManifestRequest,
+        "from_dict",
+        staticmethod(lambda manifest: object()),
+    )
+
+    with AudaligoTransferAPI(
+        base_url="https://audaligo.example",
+        access_token="a" * 43,
+        timeouts=TransferTimeouts(connect=1, read=1, total=1),
+    ) as api:
+        api.put_manifest(
+            project_id="project_123",
+            upload_id="upload_123",
+            transfer_continuation=TRANSFER_CONTINUATION,
+            manifest={},
+        )
+        api.upload_capability(
+            project_id="project_123",
+            upload_id="upload_123",
+            chunk_index=0,
+            transfer_continuation=TRANSFER_CONTINUATION,
+        )
+        api.complete_upload(
+            project_id="project_123",
+            upload_id="upload_123",
+            transfer_continuation=TRANSFER_CONTINUATION,
+        )
+        api.commit_file(
+            project_id="project_123",
+            file_id="file_123",
+            upload_id="upload_123",
+            filename="mix.wav",
+            plaintext_size=7,
+            mix_version_id=None,
+            transfer_continuation=TRANSFER_CONTINUATION,
+        )
+        api.read_capability(
+            project_id="project_123",
+            object_id="upload_123",
+            chunk_index=0,
+            transfer_continuation=TRANSFER_CONTINUATION,
+        )
+
+    assert len(calls) == 5
+    assert all(
+        call["audaligo_transfer_continuation"] == TRANSFER_CONTINUATION
+        for call in calls
+    )
 
 
 def test_preview_upload_uses_generated_contract_values(
@@ -922,7 +1066,9 @@ def test_preview_upload_uses_generated_contract_values(
     monkeypatch.setattr(
         AudaligoTransferAPI,
         "_body",
-        staticmethod(lambda response, *expected: {}),
+        staticmethod(
+            lambda response, *expected: {"transferContinuation": TRANSFER_CONTINUATION}
+        ),
     )
     with AudaligoTransferAPI(
         base_url="https://audaligo.example",
@@ -1008,12 +1154,19 @@ def test_sdk_encrypts_locally_and_transfers_ciphertext_directly(
                 "uploadId": "upload_123",
                 "keyEpoch": 0,
                 "keyClaim": _key_claim_descriptor(endpoint, "upload"),
+                "transferContinuation": TRANSFER_CONTINUATION,
             }
 
         def put_manifest(
-            self, *, project_id: str, upload_id: str, manifest: Mapping[str, Any]
+            self,
+            *,
+            project_id: str,
+            upload_id: str,
+            transfer_continuation: str,
+            manifest: Mapping[str, Any],
         ) -> Mapping[str, Any]:
             calls.append("put_manifest")
+            assert transfer_continuation == TRANSFER_CONTINUATION
             assert set(manifest) == {"v", "type", "suite_id", "encryption", "object"}
             assert manifest["v"] == 1
             assert manifest["suite_id"] == "aes-256-gcm-audaligo-v1"
@@ -1021,22 +1174,34 @@ def test_sdk_encrypts_locally_and_transfers_ciphertext_directly(
             return {"objectId": upload_id, "state": "manifest_stored"}
 
         def upload_capability(
-            self, *, project_id: str, upload_id: str, chunk_index: int
+            self,
+            *,
+            project_id: str,
+            upload_id: str,
+            chunk_index: int,
+            transfer_continuation: str,
         ) -> Mapping[str, Any]:
             calls.append("upload_capability")
+            assert transfer_continuation == TRANSFER_CONTINUATION
             manifest = state["manifest"]
             assert isinstance(manifest, Mapping)
             length = int(manifest["object"]["chunks"][chunk_index]["ciphertext_size"])
             return _capability(endpoint, "PUT", chunk_index, length)
 
         def complete_upload(
-            self, *, project_id: str, upload_id: str
+            self,
+            *,
+            project_id: str,
+            upload_id: str,
+            transfer_continuation: str,
         ) -> Mapping[str, Any]:
             calls.append("complete_upload")
+            assert transfer_continuation == TRANSFER_CONTINUATION
             return {"objectId": upload_id, "state": "chunks_complete"}
 
         def commit_file(self, **arguments: object) -> Mapping[str, Any]:
             calls.append("commit_file")
+            assert arguments["transfer_continuation"] == TRANSFER_CONTINUATION
             return {
                 "file": {
                     "projectId": "project_123",
@@ -1065,12 +1230,19 @@ def test_sdk_encrypts_locally_and_transfers_ciphertext_directly(
                 },
                 "manifest": manifest,
                 "keyClaim": _key_claim_descriptor(endpoint, "download"),
+                "transferContinuation": TRANSFER_CONTINUATION,
             }
 
         def read_capability(
-            self, *, project_id: str, object_id: str, chunk_index: int
+            self,
+            *,
+            project_id: str,
+            object_id: str,
+            chunk_index: int,
+            transfer_continuation: str,
         ) -> Mapping[str, Any]:
             calls.append("read_capability")
+            assert transfer_continuation == TRANSFER_CONTINUATION
             manifest = state["manifest"]
             assert isinstance(manifest, Mapping)
             length = int(manifest["object"]["chunks"][chunk_index]["ciphertext_size"])

@@ -5,6 +5,8 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 
+from ..types import UNSET, Unset
+
 if TYPE_CHECKING:
     from ..models.file_key_claim import FileKeyClaim
     from ..models.read_descriptor import ReadDescriptor
@@ -20,11 +22,13 @@ class ReadDescriptorResponse:
         ok (bool):
         descriptor (ReadDescriptor):
         key_claim (FileKeyClaim):
+        transfer_continuation (str | Unset):
     """
 
     ok: bool
     descriptor: ReadDescriptor
     key_claim: FileKeyClaim
+    transfer_continuation: str | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         ok = self.ok
@@ -32,6 +36,7 @@ class ReadDescriptorResponse:
         descriptor = self.descriptor.to_dict()
 
         key_claim = self.key_claim.to_dict()
+        transfer_continuation = self.transfer_continuation
 
         field_dict: dict[str, Any] = {}
 
@@ -42,6 +47,8 @@ class ReadDescriptorResponse:
                 "keyClaim": key_claim,
             }
         )
+        if transfer_continuation is not UNSET:
+            field_dict["transferContinuation"] = transfer_continuation
 
         return field_dict
 
@@ -56,11 +63,13 @@ class ReadDescriptorResponse:
         descriptor = ReadDescriptor.from_dict(d.pop("descriptor"))
 
         key_claim = FileKeyClaim.from_dict(d.pop("keyClaim"))
+        transfer_continuation = d.pop("transferContinuation", UNSET)
 
         read_descriptor_response = cls(
             ok=ok,
             descriptor=descriptor,
             key_claim=key_claim,
+            transfer_continuation=transfer_continuation,
         )
 
         return read_descriptor_response

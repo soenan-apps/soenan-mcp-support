@@ -5,7 +5,9 @@ from urllib.parse import quote
 import httpx
 
 from ...client import AuthenticatedClient, Client
-from ...models.commit_encrypted_project_file_sec_fetch_site import CommitEncryptedProjectFileSecFetchSite
+from ...models.commit_encrypted_project_file_sec_fetch_site import (
+    CommitEncryptedProjectFileSecFetchSite,
+)
 from ...models.commit_project_file_request import CommitProjectFileRequest
 from ...models.encrypted_project_file_response import EncryptedProjectFileResponse
 from ...models.error_envelope import ErrorEnvelope
@@ -18,10 +20,14 @@ def _get_kwargs(
     *,
     body: CommitProjectFileRequest,
     origin: str,
+    audaligo_transfer_continuation: str | Unset = UNSET,
     sec_fetch_site: CommitEncryptedProjectFileSecFetchSite | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
     headers["Origin"] = origin
+
+    if not isinstance(audaligo_transfer_continuation, Unset):
+        headers["Audaligo-Transfer-Continuation"] = audaligo_transfer_continuation
 
     if not isinstance(sec_fetch_site, Unset):
         headers["Sec-Fetch-Site"] = str(sec_fetch_site)
@@ -78,6 +84,7 @@ def sync_detailed(
     client: AuthenticatedClient,
     body: CommitProjectFileRequest,
     origin: str,
+    audaligo_transfer_continuation: str | Unset = UNSET,
     sec_fetch_site: CommitEncryptedProjectFileSecFetchSite | Unset = UNSET,
 ) -> Response[EncryptedProjectFileResponse | ErrorEnvelope]:
     """
@@ -85,6 +92,7 @@ def sync_detailed(
         project (str):
         file (str):
         origin (str):
+        audaligo_transfer_continuation (str | Unset):
         sec_fetch_site (CommitEncryptedProjectFileSecFetchSite | Unset):
         body (CommitProjectFileRequest):
 
@@ -101,6 +109,7 @@ def sync_detailed(
         file=file,
         body=body,
         origin=origin,
+        audaligo_transfer_continuation=audaligo_transfer_continuation,
         sec_fetch_site=sec_fetch_site,
     )
 
@@ -118,6 +127,7 @@ def sync(
     client: AuthenticatedClient,
     body: CommitProjectFileRequest,
     origin: str,
+    audaligo_transfer_continuation: str | Unset = UNSET,
     sec_fetch_site: CommitEncryptedProjectFileSecFetchSite | Unset = UNSET,
 ) -> EncryptedProjectFileResponse | ErrorEnvelope | None:
     """
@@ -125,6 +135,7 @@ def sync(
         project (str):
         file (str):
         origin (str):
+        audaligo_transfer_continuation (str | Unset):
         sec_fetch_site (CommitEncryptedProjectFileSecFetchSite | Unset):
         body (CommitProjectFileRequest):
 
@@ -142,6 +153,7 @@ def sync(
         client=client,
         body=body,
         origin=origin,
+        audaligo_transfer_continuation=audaligo_transfer_continuation,
         sec_fetch_site=sec_fetch_site,
     ).parsed
 
@@ -153,6 +165,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient,
     body: CommitProjectFileRequest,
     origin: str,
+    audaligo_transfer_continuation: str | Unset = UNSET,
     sec_fetch_site: CommitEncryptedProjectFileSecFetchSite | Unset = UNSET,
 ) -> Response[EncryptedProjectFileResponse | ErrorEnvelope]:
     """
@@ -160,6 +173,7 @@ async def asyncio_detailed(
         project (str):
         file (str):
         origin (str):
+        audaligo_transfer_continuation (str | Unset):
         sec_fetch_site (CommitEncryptedProjectFileSecFetchSite | Unset):
         body (CommitProjectFileRequest):
 
@@ -176,6 +190,7 @@ async def asyncio_detailed(
         file=file,
         body=body,
         origin=origin,
+        audaligo_transfer_continuation=audaligo_transfer_continuation,
         sec_fetch_site=sec_fetch_site,
     )
 
@@ -191,6 +206,7 @@ async def asyncio(
     client: AuthenticatedClient,
     body: CommitProjectFileRequest,
     origin: str,
+    audaligo_transfer_continuation: str | Unset = UNSET,
     sec_fetch_site: CommitEncryptedProjectFileSecFetchSite | Unset = UNSET,
 ) -> EncryptedProjectFileResponse | ErrorEnvelope | None:
     """
@@ -198,6 +214,7 @@ async def asyncio(
         project (str):
         file (str):
         origin (str):
+        audaligo_transfer_continuation (str | Unset):
         sec_fetch_site (CommitEncryptedProjectFileSecFetchSite | Unset):
         body (CommitProjectFileRequest):
 
@@ -216,6 +233,7 @@ async def asyncio(
             client=client,
             body=body,
             origin=origin,
+            audaligo_transfer_continuation=audaligo_transfer_continuation,
             sec_fetch_site=sec_fetch_site,
         )
     ).parsed

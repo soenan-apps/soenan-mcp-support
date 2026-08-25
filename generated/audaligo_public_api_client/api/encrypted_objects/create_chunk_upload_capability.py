@@ -6,7 +6,9 @@ import httpx
 
 from ...client import AuthenticatedClient, Client
 from ...models.capability_response import CapabilityResponse
-from ...models.create_chunk_upload_capability_sec_fetch_site import CreateChunkUploadCapabilitySecFetchSite
+from ...models.create_chunk_upload_capability_sec_fetch_site import (
+    CreateChunkUploadCapabilitySecFetchSite,
+)
 from ...models.error_envelope import ErrorEnvelope
 from ...types import UNSET, Response, Unset
 
@@ -17,10 +19,14 @@ def _get_kwargs(
     chunk: int,
     *,
     origin: str,
+    audaligo_transfer_continuation: str | Unset = UNSET,
     sec_fetch_site: CreateChunkUploadCapabilitySecFetchSite | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
     headers["Origin"] = origin
+
+    if not isinstance(audaligo_transfer_continuation, Unset):
+        headers["Audaligo-Transfer-Continuation"] = audaligo_transfer_continuation
 
     if not isinstance(sec_fetch_site, Unset):
         headers["Sec-Fetch-Site"] = str(sec_fetch_site)
@@ -69,6 +75,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient,
     origin: str,
+    audaligo_transfer_continuation: str | Unset = UNSET,
     sec_fetch_site: CreateChunkUploadCapabilitySecFetchSite | Unset = UNSET,
 ) -> Response[CapabilityResponse | ErrorEnvelope]:
     """
@@ -77,6 +84,7 @@ def sync_detailed(
         upload (str):
         chunk (int):
         origin (str):
+        audaligo_transfer_continuation (str | Unset):
         sec_fetch_site (CreateChunkUploadCapabilitySecFetchSite | Unset):
 
     Raises:
@@ -92,6 +100,7 @@ def sync_detailed(
         upload=upload,
         chunk=chunk,
         origin=origin,
+        audaligo_transfer_continuation=audaligo_transfer_continuation,
         sec_fetch_site=sec_fetch_site,
     )
 
@@ -109,6 +118,7 @@ def sync(
     *,
     client: AuthenticatedClient,
     origin: str,
+    audaligo_transfer_continuation: str | Unset = UNSET,
     sec_fetch_site: CreateChunkUploadCapabilitySecFetchSite | Unset = UNSET,
 ) -> CapabilityResponse | ErrorEnvelope | None:
     """
@@ -117,6 +127,7 @@ def sync(
         upload (str):
         chunk (int):
         origin (str):
+        audaligo_transfer_continuation (str | Unset):
         sec_fetch_site (CreateChunkUploadCapabilitySecFetchSite | Unset):
 
     Raises:
@@ -133,6 +144,7 @@ def sync(
         chunk=chunk,
         client=client,
         origin=origin,
+        audaligo_transfer_continuation=audaligo_transfer_continuation,
         sec_fetch_site=sec_fetch_site,
     ).parsed
 
@@ -144,6 +156,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient,
     origin: str,
+    audaligo_transfer_continuation: str | Unset = UNSET,
     sec_fetch_site: CreateChunkUploadCapabilitySecFetchSite | Unset = UNSET,
 ) -> Response[CapabilityResponse | ErrorEnvelope]:
     """
@@ -152,6 +165,7 @@ async def asyncio_detailed(
         upload (str):
         chunk (int):
         origin (str):
+        audaligo_transfer_continuation (str | Unset):
         sec_fetch_site (CreateChunkUploadCapabilitySecFetchSite | Unset):
 
     Raises:
@@ -167,6 +181,7 @@ async def asyncio_detailed(
         upload=upload,
         chunk=chunk,
         origin=origin,
+        audaligo_transfer_continuation=audaligo_transfer_continuation,
         sec_fetch_site=sec_fetch_site,
     )
 
@@ -182,6 +197,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient,
     origin: str,
+    audaligo_transfer_continuation: str | Unset = UNSET,
     sec_fetch_site: CreateChunkUploadCapabilitySecFetchSite | Unset = UNSET,
 ) -> CapabilityResponse | ErrorEnvelope | None:
     """
@@ -190,6 +206,7 @@ async def asyncio(
         upload (str):
         chunk (int):
         origin (str):
+        audaligo_transfer_continuation (str | Unset):
         sec_fetch_site (CreateChunkUploadCapabilitySecFetchSite | Unset):
 
     Raises:
@@ -207,6 +224,7 @@ async def asyncio(
             chunk=chunk,
             client=client,
             origin=origin,
+            audaligo_transfer_continuation=audaligo_transfer_continuation,
             sec_fetch_site=sec_fetch_site,
         )
     ).parsed

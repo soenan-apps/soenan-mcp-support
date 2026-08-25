@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, BinaryIO, TypeAlias
 
-from ._api import AudaligoTransferAPI
+from ._api import AudaligoTransferAPI, _transfer_continuation
 from ._claim import redeem_file_key_claim
 from ._crypto import (
     CHUNK_SIZE,
@@ -61,6 +61,7 @@ def upload_file(
             mix_version_id=mix_version_id,
         )
         upload_id = _string(begin, "uploadId")
+        transfer_continuation = _transfer_continuation(begin)
         epoch = _integer_or_zero(begin, "keyEpoch")
         key_claim = redeem_file_key_claim(
             _mapping(begin, "keyClaim"),
@@ -85,6 +86,7 @@ def upload_file(
         manifest = api.put_manifest(
             project_id=project_id,
             upload_id=upload_id,
+            transfer_continuation=transfer_continuation,
             manifest=plan.manifest(),
         )
         ready = manifest.get("state") == "ready"
@@ -97,6 +99,7 @@ def upload_file(
                     project_id=project_id,
                     upload_id=upload_id,
                     chunk_index=chunk.index,
+                    transfer_continuation=transfer_continuation,
                 )
                 url, headers = _validate_capability(
                     capability, operation="PUT", object_id=upload_id, chunk=chunk
@@ -106,7 +109,11 @@ def upload_file(
                 )
             if stream.read(1):
                 raise TransferSizeMismatch()
-            api.complete_upload(project_id=project_id, upload_id=upload_id)
+            api.complete_upload(
+                project_id=project_id,
+                upload_id=upload_id,
+                transfer_continuation=transfer_continuation,
+            )
         return api.commit_file(
             project_id=project_id,
             file_id=operation_id,
@@ -114,6 +121,7 @@ def upload_file(
             filename=filename,
             plaintext_size=plaintext_size,
             mix_version_id=mix_version_id,
+            transfer_continuation=transfer_continuation,
         )
     except EncryptionContractError as error:
         raise TransferError(str(error)) from None
@@ -134,6 +142,7 @@ def download_file(
 ) -> int:
     """Download ciphertext directly from Railway Bucket and decrypt locally."""
     begin = api.read_descriptor(project_id=project_id, file_id=file_id)
+    transfer_continuation = _transfer_continuation(begin)
     file_value = _mapping(begin, "file")
     manifest = _mapping(begin, "manifest")
     manifest_object = _mapping(manifest, "object")
@@ -168,13 +177,27 @@ def download_file(
 
     if isinstance(destination, (str, os.PathLike)):
         return _download_to_path(
-            api, project_id, file_id, Path(destination), plan, timeouts, transport
+            api,
+            project_id,
+            file_id,
+            transfer_continuation,
+            Path(destination),
+            plan,
+            timeouts,
+            transport,
         )
     _require_writer(destination)
     rollback = _append_rollback_position(destination)
     try:
         return _download_to_stream(
-            api, project_id, file_id, destination, plan, timeouts, transport
+            api,
+            project_id,
+            file_id,
+            transfer_continuation,
+            destination,
+            plan,
+            timeouts,
+            transport,
         )
     except BaseException:
         _rollback_stream(destination, rollback)
@@ -185,6 +208,7 @@ def _download_to_path(
     api: AudaligoTransferAPI,
     project_id: str,
     file_id: str,
+    transfer_continuation: str,
     destination: Path,
     plan: Any,
     timeouts: TransferTimeouts,
@@ -197,7 +221,14 @@ def _download_to_path(
     try:
         with os.fdopen(descriptor, "wb") as stream:
             count = _download_to_stream(
-                api, project_id, file_id, stream, plan, timeouts, transport
+                api,
+                project_id,
+                file_id,
+                transfer_continuation,
+                stream,
+                plan,
+                timeouts,
+                transport,
             )
             stream.flush()
             os.fsync(stream.fileno())
@@ -215,6 +246,7 @@ def _download_to_stream(
     api: AudaligoTransferAPI,
     project_id: str,
     file_id: str,
+    transfer_continuation: str,
     destination: BinaryIO,
     plan: Any,
     timeouts: TransferTimeouts,
@@ -226,6 +258,7 @@ def _download_to_stream(
             project_id=project_id,
             object_id=plan.object_id,
             chunk_index=chunk.index,
+            transfer_continuation=transfer_continuation,
         )
         url, headers = _validate_capability(
             capability, operation="GET", object_id=plan.object_id, chunk=chunk

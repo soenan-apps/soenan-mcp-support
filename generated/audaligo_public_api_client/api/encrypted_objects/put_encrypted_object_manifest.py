@@ -7,7 +7,9 @@ import httpx
 from ...client import AuthenticatedClient, Client
 from ...models.error_envelope import ErrorEnvelope
 from ...models.object_state_response import ObjectStateResponse
-from ...models.put_encrypted_object_manifest_sec_fetch_site import PutEncryptedObjectManifestSecFetchSite
+from ...models.put_encrypted_object_manifest_sec_fetch_site import (
+    PutEncryptedObjectManifestSecFetchSite,
+)
 from ...models.put_manifest_request import PutManifestRequest
 from ...types import UNSET, Response, Unset
 
@@ -18,10 +20,14 @@ def _get_kwargs(
     *,
     body: PutManifestRequest,
     origin: str,
+    audaligo_transfer_continuation: str | Unset = UNSET,
     sec_fetch_site: PutEncryptedObjectManifestSecFetchSite | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
     headers["Origin"] = origin
+
+    if not isinstance(audaligo_transfer_continuation, Unset):
+        headers["Audaligo-Transfer-Continuation"] = audaligo_transfer_continuation
 
     if not isinstance(sec_fetch_site, Unset):
         headers["Sec-Fetch-Site"] = str(sec_fetch_site)
@@ -78,6 +84,7 @@ def sync_detailed(
     client: AuthenticatedClient,
     body: PutManifestRequest,
     origin: str,
+    audaligo_transfer_continuation: str | Unset = UNSET,
     sec_fetch_site: PutEncryptedObjectManifestSecFetchSite | Unset = UNSET,
 ) -> Response[ErrorEnvelope | ObjectStateResponse]:
     """
@@ -85,6 +92,7 @@ def sync_detailed(
         project (str):
         upload (str):
         origin (str):
+        audaligo_transfer_continuation (str | Unset):
         sec_fetch_site (PutEncryptedObjectManifestSecFetchSite | Unset):
         body (PutManifestRequest):
 
@@ -101,6 +109,7 @@ def sync_detailed(
         upload=upload,
         body=body,
         origin=origin,
+        audaligo_transfer_continuation=audaligo_transfer_continuation,
         sec_fetch_site=sec_fetch_site,
     )
 
@@ -118,6 +127,7 @@ def sync(
     client: AuthenticatedClient,
     body: PutManifestRequest,
     origin: str,
+    audaligo_transfer_continuation: str | Unset = UNSET,
     sec_fetch_site: PutEncryptedObjectManifestSecFetchSite | Unset = UNSET,
 ) -> ErrorEnvelope | ObjectStateResponse | None:
     """
@@ -125,6 +135,7 @@ def sync(
         project (str):
         upload (str):
         origin (str):
+        audaligo_transfer_continuation (str | Unset):
         sec_fetch_site (PutEncryptedObjectManifestSecFetchSite | Unset):
         body (PutManifestRequest):
 
@@ -142,6 +153,7 @@ def sync(
         client=client,
         body=body,
         origin=origin,
+        audaligo_transfer_continuation=audaligo_transfer_continuation,
         sec_fetch_site=sec_fetch_site,
     ).parsed
 
@@ -153,6 +165,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient,
     body: PutManifestRequest,
     origin: str,
+    audaligo_transfer_continuation: str | Unset = UNSET,
     sec_fetch_site: PutEncryptedObjectManifestSecFetchSite | Unset = UNSET,
 ) -> Response[ErrorEnvelope | ObjectStateResponse]:
     """
@@ -160,6 +173,7 @@ async def asyncio_detailed(
         project (str):
         upload (str):
         origin (str):
+        audaligo_transfer_continuation (str | Unset):
         sec_fetch_site (PutEncryptedObjectManifestSecFetchSite | Unset):
         body (PutManifestRequest):
 
@@ -176,6 +190,7 @@ async def asyncio_detailed(
         upload=upload,
         body=body,
         origin=origin,
+        audaligo_transfer_continuation=audaligo_transfer_continuation,
         sec_fetch_site=sec_fetch_site,
     )
 
@@ -191,6 +206,7 @@ async def asyncio(
     client: AuthenticatedClient,
     body: PutManifestRequest,
     origin: str,
+    audaligo_transfer_continuation: str | Unset = UNSET,
     sec_fetch_site: PutEncryptedObjectManifestSecFetchSite | Unset = UNSET,
 ) -> ErrorEnvelope | ObjectStateResponse | None:
     """
@@ -198,6 +214,7 @@ async def asyncio(
         project (str):
         upload (str):
         origin (str):
+        audaligo_transfer_continuation (str | Unset):
         sec_fetch_site (PutEncryptedObjectManifestSecFetchSite | Unset):
         body (PutManifestRequest):
 
@@ -216,6 +233,7 @@ async def asyncio(
             client=client,
             body=body,
             origin=origin,
+            audaligo_transfer_continuation=audaligo_transfer_continuation,
             sec_fetch_site=sec_fetch_site,
         )
     ).parsed
