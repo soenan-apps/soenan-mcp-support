@@ -68,7 +68,6 @@ def upload_file(
             expected_project_id=handoff.project_id,
             expected_object_id=handoff.object_id,
             expected_epoch=handoff.epoch,
-            expected_origin=handoff.control_origin,
             timeouts=timeouts,
             transport=claim_transport,
         )
@@ -226,7 +225,6 @@ def _redeem_download_claim(
         expected_project_id=handoff.project_id,
         expected_object_id=handoff.object_id,
         expected_epoch=handoff.epoch,
-        expected_origin=handoff.control_origin,
         timeouts=timeouts,
         transport=claim_transport,
     )

@@ -236,9 +236,9 @@ def build_encryption_plan(
     wrapped_data_key: bytes,
     plaintext_size: int,
 ) -> EncryptionPlan:
-    _validate_identity(project_id)
-    _validate_identity(file_id)
-    _validate_identity(object_id)
+    _context(project_id)
+    _context(file_id)
+    _context(object_id)
     if isinstance(epoch, bool) or not 0 <= epoch <= MAXIMUM_WIRE_INTEGER:
         raise EncryptionContractError("epoch must be a canonical wire integer")
     if len(data_key) != 32 or not any(data_key):
@@ -389,7 +389,7 @@ def parse_decryption_plan(
     file_id = _string(object_value, "file_id")
     object_id = _string(object_value, "object_id")
     for value in (project_id, file_id, object_id):
-        _validate_identity(value)
+        _context(value)
     epoch = _integer(object_value, "epoch")
     plaintext_size = _positive_integer(object_value, "plaintext_size")
     chunk_count = _positive_integer(object_value, "chunk_count")
@@ -560,7 +560,7 @@ def parse_preview_decryption_plan(
     processing_id = _string(manifest, "processingId")
     job_id = _string(manifest, "jobId")
     for value in (project_id, preview_id, source_object_id, processing_id, job_id):
-        _validate_identity(value)
+        _context(value)
     chunk_size = _positive_integer(manifest, "chunkSize")
     plaintext_size = _positive_integer(manifest, "plaintextSize")
     ciphertext_size = _positive_integer(manifest, "ciphertextSize")
@@ -720,8 +720,6 @@ def _context(value: str) -> bytes:
     return encoded
 
 
-def _validate_identity(value: str) -> None:
-    _context(value)
 
 
 def _replay_stable_nonce_base(

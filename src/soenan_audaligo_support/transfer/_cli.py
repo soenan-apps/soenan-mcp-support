@@ -8,6 +8,7 @@ from typing import Any
 
 from ._http import TransferError
 from ._workflow import download_file, download_preview, upload_file
+from ._wire import strict_object
 
 _MAXIMUM_HANDOFF_BYTES = 256 * 1024
 
@@ -57,7 +58,7 @@ def _read_handoff() -> dict[str, Any]:
             "structuredContent stdin is invalid", code="handoff_invalid"
         )
     try:
-        value = json.loads(raw, object_pairs_hook=_strict_object)
+        value = json.loads(raw, object_pairs_hook=strict_object)
     except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
         raise TransferError(
             "structuredContent stdin is invalid", code="handoff_invalid"
@@ -69,13 +70,6 @@ def _read_handoff() -> dict[str, Any]:
     return value
 
 
-def _strict_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    value: dict[str, Any] = {}
-    for key, item in pairs:
-        if key in value:
-            raise ValueError("duplicate JSON field")
-        value[key] = item
-    return value
 
 
 def _parser() -> argparse.ArgumentParser:

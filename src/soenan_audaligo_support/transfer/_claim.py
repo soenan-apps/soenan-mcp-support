@@ -4,9 +4,7 @@ import base64
 import json
 import time
 from collections.abc import Mapping
-from dataclasses import dataclass
-from typing import Any
-from urllib.parse import urlsplit, urlunsplit
+from dataclasses import dataclass, field
 
 from ._http import (
     DEFAULT_TIMEOUTS,
@@ -17,8 +15,16 @@ from ._http import (
     TransferTransport,
     post_control_json,
 )
+from ._wire import is_base64url, strict_object
 
-_PROTOCOL = "audaligo.file-key-claim.v1"
+KEY_CLAIM_PROTOCOL = "audaligo.file-key-claim.v1"
+
+
+@dataclass(frozen=True)
+class FileKeyClaimDescriptor:
+    redemption_url: str
+    secret: str = field(repr=False)
+    expires_at_unix_milliseconds: int
 
 
 @dataclass(frozen=True)
@@ -33,69 +39,25 @@ class FileKeyClaim:
 
 
 def redeem_file_key_claim(
-    descriptor: Mapping[str, Any],
+    descriptor: FileKeyClaimDescriptor,
     *,
     expected_direction: str,
     expected_project_id: str,
     expected_object_id: str,
     expected_epoch: int,
-    expected_origin: str,
     timeouts: TransferTimeouts = DEFAULT_TIMEOUTS,
     transport: TransferTransport = DEFAULT_TRANSPORT,
 ) -> FileKeyClaim:
-    if set(descriptor) != {"url", "expiresAtUnixMilliseconds", "protocol"}:
-        raise TransferError("file key claim descriptor is invalid")
-    if descriptor.get("protocol") != _PROTOCOL:
-        raise TransferError("file key claim protocol is unsupported")
-    expires_at_raw = descriptor.get("expiresAtUnixMilliseconds")
-    if (
-        isinstance(expires_at_raw, str)
-        and expires_at_raw.isdecimal()
-        and (len(expires_at_raw) == 1 or not expires_at_raw.startswith("0"))
-    ):
-        expires_at = int(expires_at_raw)
-    else:
-        expires_at = expires_at_raw
-    if (
-        isinstance(expires_at, bool)
-        or not isinstance(expires_at, int)
-        or expires_at <= int(time.time() * 1000)
-    ):
+    if descriptor.expires_at_unix_milliseconds <= int(time.time() * 1000):
         raise TransferError(
             "file key claim has expired",
             code="claim_expired",
             recoverable=True,
         )
-    raw_url = descriptor.get("url")
-    if not isinstance(raw_url, str) or not raw_url or len(raw_url) > 8192:
-        raise TransferError("file key claim URL is invalid")
-    try:
-        parsed = urlsplit(raw_url)
-    except ValueError:
-        raise TransferError("file key claim URL is invalid") from None
-    secret = parsed.fragment
-    if (
-        parsed.scheme not in ("http", "https")
-        or not parsed.hostname
-        or (
-            parsed.scheme == "http"
-            and parsed.hostname.lower() not in ("localhost", "127.0.0.1", "::1")
-        )
-        or parsed.username
-        or parsed.password
-        or parsed.query
-        or len(secret) != 43
-        or not _is_base64url(secret)
-    ):
-        raise TransferError("file key claim URL is invalid")
-    redemption_url = urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
-    claim_origin = urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
-    if claim_origin != expected_origin:
-        raise TransferError("file key claim origin does not match control origin")
     try:
         encoded = post_control_json(
-            redemption_url,
-            {"audaligo-key-claim": secret},
+            descriptor.redemption_url,
+            {"audaligo-key-claim": descriptor.secret},
             maximum_response_bytes=4096,
             timeouts=timeouts,
             transport=transport,
@@ -109,7 +71,7 @@ def redeem_file_key_claim(
             ) from None
         raise
     try:
-        value = json.loads(encoded, object_pairs_hook=_strict_object)
+        value = json.loads(encoded, object_pairs_hook=strict_object)
     except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
         raise TransferError("file key claim response is invalid") from None
     if not isinstance(value, Mapping) or set(value) != {
@@ -129,7 +91,7 @@ def redeem_file_key_claim(
     epoch = value.get("epoch")
     if (
         value.get("version") != 1
-        or value.get("protocol") != _PROTOCOL
+        or value.get("protocol") != KEY_CLAIM_PROTOCOL
         or value.get("direction") != expected_direction
         or value.get("projectId") != expected_project_id
         or value.get("objectId") != expected_object_id
@@ -149,19 +111,12 @@ def redeem_file_key_claim(
     )
 
 
-def _strict_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
-    value: dict[str, object] = {}
-    for key, item in pairs:
-        if key in value:
-            raise ValueError("duplicate JSON key")
-        value[key] = item
-    return value
 
 
 def _decode_key(
     value: object, expected_bytes: int, *, require_nonzero: bool = False
 ) -> bytes:
-    if not isinstance(value, str) or not _is_base64url(value):
+    if not isinstance(value, str) or not is_base64url(value):
         raise TransferError("file key claim key encoding is invalid")
     try:
         decoded = base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
@@ -172,8 +127,3 @@ def _decode_key(
     return decoded
 
 
-def _is_base64url(value: str) -> bool:
-    return bool(value) and all(
-        character.isascii() and (character.isalnum() or character in "-_")
-        for character in value
-    )

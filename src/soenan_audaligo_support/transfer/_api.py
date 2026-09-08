@@ -263,20 +263,6 @@ class AudaligoTransferAPI:
             raise TransferTimeoutError() from None
         if isinstance(value, TransferError):
             raise value
-        if isinstance(
-            value,
-            (
-                AttributeError,
-                httpx.HTTPError,
-                KeyError,
-                RuntimeError,
-                TypeError,
-                ValueError,
-            ),
-        ):
-            raise TransferError("Audaligo control request failed") from None
-        if isinstance(value, Exception):
-            raise TransferError("Audaligo control request failed") from None
         raise TransferError("Audaligo control request failed") from None
 
     @staticmethod
@@ -295,14 +281,10 @@ class AudaligoTransferAPI:
 
     @classmethod
     def _capability(cls, response: Response[Any]) -> Mapping[str, Any]:
-        return _mapping(cls._body(response, HTTPStatus.OK), "capability")
-
-
-def _mapping(value: Mapping[str, Any], key: str) -> Mapping[str, Any]:
-    result = value.get(key)
-    if not isinstance(result, Mapping):
-        raise TransferError("Audaligo control response is invalid")
-    return result
+        result = cls._body(response, HTTPStatus.OK).get("capability")
+        if not isinstance(result, Mapping):
+            raise TransferError("Audaligo control response is invalid")
+        return result
 
 
 _TRANSFER_CONTINUATION_PATTERN = re.compile(r"[A-Za-z0-9_-]{43}", re.ASCII)

@@ -8,11 +8,12 @@ from typing import Any, Literal
 from urllib.parse import urlsplit, urlunsplit
 
 from ._api import _validate_control_origin, _validate_transfer_continuation
+from ._claim import FileKeyClaimDescriptor, KEY_CLAIM_PROTOCOL
 from ._crypto import CHUNK_SIZE, MAXIMUM_CHUNKS, MAXIMUM_WIRE_INTEGER
 from ._http import TransferError
+from ._wire import is_base64url
 
 TRANSFER_PROTOCOL = "audaligo.encrypted-transfer.v1"
-KEY_CLAIM_PROTOCOL = "audaligo.file-key-claim.v1"
 Operation = Literal["upload", "file_download", "preview_download"]
 
 
@@ -50,7 +51,7 @@ class TransferHandoff:
     project_id: str
     object_id: str
     epoch: int
-    key_claim: Mapping[str, Any]
+    key_claim: FileKeyClaimDescriptor
     continuation: str
     control_origin: str
     upload: UploadMetadata | None = None
@@ -163,7 +164,7 @@ def parse_handoff(
 
 def _claim_descriptor(
     value: Any, *, expected_origin: str, now_unix_milliseconds: int
-) -> Mapping[str, Any]:
+) -> FileKeyClaimDescriptor:
     value = _object(value, "keyClaim")
     _exact_fields(
         value,
@@ -196,10 +197,14 @@ def _claim_descriptor(
         or parsed.query
         or not parsed.path
         or len(parsed.fragment) != 43
-        or not _is_base64url(parsed.fragment)
+        or not is_base64url(parsed.fragment)
     ):
         raise TransferError("file key claim URL is invalid")
-    return dict(value)
+    return FileKeyClaimDescriptor(
+        redemption_url=urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", "")),
+        secret=parsed.fragment,
+        expires_at_unix_milliseconds=expires_at,
+    )
 
 
 def _upload_metadata(value: Any) -> UploadMetadata:
@@ -505,7 +510,7 @@ def _base64url_string(
     value: Mapping[str, Any], key: str, *, expected_bytes: int | None = None
 ) -> str:
     result = value.get(key)
-    if not isinstance(result, str) or not _is_base64url(result):
+    if not isinstance(result, str) or not is_base64url(result):
         raise TransferError(f"{key} is not canonical base64url")
     if expected_bytes is not None:
         try:
@@ -521,8 +526,3 @@ def _encode_base64url(value: bytes) -> str:
     return base64.urlsafe_b64encode(value).decode("ascii").rstrip("=")
 
 
-def _is_base64url(value: str) -> bool:
-    return bool(value) and all(
-        character.isascii() and (character.isalnum() or character in "-_")
-        for character in value
-    )
