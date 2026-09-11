@@ -7,8 +7,12 @@ import httpx
 from ...client import AuthenticatedClient, Client
 from ...models.error_envelope import ErrorEnvelope
 from ...models.project_envelope import ProjectEnvelope
-from ...models.update_project_participation_policy_request import UpdateProjectParticipationPolicyRequest
-from ...models.update_project_participation_policy_sec_fetch_site import UpdateProjectParticipationPolicySecFetchSite
+from ...models.update_project_participation_policy_request import (
+    UpdateProjectParticipationPolicyRequest,
+)
+from ...models.update_project_participation_policy_sec_fetch_site import (
+    UpdateProjectParticipationPolicySecFetchSite,
+)
 from ...types import UNSET, Response, Unset
 
 

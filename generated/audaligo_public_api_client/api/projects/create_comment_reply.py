@@ -45,7 +45,9 @@ def _get_kwargs(
     return _kwargs
 
 
-def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> ErrorEnvelope | ReplyEnvelope:
+def _parse_response(
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> ErrorEnvelope | ReplyEnvelope:
     if response.status_code == 201:
         response_201 = ReplyEnvelope.from_dict(response.json())
 

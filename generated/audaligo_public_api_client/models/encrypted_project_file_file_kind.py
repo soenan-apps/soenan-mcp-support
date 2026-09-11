@@ -1,7 +1,7 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class EncryptedProjectFileFileKind(str, Enum):
+class EncryptedProjectFileFileKind(StrEnum):
     PROJECT_FILE = "project_file"
 
     def __str__(self) -> str:

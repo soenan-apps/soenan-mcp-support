@@ -4,7 +4,7 @@ from urllib.parse import quote
 
 import httpx
 
-from ...client import Client
+from ...client import AuthenticatedClient, Client
 from ...models.capability_response import CapabilityResponse
 from ...models.error_envelope import ErrorEnvelope
 from ...types import UNSET, Response, Unset
@@ -35,7 +35,7 @@ def _get_kwargs(
 
 
 def _parse_response(
-    *, client: Client, response: httpx.Response
+    *, client: AuthenticatedClient | Client, response: httpx.Response
 ) -> CapabilityResponse | ErrorEnvelope:
     if response.status_code == 200:
         response_200 = CapabilityResponse.from_dict(response.json())
@@ -48,7 +48,7 @@ def _parse_response(
 
 
 def _build_response(
-    *, client: Client, response: httpx.Response
+    *, client: AuthenticatedClient | Client, response: httpx.Response
 ) -> Response[CapabilityResponse | ErrorEnvelope]:
     return Response(
         status_code=HTTPStatus(response.status_code),
@@ -63,7 +63,7 @@ def sync_detailed(
     object_: str,
     chunk: int,
     *,
-    client: Client,
+    client: AuthenticatedClient,
     audaligo_transfer_continuation: str | Unset = UNSET,
 ) -> Response[CapabilityResponse | ErrorEnvelope]:
     """
@@ -100,7 +100,7 @@ def sync(
     object_: str,
     chunk: int,
     *,
-    client: Client,
+    client: AuthenticatedClient,
     audaligo_transfer_continuation: str | Unset = UNSET,
 ) -> CapabilityResponse | ErrorEnvelope | None:
     """
@@ -132,7 +132,7 @@ async def asyncio_detailed(
     object_: str,
     chunk: int,
     *,
-    client: Client,
+    client: AuthenticatedClient,
     audaligo_transfer_continuation: str | Unset = UNSET,
 ) -> Response[CapabilityResponse | ErrorEnvelope]:
     """
@@ -167,7 +167,7 @@ async def asyncio(
     object_: str,
     chunk: int,
     *,
-    client: Client,
+    client: AuthenticatedClient,
     audaligo_transfer_continuation: str | Unset = UNSET,
 ) -> CapabilityResponse | ErrorEnvelope | None:
     """

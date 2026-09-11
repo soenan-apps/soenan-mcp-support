@@ -5,7 +5,9 @@ from urllib.parse import quote
 import httpx
 
 from ...client import AuthenticatedClient, Client
-from ...models.create_encrypted_object_upload_sec_fetch_site import CreateEncryptedObjectUploadSecFetchSite
+from ...models.create_encrypted_object_upload_sec_fetch_site import (
+    CreateEncryptedObjectUploadSecFetchSite,
+)
 from ...models.create_upload_request import CreateUploadRequest
 from ...models.error_envelope import ErrorEnvelope
 from ...models.upload_session_response import UploadSessionResponse

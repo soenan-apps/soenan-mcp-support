@@ -8,7 +8,9 @@ from ...client import AuthenticatedClient, Client
 from ...models.error_envelope import ErrorEnvelope
 from ...models.project_envelope import ProjectEnvelope
 from ...models.update_project_deadline_request import UpdateProjectDeadlineRequest
-from ...models.update_project_deadline_sec_fetch_site import UpdateProjectDeadlineSecFetchSite
+from ...models.update_project_deadline_sec_fetch_site import (
+    UpdateProjectDeadlineSecFetchSite,
+)
 from ...types import UNSET, Response, Unset
 
 

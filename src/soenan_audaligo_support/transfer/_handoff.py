@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import re
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -22,25 +23,24 @@ class UploadMetadata:
     filename: str
     plaintext_size: int
     operation_id: str
-    mix_version_id: str | None
 
 
 @dataclass(frozen=True)
 class FileMetadata:
     project_id: str
     file_id: str
+    entry_id: str
     object_id: str
     filename: str
     plaintext_size: int
     media_type: str
-    mix_version_id: str | None
     created_at_unix_milliseconds: int
     updated_at_unix_milliseconds: int
 
 
 @dataclass(frozen=True)
 class PreviewMetadata:
-    mix_version_id: str
+    file_id: str
     preview_id: str
     state: str
 
@@ -210,16 +210,11 @@ def _claim_descriptor(
 def _upload_metadata(value: Any) -> UploadMetadata:
     value = _object(value, "upload")
     required = {"filename", "plaintextSize", "operationId"}
-    allowed = required | {"mixVersionId"}
-    _fields(value, required, allowed, "upload")
-    mix_version = value.get("mixVersionId")
-    if mix_version is not None:
-        mix_version = _identifier(value, "mixVersionId")
+    _exact_fields(value, required, "upload")
     return UploadMetadata(
         filename=_bounded_string(value, "filename", 1024),
         plaintext_size=_positive_wire_integer(value, "plaintextSize"),
         operation_id=_identifier(value, "operationId"),
-        mix_version_id=mix_version,
     )
 
 
@@ -228,6 +223,7 @@ def _file_metadata(value: Any) -> FileMetadata:
     required = {
         "projectId",
         "fileId",
+        "entryId",
         "objectId",
         "filename",
         "plaintextSize",
@@ -235,19 +231,15 @@ def _file_metadata(value: Any) -> FileMetadata:
         "createdAtUnixMilliseconds",
         "updatedAtUnixMilliseconds",
     }
-    allowed = required | {"mixVersionId"}
-    _fields(value, required, allowed, "file")
-    mix_version = value.get("mixVersionId")
-    if mix_version is not None:
-        mix_version = _identifier(value, "mixVersionId")
+    _exact_fields(value, required, "file")
     return FileMetadata(
         project_id=_identifier(value, "projectId"),
         file_id=_identifier(value, "fileId"),
+        entry_id=_identifier(value, "entryId"),
         object_id=_identifier(value, "objectId"),
         filename=_bounded_string(value, "filename", 1024),
         plaintext_size=_positive_wire_integer(value, "plaintextSize"),
         media_type=_bounded_string(value, "mediaType", 255),
-        mix_version_id=mix_version,
         created_at_unix_milliseconds=_wire_integer(value, "createdAtUnixMilliseconds"),
         updated_at_unix_milliseconds=_wire_integer(value, "updatedAtUnixMilliseconds"),
     )
@@ -257,14 +249,14 @@ def _preview_metadata(value: Any) -> PreviewMetadata:
     value = _object(value, "preview")
     _fields(
         value,
-        {"mixVersionId", "previewId", "state"},
-        {"mixVersionId", "previewId", "state", "failureReason"},
+        {"fileId", "previewId", "state"},
+        {"fileId", "previewId", "state", "failureReason"},
         "preview",
     )
     if value.get("state") != "ready" or "failureReason" in value:
         raise TransferError("preview is not ready for download")
     return PreviewMetadata(
-        mix_version_id=_identifier(value, "mixVersionId"),
+        file_id=_identifier(value, "fileId"),
         preview_id=_identifier(value, "previewId"),
         state="ready",
     )
@@ -319,7 +311,6 @@ def _preview_manifest(value: Any) -> Mapping[str, Any]:
         "jobId",
         "mediaType",
         "codec",
-        "bitrateBps",
         "nonceBase64url",
         "plaintextSize",
         "ciphertextSize",
@@ -327,18 +318,23 @@ def _preview_manifest(value: Any) -> Mapping[str, Any]:
         "chunks",
     }
     _exact_fields(value, fields, "manifest")
-    if (
-        value.get("contract") != "audaligo.managed-preview-read-descriptor"
-        or value.get("mediaType") != "audio/mp4"
-        or value.get("codec") != "mp4a.40.2"
-        or _numeric_wire_integer(value, "bitrateBps") != 128_000
+    media_type = _bounded_string(value, "mediaType", 128)
+    codec = _bounded_string(value, "codec", 256)
+    if value.get("contract") != "audaligo.preview.read.v1" or not (
+        (media_type == "audio/mp4" and codec == "mp4a.40.2")
+        or (
+            media_type == "video/mp4"
+            and re.fullmatch(r"avc1\.[0-9A-Fa-f]{6}(, ?mp4a\.40\.2)?", codec)
+            is not None
+        )
     ):
         raise TransferError("preview manifest contract is unsupported")
     for key in ("sourceObjectId", "processingId", "jobId"):
         _identifier(value, key)
     _base64url_string(value, "nonceBase64url", expected_bytes=8)
     normalized = dict(value)
-    normalized["bitrateBps"] = _numeric_wire_integer(value, "bitrateBps")
+    normalized["mediaType"] = media_type
+    normalized["codec"] = codec
     for key in ("plaintextSize", "ciphertextSize"):
         normalized[key] = _positive_wire_integer(value, key)
     normalized["chunkSize"] = _positive_numeric_wire_integer(value, "chunkSize")

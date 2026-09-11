@@ -1,9 +1,10 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class ProjectMemberAccessRole(str, Enum):
+class ProjectMemberAccessRole(StrEnum):
     EDITOR = "editor"
     OWNER = "owner"
+    VIEWER = "viewer"
 
     def __str__(self) -> str:
         return str(self.value)

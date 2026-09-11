@@ -5,7 +5,9 @@ import httpx
 
 from ...client import AuthenticatedClient, Client
 from ...models.error_envelope import ErrorEnvelope
-from ...models.refresh_product_session_sec_fetch_site import RefreshProductSessionSecFetchSite
+from ...models.refresh_product_session_sec_fetch_site import (
+    RefreshProductSessionSecFetchSite,
+)
 from ...models.refresh_session_response import RefreshSessionResponse
 from ...types import UNSET, Response, Unset
 

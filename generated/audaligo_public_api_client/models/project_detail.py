@@ -5,10 +5,11 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
+from typing_extensions import Self
 
 from ..models.project_detail_status import ProjectDetailStatus
 from ..models.project_participation_policy import ProjectParticipationPolicy
-from ..types import UNSET, Unset, parse_datetime
+from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.current_membership import CurrentMembership
@@ -114,7 +115,7 @@ class ProjectDetail:
         return field_dict
 
     @classmethod
-    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+    def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.current_membership import CurrentMembership
         from ..models.project_brief import ProjectBrief
         from ..models.project_member import ProjectMember
@@ -135,9 +136,9 @@ class ProjectDetail:
 
         responsibility = Responsibility.from_dict(d.pop("responsibility"))
 
-        created_at = parse_datetime(d.pop("createdAt"))
+        created_at = datetime.datetime.fromisoformat(d.pop("createdAt"))
 
-        updated_at = parse_datetime(d.pop("updatedAt"))
+        updated_at = datetime.datetime.fromisoformat(d.pop("updatedAt"))
 
         brief = ProjectBrief.from_dict(d.pop("brief"))
 

@@ -6,8 +6,12 @@ import httpx
 from ...client import AuthenticatedClient, Client
 from ...models.authenticated_product_session import AuthenticatedProductSession
 from ...models.error_envelope import ErrorEnvelope
-from ...models.switch_product_session_organization_request import SwitchProductSessionOrganizationRequest
-from ...models.switch_product_session_organization_sec_fetch_site import SwitchProductSessionOrganizationSecFetchSite
+from ...models.switch_product_session_organization_request import (
+    SwitchProductSessionOrganizationRequest,
+)
+from ...models.switch_product_session_organization_sec_fetch_site import (
+    SwitchProductSessionOrganizationSecFetchSite,
+)
 from ...types import UNSET, Response, Unset
 
 

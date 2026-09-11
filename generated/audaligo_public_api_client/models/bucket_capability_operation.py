@@ -1,7 +1,7 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class BucketCapabilityOperation(str, Enum):
+class BucketCapabilityOperation(StrEnum):
     GET = "GET"
     PUT = "PUT"
 

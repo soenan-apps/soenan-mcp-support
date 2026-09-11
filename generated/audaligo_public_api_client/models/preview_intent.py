@@ -4,10 +4,10 @@ from collections.abc import Mapping
 from typing import Any, TypeVar
 
 from attrs import define as _attrs_define
+from typing_extensions import Self
 
 from ..models.preview_intent_media_type import PreviewIntentMediaType
 from ..models.preview_intent_profile import PreviewIntentProfile
-from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="PreviewIntent")
 
@@ -21,7 +21,6 @@ class PreviewIntent:
         filename (str):
         media_type (PreviewIntentMediaType):
         plaintext_size (int):
-        mix_version_id (str | Unset):
     """
 
     v: int
@@ -29,7 +28,6 @@ class PreviewIntent:
     filename: str
     media_type: PreviewIntentMediaType
     plaintext_size: int
-    mix_version_id: str | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         v = self.v
@@ -42,8 +40,6 @@ class PreviewIntent:
 
         plaintext_size = self.plaintext_size
 
-        mix_version_id = self.mix_version_id
-
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -55,13 +51,11 @@ class PreviewIntent:
                 "plaintextSize": plaintext_size,
             }
         )
-        if mix_version_id is not UNSET:
-            field_dict["mixVersionId"] = mix_version_id
 
         return field_dict
 
     @classmethod
-    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+    def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
         v = d.pop("v")
 
@@ -73,15 +67,12 @@ class PreviewIntent:
 
         plaintext_size = d.pop("plaintextSize")
 
-        mix_version_id = d.pop("mixVersionId", UNSET)
-
         preview_intent = cls(
             v=v,
             profile=profile,
             filename=filename,
             media_type=media_type,
             plaintext_size=plaintext_size,
-            mix_version_id=mix_version_id,
         )
 
         return preview_intent

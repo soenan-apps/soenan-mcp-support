@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from typing import Any, TypeVar, cast
 
 from attrs import define as _attrs_define
+from typing_extensions import Self
 
 from ..types import UNSET, Unset
 
@@ -43,7 +44,7 @@ class ResponsibilityRequest:
         return field_dict
 
     @classmethod
-    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+    def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
         expected_revision = d.pop("expectedRevision")
 
@@ -54,7 +55,9 @@ class ResponsibilityRequest:
                 return data
             return cast(None | str | Unset, data)
 
-        waiting_on_membership_id = _parse_waiting_on_membership_id(d.pop("waitingOnMembershipId", UNSET))
+        waiting_on_membership_id = _parse_waiting_on_membership_id(
+            d.pop("waitingOnMembershipId", UNSET)
+        )
 
         responsibility_request = cls(
             expected_revision=expected_revision,

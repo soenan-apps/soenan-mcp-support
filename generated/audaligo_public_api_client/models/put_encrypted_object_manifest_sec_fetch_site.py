@@ -1,7 +1,7 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class PutEncryptedObjectManifestSecFetchSite(str, Enum):
+class PutEncryptedObjectManifestSecFetchSite(StrEnum):
     SAME_ORIGIN = "same-origin"
 
     def __str__(self) -> str:

@@ -6,7 +6,9 @@ import httpx
 
 from ...client import AuthenticatedClient, Client
 from ...models.create_invitation_request import CreateInvitationRequest
-from ...models.create_project_invitation_sec_fetch_site import CreateProjectInvitationSecFetchSite
+from ...models.create_project_invitation_sec_fetch_site import (
+    CreateProjectInvitationSecFetchSite,
+)
 from ...models.error_envelope import ErrorEnvelope
 from ...models.invitation_created import InvitationCreated
 from ...types import UNSET, Response, Unset

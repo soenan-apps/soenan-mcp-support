@@ -1,12 +1,19 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
+from typing_extensions import Self
 
-from ..models.commit_project_file_request_file_kind import CommitProjectFileRequestFileKind
+from ..models.commit_project_file_request_file_kind import (
+    CommitProjectFileRequestFileKind,
+)
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.project_file_entry_intent import ProjectFileEntryIntent
+
 
 T = TypeVar("T", bound="CommitProjectFileRequest")
 
@@ -19,14 +26,16 @@ class CommitProjectFileRequest:
         file_kind (CommitProjectFileRequestFileKind):
         original_filename (str):
         original_plaintext_size (int):
-        mix_version_id (str | Unset):
+        entry_intent (ProjectFileEntryIntent):
+        mime_type (str | Unset):
     """
 
     encrypted_object_id: str
     file_kind: CommitProjectFileRequestFileKind
     original_filename: str
     original_plaintext_size: int
-    mix_version_id: str | Unset = UNSET
+    entry_intent: ProjectFileEntryIntent
+    mime_type: str | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         encrypted_object_id = self.encrypted_object_id
@@ -37,7 +46,9 @@ class CommitProjectFileRequest:
 
         original_plaintext_size = self.original_plaintext_size
 
-        mix_version_id = self.mix_version_id
+        entry_intent = self.entry_intent.to_dict()
+
+        mime_type = self.mime_type
 
         field_dict: dict[str, Any] = {}
 
@@ -47,15 +58,20 @@ class CommitProjectFileRequest:
                 "fileKind": file_kind,
                 "originalFilename": original_filename,
                 "originalPlaintextSize": original_plaintext_size,
+                "entryIntent": entry_intent,
             }
         )
-        if mix_version_id is not UNSET:
-            field_dict["mixVersionId"] = mix_version_id
+        if mime_type is not UNSET:
+            field_dict["mimeType"] = mime_type
 
         return field_dict
 
     @classmethod
-    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+    def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.project_file_entry_intent import (
+            ProjectFileEntryIntent,
+        )
+
         d = dict(src_dict)
         encrypted_object_id = d.pop("encryptedObjectId")
 
@@ -65,14 +81,17 @@ class CommitProjectFileRequest:
 
         original_plaintext_size = d.pop("originalPlaintextSize")
 
-        mix_version_id = d.pop("mixVersionId", UNSET)
+        entry_intent = ProjectFileEntryIntent.from_dict(d.pop("entryIntent"))
+
+        mime_type = d.pop("mimeType", UNSET)
 
         commit_project_file_request = cls(
             encrypted_object_id=encrypted_object_id,
             file_kind=file_kind,
             original_filename=original_filename,
             original_plaintext_size=original_plaintext_size,
-            mix_version_id=mix_version_id,
+            entry_intent=entry_intent,
+            mime_type=mime_type,
         )
 
         return commit_project_file_request

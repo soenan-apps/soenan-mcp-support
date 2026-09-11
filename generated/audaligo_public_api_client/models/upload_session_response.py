@@ -4,12 +4,13 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
+from typing_extensions import Self
 
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
-    from ..models.file_key_claim import FileKeyClaim
     from ..models.preview_intent import PreviewIntent
+    from ..models.project_file_entry_intent import ProjectFileEntryIntent
 
 
 T = TypeVar("T", bound="UploadSessionResponse")
@@ -21,15 +22,13 @@ class UploadSessionResponse:
     Attributes:
         upload_id (str):
         key_epoch (int):
-        key_claim (FileKeyClaim):
-        transfer_continuation (str | Unset):
+        entry_intent (ProjectFileEntryIntent):
         preview_intent (PreviewIntent | Unset):
     """
 
     upload_id: str
     key_epoch: int
-    key_claim: FileKeyClaim
-    transfer_continuation: str | Unset = UNSET
+    entry_intent: ProjectFileEntryIntent
     preview_intent: PreviewIntent | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
@@ -37,9 +36,7 @@ class UploadSessionResponse:
 
         key_epoch = self.key_epoch
 
-        key_claim = self.key_claim.to_dict()
-
-        transfer_continuation = self.transfer_continuation
+        entry_intent = self.entry_intent.to_dict()
 
         preview_intent: dict[str, Any] | Unset = UNSET
         if not isinstance(self.preview_intent, Unset):
@@ -51,28 +48,27 @@ class UploadSessionResponse:
             {
                 "uploadId": upload_id,
                 "keyEpoch": key_epoch,
-                "keyClaim": key_claim,
+                "entryIntent": entry_intent,
             }
         )
-        if transfer_continuation is not UNSET:
-            field_dict["transferContinuation"] = transfer_continuation
         if preview_intent is not UNSET:
             field_dict["previewIntent"] = preview_intent
 
         return field_dict
 
     @classmethod
-    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.file_key_claim import FileKeyClaim
+    def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.preview_intent import PreviewIntent
+        from ..models.project_file_entry_intent import (
+            ProjectFileEntryIntent,
+        )
 
         d = dict(src_dict)
         upload_id = d.pop("uploadId")
 
         key_epoch = d.pop("keyEpoch")
 
-        key_claim = FileKeyClaim.from_dict(d.pop("keyClaim"))
-        transfer_continuation = d.pop("transferContinuation", UNSET)
+        entry_intent = ProjectFileEntryIntent.from_dict(d.pop("entryIntent"))
 
         _preview_intent = d.pop("previewIntent", UNSET)
         preview_intent: PreviewIntent | Unset
@@ -84,8 +80,7 @@ class UploadSessionResponse:
         upload_session_response = cls(
             upload_id=upload_id,
             key_epoch=key_epoch,
-            key_claim=key_claim,
-            transfer_continuation=transfer_continuation,
+            entry_intent=entry_intent,
             preview_intent=preview_intent,
         )
 

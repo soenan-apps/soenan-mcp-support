@@ -1,8 +1,9 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class InvitationStateAccessRole(str, Enum):
+class InvitationStateAccessRole(StrEnum):
     EDITOR = "editor"
+    VIEWER = "viewer"
 
     def __str__(self) -> str:
         return str(self.value)

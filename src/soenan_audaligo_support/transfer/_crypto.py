@@ -554,7 +554,7 @@ def parse_preview_decryption_plan(
         raise EncryptionContractError("data key must be a nonzero 256-bit key")
     if not 0 <= epoch <= MAXIMUM_WIRE_INTEGER:
         raise EncryptionContractError("epoch must be a canonical wire integer")
-    if manifest.get("contract") != "audaligo.managed-preview-read-descriptor":
+    if manifest.get("contract") != "audaligo.preview.read.v1":
         raise EncryptionContractError("unsupported preview manifest")
     source_object_id = _string(manifest, "sourceObjectId")
     processing_id = _string(manifest, "processingId")

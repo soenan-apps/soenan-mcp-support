@@ -149,16 +149,17 @@ class AudaligoTransferAPI:
         upload_id: str,
         filename: str,
         plaintext_size: int,
-        mix_version_id: str | None,
     ) -> Mapping[str, Any]:
         value: dict[str, Any] = {
             "encryptedObjectId": upload_id,
             "fileKind": "project_file",
             "originalFilename": filename,
             "originalPlaintextSize": plaintext_size,
+            "entryIntent": {
+                "parentFolderId": None,
+                "name": filename,
+            },
         }
-        if mix_version_id is not None:
-            value["mixVersionId"] = mix_version_id
         response = self._request(
             commit_encrypted_project_file.sync_detailed,
             project_id,

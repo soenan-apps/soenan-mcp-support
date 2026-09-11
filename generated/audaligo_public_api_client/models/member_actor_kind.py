@@ -1,7 +1,7 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class MemberActorKind(str, Enum):
+class MemberActorKind(StrEnum):
     MEMBER = "member"
 
     def __str__(self) -> str:

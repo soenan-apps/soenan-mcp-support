@@ -46,6 +46,14 @@ def test_handoff_rejects_missing_extra_and_operation_mismatched_fields() -> None
         with pytest.raises(TransferError):
             parse_handoff(mutated)
 
+def test_handoff_uses_canonical_file_identity() -> None:
+    preview = _preview_handoff()
+    parsed = parse_handoff(preview, now_unix_milliseconds=1)
+    assert parsed.preview is not None
+    assert parsed.preview.file_id == "file_1"
+
+
+
 
 def test_handoff_rejects_wrong_protocol_origin_binding_and_expired_claim() -> None:
     valid = _upload_handoff()
@@ -355,7 +363,34 @@ def test_preview_aad_matches_audaligo_ordered_encoding() -> None:
     assert actual == bytes(expected)
 
 
-def test_preview_plan_authenticates_approved_preview_fields() -> None:
+@pytest.mark.parametrize(
+    ("media_type", "codec"),
+    [
+        ("audio/mp4", "avc1.640028"),
+        ("video/mp4", "mp4a.40.2"),
+        ("video/mp4", "avc1.invalid"),
+    ],
+)
+def test_preview_handoff_rejects_mismatched_media_tuple(
+    media_type: str, codec: str
+) -> None:
+    handoff = _preview_handoff()
+    handoff["manifest"]["mediaType"] = media_type
+    handoff["manifest"]["codec"] = codec
+    with pytest.raises(TransferError, match="preview manifest contract"):
+        parse_handoff(handoff, now_unix_milliseconds=1)
+
+
+@pytest.mark.parametrize(
+    ("media_type", "codec"),
+    [
+        ("audio/mp4", "mp4a.40.2"),
+        ("video/mp4", "avc1.640028, mp4a.40.2"),
+    ],
+)
+def test_preview_plan_authenticates_approved_preview_fields(
+    media_type: str, codec: str
+) -> None:
     cleartext = b"audio"
     key = bytes(range(1, 33))
     nonce_base = b"12345678"
@@ -374,9 +409,13 @@ def test_preview_plan_authenticates_approved_preview_fields() -> None:
         final=True,
     )
     ciphertext = AESGCM(key).encrypt(nonce_base + struct.pack(">I", 0), cleartext, aad)
-    manifest = _preview_manifest(ciphertext)
+    manifest = _preview_manifest(ciphertext, media_type=media_type, codec=codec)
+    wire_handoff = _preview_handoff()
+    wire_handoff["manifest"] = manifest
+    parsed_handoff = parse_handoff(wire_handoff, now_unix_milliseconds=1)
+    assert parsed_handoff.manifest is not None
     plan = parse_preview_decryption_plan(
-        manifest,
+        parsed_handoff.manifest,
         project_id="project_1",
         preview_id="preview_1",
         epoch=7,
@@ -566,6 +605,7 @@ def _file_handoff() -> dict[str, Any]:
         "file": {
             "projectId": "project_1",
             "fileId": "file_1",
+            "entryId": "entry_1",
             "objectId": "object_1",
             "filename": "recording.wav",
             "plaintextSize": "5",
@@ -601,15 +641,33 @@ def _file_handoff() -> dict[str, Any]:
     }
 
 
-def _preview_manifest(ciphertext: bytes) -> dict[str, Any]:
+def _preview_handoff() -> dict[str, Any]:
+    value = _file_handoff()
+    value["operation"] = "preview_download"
+    value["objectId"] = "preview_1"
+    del value["file"]
+    value["preview"] = {
+        "fileId": "file_1",
+        "previewId": "preview_1",
+        "state": "ready",
+    }
+    value["manifest"] = _preview_manifest(b"ciphertext-cipher")
+    return value
+
+
+def _preview_manifest(
+    ciphertext: bytes,
+    *,
+    media_type: str = "audio/mp4",
+    codec: str = "mp4a.40.2",
+) -> dict[str, Any]:
     return {
-        "contract": "audaligo.managed-preview-read-descriptor",
+        "contract": "audaligo.preview.read.v1",
         "sourceObjectId": "source_1",
         "processingId": "processing_1",
         "jobId": "job_1",
-        "mediaType": "audio/mp4",
-        "codec": "mp4a.40.2",
-        "bitrateBps": 128_000,
+        "mediaType": media_type,
+        "codec": codec,
         "nonceBase64url": _b64u(b"12345678"),
         "plaintextSize": len(ciphertext) - 16,
         "ciphertextSize": len(ciphertext),

@@ -5,10 +5,11 @@ from collections.abc import Mapping
 from typing import Any, TypeVar, cast
 
 from attrs import define as _attrs_define
+from typing_extensions import Self
 
 from ..models.invitation_membership_access_role import InvitationMembershipAccessRole
 from ..models.invitation_membership_state import InvitationMembershipState
-from ..types import UNSET, Unset, parse_datetime
+from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="InvitationMembership")
 
@@ -85,7 +86,7 @@ class InvitationMembership:
         return field_dict
 
     @classmethod
-    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+    def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
         id = d.pop("id")
 
@@ -107,7 +108,7 @@ class InvitationMembership:
             try:
                 if not isinstance(data, str):
                     raise TypeError()
-                joined_at_type_1 = parse_datetime(data)
+                joined_at_type_1 = datetime.datetime.fromisoformat(data)
 
                 return joined_at_type_1
             except (TypeError, ValueError, AttributeError, KeyError):
@@ -124,7 +125,7 @@ class InvitationMembership:
             try:
                 if not isinstance(data, str):
                     raise TypeError()
-                removed_at_type_1 = parse_datetime(data)
+                removed_at_type_1 = datetime.datetime.fromisoformat(data)
 
                 return removed_at_type_1
             except (TypeError, ValueError, AttributeError, KeyError):

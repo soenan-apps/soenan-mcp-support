@@ -1,7 +1,7 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class ReadObjectWrapAlg(str, Enum):
+class ReadObjectWrapAlg(StrEnum):
     A256GCM_PROJECT_EPOCH_V1 = "a256gcm-project-epoch-v1"
 
     def __str__(self) -> str:

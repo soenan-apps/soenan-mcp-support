@@ -133,7 +133,6 @@ def upload_file(
                 upload_id=handoff.object_id,
                 filename=upload.filename,
                 plaintext_size=upload.plaintext_size,
-                mix_version_id=upload.mix_version_id,
             )
     except EncryptionContractError as error:
         raise TransferError(str(error)) from None

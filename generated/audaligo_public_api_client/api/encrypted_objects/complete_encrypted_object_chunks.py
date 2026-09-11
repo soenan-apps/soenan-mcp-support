@@ -4,7 +4,7 @@ from urllib.parse import quote
 
 import httpx
 
-from ...client import Client
+from ...client import AuthenticatedClient, Client
 from ...models.complete_encrypted_object_chunks_sec_fetch_site import (
     CompleteEncryptedObjectChunksSecFetchSite,
 )
@@ -18,17 +18,17 @@ def _get_kwargs(
     upload: str,
     *,
     origin: str,
-    audaligo_transfer_continuation: str | Unset = UNSET,
     sec_fetch_site: CompleteEncryptedObjectChunksSecFetchSite | Unset = UNSET,
+    audaligo_transfer_continuation: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
     headers["Origin"] = origin
 
-    if not isinstance(audaligo_transfer_continuation, Unset):
-        headers["Audaligo-Transfer-Continuation"] = audaligo_transfer_continuation
-
     if not isinstance(sec_fetch_site, Unset):
         headers["Sec-Fetch-Site"] = str(sec_fetch_site)
+
+    if not isinstance(audaligo_transfer_continuation, Unset):
+        headers["Audaligo-Transfer-Continuation"] = audaligo_transfer_continuation
 
     _kwargs: dict[str, Any] = {
         "method": "post",
@@ -43,7 +43,7 @@ def _get_kwargs(
 
 
 def _parse_response(
-    *, client: Client, response: httpx.Response
+    *, client: AuthenticatedClient | Client, response: httpx.Response
 ) -> ErrorEnvelope | ObjectStateResponse:
     if response.status_code == 200:
         response_200 = ObjectStateResponse.from_dict(response.json())
@@ -56,7 +56,7 @@ def _parse_response(
 
 
 def _build_response(
-    *, client: Client, response: httpx.Response
+    *, client: AuthenticatedClient | Client, response: httpx.Response
 ) -> Response[ErrorEnvelope | ObjectStateResponse]:
     return Response(
         status_code=HTTPStatus(response.status_code),
@@ -70,18 +70,18 @@ def sync_detailed(
     project: str,
     upload: str,
     *,
-    client: Client,
+    client: AuthenticatedClient,
     origin: str,
-    audaligo_transfer_continuation: str | Unset = UNSET,
     sec_fetch_site: CompleteEncryptedObjectChunksSecFetchSite | Unset = UNSET,
+    audaligo_transfer_continuation: str | Unset = UNSET,
 ) -> Response[ErrorEnvelope | ObjectStateResponse]:
     """
     Args:
         project (str):
         upload (str):
         origin (str):
-        audaligo_transfer_continuation (str | Unset):
         sec_fetch_site (CompleteEncryptedObjectChunksSecFetchSite | Unset):
+        audaligo_transfer_continuation (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -95,8 +95,8 @@ def sync_detailed(
         project=project,
         upload=upload,
         origin=origin,
-        audaligo_transfer_continuation=audaligo_transfer_continuation,
         sec_fetch_site=sec_fetch_site,
+        audaligo_transfer_continuation=audaligo_transfer_continuation,
     )
 
     response = client.get_httpx_client().request(
@@ -110,18 +110,18 @@ def sync(
     project: str,
     upload: str,
     *,
-    client: Client,
+    client: AuthenticatedClient,
     origin: str,
-    audaligo_transfer_continuation: str | Unset = UNSET,
     sec_fetch_site: CompleteEncryptedObjectChunksSecFetchSite | Unset = UNSET,
+    audaligo_transfer_continuation: str | Unset = UNSET,
 ) -> ErrorEnvelope | ObjectStateResponse | None:
     """
     Args:
         project (str):
         upload (str):
         origin (str):
-        audaligo_transfer_continuation (str | Unset):
         sec_fetch_site (CompleteEncryptedObjectChunksSecFetchSite | Unset):
+        audaligo_transfer_continuation (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -136,8 +136,8 @@ def sync(
         upload=upload,
         client=client,
         origin=origin,
-        audaligo_transfer_continuation=audaligo_transfer_continuation,
         sec_fetch_site=sec_fetch_site,
+        audaligo_transfer_continuation=audaligo_transfer_continuation,
     ).parsed
 
 
@@ -145,18 +145,18 @@ async def asyncio_detailed(
     project: str,
     upload: str,
     *,
-    client: Client,
+    client: AuthenticatedClient,
     origin: str,
-    audaligo_transfer_continuation: str | Unset = UNSET,
     sec_fetch_site: CompleteEncryptedObjectChunksSecFetchSite | Unset = UNSET,
+    audaligo_transfer_continuation: str | Unset = UNSET,
 ) -> Response[ErrorEnvelope | ObjectStateResponse]:
     """
     Args:
         project (str):
         upload (str):
         origin (str):
-        audaligo_transfer_continuation (str | Unset):
         sec_fetch_site (CompleteEncryptedObjectChunksSecFetchSite | Unset):
+        audaligo_transfer_continuation (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -170,8 +170,8 @@ async def asyncio_detailed(
         project=project,
         upload=upload,
         origin=origin,
-        audaligo_transfer_continuation=audaligo_transfer_continuation,
         sec_fetch_site=sec_fetch_site,
+        audaligo_transfer_continuation=audaligo_transfer_continuation,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -183,18 +183,18 @@ async def asyncio(
     project: str,
     upload: str,
     *,
-    client: Client,
+    client: AuthenticatedClient,
     origin: str,
-    audaligo_transfer_continuation: str | Unset = UNSET,
     sec_fetch_site: CompleteEncryptedObjectChunksSecFetchSite | Unset = UNSET,
+    audaligo_transfer_continuation: str | Unset = UNSET,
 ) -> ErrorEnvelope | ObjectStateResponse | None:
     """
     Args:
         project (str):
         upload (str):
         origin (str):
-        audaligo_transfer_continuation (str | Unset):
         sec_fetch_site (CompleteEncryptedObjectChunksSecFetchSite | Unset):
+        audaligo_transfer_continuation (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -210,7 +210,7 @@ async def asyncio(
             upload=upload,
             client=client,
             origin=origin,
-            audaligo_transfer_continuation=audaligo_transfer_continuation,
             sec_fetch_site=sec_fetch_site,
+            audaligo_transfer_continuation=audaligo_transfer_continuation,
         )
     ).parsed

@@ -1,7 +1,7 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class InvitationSummaryState(str, Enum):
+class InvitationSummaryState(StrEnum):
     PENDING = "pending"
 
     def __str__(self) -> str:
