@@ -5,7 +5,9 @@ from urllib.parse import quote
 import httpx
 
 from ...client import AuthenticatedClient, Client
-from ...models.encrypted_project_file_list_response import EncryptedProjectFileListResponse
+from ...models.encrypted_project_file_list_response import (
+    EncryptedProjectFileListResponse,
+)
 from ...models.error_envelope import ErrorEnvelope
 from ...types import Response
 

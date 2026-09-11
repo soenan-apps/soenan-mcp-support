@@ -1,7 +1,7 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class ReadObjectSuiteId(str, Enum):
+class ReadObjectSuiteId(StrEnum):
     AES_256_GCM_AUDALIGO_V1 = "aes-256-gcm-audaligo-v1"
 
     def __str__(self) -> str:

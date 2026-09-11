@@ -1,7 +1,7 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class BucketCapabilityContract(str, Enum):
+class BucketCapabilityContract(StrEnum):
     AUDALIGO_RAILWAY_BUCKET_CAPABILITY = "audaligo.railway-bucket-capability"
 
     def __str__(self) -> str:

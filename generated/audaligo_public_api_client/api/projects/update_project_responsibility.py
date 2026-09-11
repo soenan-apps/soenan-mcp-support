@@ -8,7 +8,9 @@ from ...client import AuthenticatedClient, Client
 from ...models.error_envelope import ErrorEnvelope
 from ...models.responsibility_envelope import ResponsibilityEnvelope
 from ...models.responsibility_request import ResponsibilityRequest
-from ...models.update_project_responsibility_sec_fetch_site import UpdateProjectResponsibilitySecFetchSite
+from ...models.update_project_responsibility_sec_fetch_site import (
+    UpdateProjectResponsibilitySecFetchSite,
+)
 from ...types import UNSET, Response, Unset
 
 

@@ -5,9 +5,9 @@ from collections.abc import Mapping
 from typing import Any, TypeVar
 
 from attrs import define as _attrs_define
+from typing_extensions import Self
 
 from ..models.accepted_invitation_state_state import AcceptedInvitationStateState
-from ..types import parse_datetime
 
 T = TypeVar("T", bound="AcceptedInvitationState")
 
@@ -50,7 +50,7 @@ class AcceptedInvitationState:
         return field_dict
 
     @classmethod
-    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+    def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
         id = d.pop("id")
 
@@ -58,7 +58,7 @@ class AcceptedInvitationState:
 
         state = AcceptedInvitationStateState(d.pop("state"))
 
-        consumed_at = parse_datetime(d.pop("consumedAt"))
+        consumed_at = datetime.datetime.fromisoformat(d.pop("consumedAt"))
 
         accepted_invitation_state = cls(
             id=id,

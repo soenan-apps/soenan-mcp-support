@@ -5,11 +5,12 @@ from collections.abc import Mapping
 from typing import Any, TypeVar, cast
 
 from attrs import define as _attrs_define
+from typing_extensions import Self
 
 from ..models.product_session_metadata_client_kind import (
     ProductSessionMetadataClientKind,
 )
-from ..types import UNSET, Unset, parse_datetime
+from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="ProductSessionMetadata")
 
@@ -86,13 +87,13 @@ class ProductSessionMetadata:
         return field_dict
 
     @classmethod
-    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+    def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
         id = d.pop("id")
 
-        issued_at = parse_datetime(d.pop("issuedAt"))
+        issued_at = datetime.datetime.fromisoformat(d.pop("issuedAt"))
 
-        access_expires_at = parse_datetime(d.pop("accessExpiresAt"))
+        access_expires_at = datetime.datetime.fromisoformat(d.pop("accessExpiresAt"))
 
         refreshable = d.pop("refreshable")
 
@@ -108,7 +109,7 @@ class ProductSessionMetadata:
             try:
                 if not isinstance(data, str):
                     raise TypeError()
-                refresh_expires_at_type_1 = parse_datetime(data)
+                refresh_expires_at_type_1 = datetime.datetime.fromisoformat(data)
 
                 return refresh_expires_at_type_1
             except (TypeError, ValueError, AttributeError, KeyError):
@@ -117,7 +118,9 @@ class ProductSessionMetadata:
 
         refresh_expires_at = _parse_refresh_expires_at(d.pop("refreshExpiresAt", UNSET))
 
-        def _parse_refresh_recommended_after(data: object) -> datetime.datetime | None | Unset:
+        def _parse_refresh_recommended_after(
+            data: object,
+        ) -> datetime.datetime | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
@@ -125,14 +128,16 @@ class ProductSessionMetadata:
             try:
                 if not isinstance(data, str):
                     raise TypeError()
-                refresh_recommended_after_type_1 = parse_datetime(data)
+                refresh_recommended_after_type_1 = datetime.datetime.fromisoformat(data)
 
                 return refresh_recommended_after_type_1
             except (TypeError, ValueError, AttributeError, KeyError):
                 pass
             return cast(datetime.datetime | None | Unset, data)
 
-        refresh_recommended_after = _parse_refresh_recommended_after(d.pop("refreshRecommendedAfter", UNSET))
+        refresh_recommended_after = _parse_refresh_recommended_after(
+            d.pop("refreshRecommendedAfter", UNSET)
+        )
 
         product_session_metadata = cls(
             id=id,

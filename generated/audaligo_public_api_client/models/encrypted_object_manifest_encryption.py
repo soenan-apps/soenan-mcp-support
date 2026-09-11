@@ -4,10 +4,17 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
+from typing_extensions import Self
 
-from ..models.encrypted_object_manifest_encryption_content_key_alg import EncryptedObjectManifestEncryptionContentKeyAlg
-from ..models.encrypted_object_manifest_encryption_mode import EncryptedObjectManifestEncryptionMode
-from ..models.encrypted_object_manifest_encryption_wrap_alg import EncryptedObjectManifestEncryptionWrapAlg
+from ..models.encrypted_object_manifest_encryption_content_key_alg import (
+    EncryptedObjectManifestEncryptionContentKeyAlg,
+)
+from ..models.encrypted_object_manifest_encryption_mode import (
+    EncryptedObjectManifestEncryptionMode,
+)
+from ..models.encrypted_object_manifest_encryption_wrap_alg import (
+    EncryptedObjectManifestEncryptionWrapAlg,
+)
 
 if TYPE_CHECKING:
     from ..models.wrapped_data_key import WrappedDataKey
@@ -54,13 +61,15 @@ class EncryptedObjectManifestEncryption:
         return field_dict
 
     @classmethod
-    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+    def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.wrapped_data_key import WrappedDataKey
 
         d = dict(src_dict)
         mode = EncryptedObjectManifestEncryptionMode(d.pop("mode"))
 
-        content_key_alg = EncryptedObjectManifestEncryptionContentKeyAlg(d.pop("content_key_alg"))
+        content_key_alg = EncryptedObjectManifestEncryptionContentKeyAlg(
+            d.pop("content_key_alg")
+        )
 
         wrap_alg = EncryptedObjectManifestEncryptionWrapAlg(d.pop("wrap_alg"))
 

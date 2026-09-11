@@ -5,8 +5,12 @@ from urllib.parse import quote
 import httpx
 
 from ...client import AuthenticatedClient, Client
-from ...models.delete_encrypted_project_file_sec_fetch_site import DeleteEncryptedProjectFileSecFetchSite
-from ...models.encrypted_project_file_deletion_response import EncryptedProjectFileDeletionResponse
+from ...models.delete_encrypted_project_file_sec_fetch_site import (
+    DeleteEncryptedProjectFileSecFetchSite,
+)
+from ...models.encrypted_project_file_deletion_response import (
+    EncryptedProjectFileDeletionResponse,
+)
 from ...models.error_envelope import ErrorEnvelope
 from ...types import UNSET, Response, Unset
 

@@ -1,7 +1,7 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class AcceptProductTermsSecFetchSite(str, Enum):
+class AcceptProductTermsSecFetchSite(StrEnum):
     SAME_ORIGIN = "same-origin"
 
     def __str__(self) -> str:

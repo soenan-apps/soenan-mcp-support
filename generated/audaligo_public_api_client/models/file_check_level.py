@@ -1,7 +1,7 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class FileCheckLevel(str, Enum):
+class FileCheckLevel(StrEnum):
     ERROR = "error"
     INFO = "info"
     WARNING = "warning"

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import re
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -8,11 +9,12 @@ from typing import Any, Literal
 from urllib.parse import urlsplit, urlunsplit
 
 from ._api import _validate_control_origin, _validate_transfer_continuation
+from ._claim import FileKeyClaimDescriptor, KEY_CLAIM_PROTOCOL
 from ._crypto import CHUNK_SIZE, MAXIMUM_CHUNKS, MAXIMUM_WIRE_INTEGER
 from ._http import TransferError
+from ._wire import is_base64url
 
 TRANSFER_PROTOCOL = "audaligo.encrypted-transfer.v1"
-KEY_CLAIM_PROTOCOL = "audaligo.file-key-claim.v1"
 Operation = Literal["upload", "file_download", "preview_download"]
 
 
@@ -21,25 +23,24 @@ class UploadMetadata:
     filename: str
     plaintext_size: int
     operation_id: str
-    mix_version_id: str | None
 
 
 @dataclass(frozen=True)
 class FileMetadata:
     project_id: str
     file_id: str
+    entry_id: str
     object_id: str
     filename: str
     plaintext_size: int
     media_type: str
-    mix_version_id: str | None
     created_at_unix_milliseconds: int
     updated_at_unix_milliseconds: int
 
 
 @dataclass(frozen=True)
 class PreviewMetadata:
-    mix_version_id: str
+    file_id: str
     preview_id: str
     state: str
 
@@ -50,7 +51,7 @@ class TransferHandoff:
     project_id: str
     object_id: str
     epoch: int
-    key_claim: Mapping[str, Any]
+    key_claim: FileKeyClaimDescriptor
     continuation: str
     control_origin: str
     upload: UploadMetadata | None = None
@@ -163,7 +164,7 @@ def parse_handoff(
 
 def _claim_descriptor(
     value: Any, *, expected_origin: str, now_unix_milliseconds: int
-) -> Mapping[str, Any]:
+) -> FileKeyClaimDescriptor:
     value = _object(value, "keyClaim")
     _exact_fields(
         value,
@@ -196,25 +197,24 @@ def _claim_descriptor(
         or parsed.query
         or not parsed.path
         or len(parsed.fragment) != 43
-        or not _is_base64url(parsed.fragment)
+        or not is_base64url(parsed.fragment)
     ):
         raise TransferError("file key claim URL is invalid")
-    return dict(value)
+    return FileKeyClaimDescriptor(
+        redemption_url=urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", "")),
+        secret=parsed.fragment,
+        expires_at_unix_milliseconds=expires_at,
+    )
 
 
 def _upload_metadata(value: Any) -> UploadMetadata:
     value = _object(value, "upload")
     required = {"filename", "plaintextSize", "operationId"}
-    allowed = required | {"mixVersionId"}
-    _fields(value, required, allowed, "upload")
-    mix_version = value.get("mixVersionId")
-    if mix_version is not None:
-        mix_version = _identifier(value, "mixVersionId")
+    _exact_fields(value, required, "upload")
     return UploadMetadata(
         filename=_bounded_string(value, "filename", 1024),
         plaintext_size=_positive_wire_integer(value, "plaintextSize"),
         operation_id=_identifier(value, "operationId"),
-        mix_version_id=mix_version,
     )
 
 
@@ -223,6 +223,7 @@ def _file_metadata(value: Any) -> FileMetadata:
     required = {
         "projectId",
         "fileId",
+        "entryId",
         "objectId",
         "filename",
         "plaintextSize",
@@ -230,19 +231,15 @@ def _file_metadata(value: Any) -> FileMetadata:
         "createdAtUnixMilliseconds",
         "updatedAtUnixMilliseconds",
     }
-    allowed = required | {"mixVersionId"}
-    _fields(value, required, allowed, "file")
-    mix_version = value.get("mixVersionId")
-    if mix_version is not None:
-        mix_version = _identifier(value, "mixVersionId")
+    _exact_fields(value, required, "file")
     return FileMetadata(
         project_id=_identifier(value, "projectId"),
         file_id=_identifier(value, "fileId"),
+        entry_id=_identifier(value, "entryId"),
         object_id=_identifier(value, "objectId"),
         filename=_bounded_string(value, "filename", 1024),
         plaintext_size=_positive_wire_integer(value, "plaintextSize"),
         media_type=_bounded_string(value, "mediaType", 255),
-        mix_version_id=mix_version,
         created_at_unix_milliseconds=_wire_integer(value, "createdAtUnixMilliseconds"),
         updated_at_unix_milliseconds=_wire_integer(value, "updatedAtUnixMilliseconds"),
     )
@@ -252,14 +249,14 @@ def _preview_metadata(value: Any) -> PreviewMetadata:
     value = _object(value, "preview")
     _fields(
         value,
-        {"mixVersionId", "previewId", "state"},
-        {"mixVersionId", "previewId", "state", "failureReason"},
+        {"fileId", "previewId", "state"},
+        {"fileId", "previewId", "state", "failureReason"},
         "preview",
     )
     if value.get("state") != "ready" or "failureReason" in value:
         raise TransferError("preview is not ready for download")
     return PreviewMetadata(
-        mix_version_id=_identifier(value, "mixVersionId"),
+        file_id=_identifier(value, "fileId"),
         preview_id=_identifier(value, "previewId"),
         state="ready",
     )
@@ -314,7 +311,6 @@ def _preview_manifest(value: Any) -> Mapping[str, Any]:
         "jobId",
         "mediaType",
         "codec",
-        "bitrateBps",
         "nonceBase64url",
         "plaintextSize",
         "ciphertextSize",
@@ -322,18 +318,23 @@ def _preview_manifest(value: Any) -> Mapping[str, Any]:
         "chunks",
     }
     _exact_fields(value, fields, "manifest")
-    if (
-        value.get("contract") != "audaligo.managed-preview-read-descriptor"
-        or value.get("mediaType") != "audio/mp4"
-        or value.get("codec") != "mp4a.40.2"
-        or _numeric_wire_integer(value, "bitrateBps") != 128_000
+    media_type = _bounded_string(value, "mediaType", 128)
+    codec = _bounded_string(value, "codec", 256)
+    if value.get("contract") != "audaligo.preview.read.v1" or not (
+        (media_type == "audio/mp4" and codec == "mp4a.40.2")
+        or (
+            media_type == "video/mp4"
+            and re.fullmatch(r"avc1\.[0-9A-Fa-f]{6}(, ?mp4a\.40\.2)?", codec)
+            is not None
+        )
     ):
         raise TransferError("preview manifest contract is unsupported")
     for key in ("sourceObjectId", "processingId", "jobId"):
         _identifier(value, key)
     _base64url_string(value, "nonceBase64url", expected_bytes=8)
     normalized = dict(value)
-    normalized["bitrateBps"] = _numeric_wire_integer(value, "bitrateBps")
+    normalized["mediaType"] = media_type
+    normalized["codec"] = codec
     for key in ("plaintextSize", "ciphertextSize"):
         normalized[key] = _positive_wire_integer(value, key)
     normalized["chunkSize"] = _positive_numeric_wire_integer(value, "chunkSize")
@@ -505,7 +506,7 @@ def _base64url_string(
     value: Mapping[str, Any], key: str, *, expected_bytes: int | None = None
 ) -> str:
     result = value.get(key)
-    if not isinstance(result, str) or not _is_base64url(result):
+    if not isinstance(result, str) or not is_base64url(result):
         raise TransferError(f"{key} is not canonical base64url")
     if expected_bytes is not None:
         try:
@@ -521,8 +522,3 @@ def _encode_base64url(value: bytes) -> str:
     return base64.urlsafe_b64encode(value).decode("ascii").rstrip("=")
 
 
-def _is_base64url(value: str) -> bool:
-    return bool(value) and all(
-        character.isascii() and (character.isalnum() or character in "-_")
-        for character in value
-    )

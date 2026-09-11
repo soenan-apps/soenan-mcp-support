@@ -1,7 +1,7 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class ProductSessionMetadataClientKind(str, Enum):
+class ProductSessionMetadataClientKind(StrEnum):
     WEB = "web"
 
     def __str__(self) -> str:

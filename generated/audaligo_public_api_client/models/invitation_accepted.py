@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
+from typing_extensions import Self
 
 if TYPE_CHECKING:
     from ..models.accepted_invitation_state import AcceptedInvitationState
@@ -52,8 +53,10 @@ class InvitationAccepted:
         return field_dict
 
     @classmethod
-    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.accepted_invitation_state import AcceptedInvitationState
+    def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.accepted_invitation_state import (
+            AcceptedInvitationState,
+        )
         from ..models.invitation_membership import InvitationMembership
         from ..models.invitation_project import InvitationProject
 

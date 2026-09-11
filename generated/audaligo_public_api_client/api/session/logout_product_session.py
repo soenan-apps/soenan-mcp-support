@@ -5,7 +5,9 @@ import httpx
 
 from ...client import AuthenticatedClient, Client
 from ...models.error_envelope import ErrorEnvelope
-from ...models.logout_product_session_sec_fetch_site import LogoutProductSessionSecFetchSite
+from ...models.logout_product_session_sec_fetch_site import (
+    LogoutProductSessionSecFetchSite,
+)
 from ...models.ok_response import OKResponse
 from ...types import UNSET, Response, Unset
 
@@ -30,7 +32,9 @@ def _get_kwargs(
     return _kwargs
 
 
-def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> ErrorEnvelope | OKResponse:
+def _parse_response(
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> ErrorEnvelope | OKResponse:
     if response.status_code == 200:
         response_200 = OKResponse.from_dict(response.json())
 

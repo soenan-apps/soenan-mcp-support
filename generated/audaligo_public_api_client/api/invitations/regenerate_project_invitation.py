@@ -8,7 +8,9 @@ from ...client import AuthenticatedClient, Client
 from ...models.error_envelope import ErrorEnvelope
 from ...models.invitation_created import InvitationCreated
 from ...models.regenerate_invitation_request import RegenerateInvitationRequest
-from ...models.regenerate_project_invitation_sec_fetch_site import RegenerateProjectInvitationSecFetchSite
+from ...models.regenerate_project_invitation_sec_fetch_site import (
+    RegenerateProjectInvitationSecFetchSite,
+)
 from ...types import UNSET, Response, Unset
 
 

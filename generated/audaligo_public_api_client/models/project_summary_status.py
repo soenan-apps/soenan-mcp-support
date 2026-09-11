@@ -1,7 +1,7 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class ProjectSummaryStatus(str, Enum):
+class ProjectSummaryStatus(StrEnum):
     ACTIVE = "active"
     ARCHIVED = "archived"
     DRAFT = "draft"

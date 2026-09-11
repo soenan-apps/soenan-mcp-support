@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
+from typing_extensions import Self
 
 if TYPE_CHECKING:
     from ..models.bucket_capability import BucketCapability
@@ -35,7 +36,7 @@ class CapabilityResponse:
         return field_dict
 
     @classmethod
-    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+    def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.bucket_capability import BucketCapability
 
         d = dict(src_dict)

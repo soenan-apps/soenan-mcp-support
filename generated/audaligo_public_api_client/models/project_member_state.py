@@ -1,7 +1,7 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class ProjectMemberState(str, Enum):
+class ProjectMemberState(StrEnum):
     ACTIVE = "active"
     REMOVED = "removed"
 

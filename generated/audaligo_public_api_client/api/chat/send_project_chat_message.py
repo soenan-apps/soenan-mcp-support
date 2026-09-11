@@ -8,7 +8,9 @@ from ...client import AuthenticatedClient, Client
 from ...models.chat_event import ChatEvent
 from ...models.error_envelope import ErrorEnvelope
 from ...models.send_chat_message_request import SendChatMessageRequest
-from ...models.send_project_chat_message_sec_fetch_site import SendProjectChatMessageSecFetchSite
+from ...models.send_project_chat_message_sec_fetch_site import (
+    SendProjectChatMessageSecFetchSite,
+)
 from ...types import UNSET, Response, Unset
 
 
@@ -40,7 +42,9 @@ def _get_kwargs(
     return _kwargs
 
 
-def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> ChatEvent | ErrorEnvelope:
+def _parse_response(
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> ChatEvent | ErrorEnvelope:
     if response.status_code == 200:
         response_200 = ChatEvent.from_dict(response.json())
 

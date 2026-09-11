@@ -6,7 +6,9 @@ import httpx
 
 from ...client import AuthenticatedClient, Client
 from ...models.comment_envelope import CommentEnvelope
-from ...models.create_timeline_comment_sec_fetch_site import CreateTimelineCommentSecFetchSite
+from ...models.create_timeline_comment_sec_fetch_site import (
+    CreateTimelineCommentSecFetchSite,
+)
 from ...models.error_envelope import ErrorEnvelope
 from ...models.timeline_comment_request import TimelineCommentRequest
 from ...types import UNSET, Response, Unset

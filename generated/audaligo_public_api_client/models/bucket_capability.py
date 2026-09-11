@@ -5,10 +5,10 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
+from typing_extensions import Self
 
 from ..models.bucket_capability_contract import BucketCapabilityContract
 from ..models.bucket_capability_operation import BucketCapabilityOperation
-from ..types import parse_datetime
 
 if TYPE_CHECKING:
     from ..models.capability_headers import CapabilityHeaders
@@ -80,7 +80,7 @@ class BucketCapability:
         return field_dict
 
     @classmethod
-    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+    def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.capability_headers import CapabilityHeaders
 
         d = dict(src_dict)
@@ -94,7 +94,7 @@ class BucketCapability:
 
         chunk_index = d.pop("chunkIndex")
 
-        expires_at = parse_datetime(d.pop("expiresAt"))
+        expires_at = datetime.datetime.fromisoformat(d.pop("expiresAt"))
 
         content_length = d.pop("contentLength")
 

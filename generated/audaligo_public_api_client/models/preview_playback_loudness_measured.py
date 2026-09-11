@@ -4,10 +4,14 @@ from collections.abc import Mapping
 from typing import Any, TypeVar
 
 from attrs import define as _attrs_define
+from typing_extensions import Self
 
-from ..models.preview_playback_loudness_measured_kind import PreviewPlaybackLoudnessMeasuredKind
-from ..models.preview_playback_loudness_measured_policy_version import PreviewPlaybackLoudnessMeasuredPolicyVersion
-from ..models.take_audio_role import TakeAudioRole
+from ..models.preview_playback_loudness_measured_kind import (
+    PreviewPlaybackLoudnessMeasuredKind,
+)
+from ..models.preview_playback_loudness_measured_policy_version import (
+    PreviewPlaybackLoudnessMeasuredPolicyVersion,
+)
 
 T = TypeVar("T", bound="PreviewPlaybackLoudnessMeasured")
 
@@ -17,7 +21,6 @@ class PreviewPlaybackLoudnessMeasured:
     """
     Attributes:
         kind (PreviewPlaybackLoudnessMeasuredKind):
-        audio_role (TakeAudioRole):
         policy_version (PreviewPlaybackLoudnessMeasuredPolicyVersion):
         integrated_loudness_lufs (float):
         true_peak_dbtp (float):
@@ -29,7 +32,6 @@ class PreviewPlaybackLoudnessMeasured:
     """
 
     kind: PreviewPlaybackLoudnessMeasuredKind
-    audio_role: TakeAudioRole
     policy_version: PreviewPlaybackLoudnessMeasuredPolicyVersion
     integrated_loudness_lufs: float
     true_peak_dbtp: float
@@ -41,8 +43,6 @@ class PreviewPlaybackLoudnessMeasured:
 
     def to_dict(self) -> dict[str, Any]:
         kind = self.kind.value
-
-        audio_role = self.audio_role.value
 
         policy_version = self.policy_version.value
 
@@ -65,7 +65,6 @@ class PreviewPlaybackLoudnessMeasured:
         field_dict.update(
             {
                 "kind": kind,
-                "audioRole": audio_role,
                 "policyVersion": policy_version,
                 "integratedLoudnessLufs": integrated_loudness_lufs,
                 "truePeakDbtp": true_peak_dbtp,
@@ -80,13 +79,13 @@ class PreviewPlaybackLoudnessMeasured:
         return field_dict
 
     @classmethod
-    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+    def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
         kind = PreviewPlaybackLoudnessMeasuredKind(d.pop("kind"))
 
-        audio_role = TakeAudioRole(d.pop("audioRole"))
-
-        policy_version = PreviewPlaybackLoudnessMeasuredPolicyVersion(d.pop("policyVersion"))
+        policy_version = PreviewPlaybackLoudnessMeasuredPolicyVersion(
+            d.pop("policyVersion")
+        )
 
         integrated_loudness_lufs = d.pop("integratedLoudnessLufs")
 
@@ -104,7 +103,6 @@ class PreviewPlaybackLoudnessMeasured:
 
         preview_playback_loudness_measured = cls(
             kind=kind,
-            audio_role=audio_role,
             policy_version=policy_version,
             integrated_loudness_lufs=integrated_loudness_lufs,
             true_peak_dbtp=true_peak_dbtp,

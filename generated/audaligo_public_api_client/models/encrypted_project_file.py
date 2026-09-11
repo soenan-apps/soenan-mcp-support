@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar, cast
+from typing import Any, TypeVar
 
 from attrs import define as _attrs_define
+from typing_extensions import Self
 
 from ..models.encrypted_project_file_file_kind import EncryptedProjectFileFileKind
-from ..types import UNSET, Unset, parse_datetime
 
 T = TypeVar("T", bound="EncryptedProjectFile")
 
@@ -18,6 +18,7 @@ class EncryptedProjectFile:
     Attributes:
         project_id (str):
         file_id (str):
+        entry_id (str):
         encrypted_object_id (str):
         created_by (str):
         file_kind (EncryptedProjectFileFileKind):
@@ -26,11 +27,11 @@ class EncryptedProjectFile:
         mime_type (str):
         created_at (datetime.datetime):
         updated_at (datetime.datetime):
-        mix_version_id (None | str | Unset):
     """
 
     project_id: str
     file_id: str
+    entry_id: str
     encrypted_object_id: str
     created_by: str
     file_kind: EncryptedProjectFileFileKind
@@ -39,12 +40,13 @@ class EncryptedProjectFile:
     mime_type: str
     created_at: datetime.datetime
     updated_at: datetime.datetime
-    mix_version_id: None | str | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         project_id = self.project_id
 
         file_id = self.file_id
+
+        entry_id = self.entry_id
 
         encrypted_object_id = self.encrypted_object_id
 
@@ -62,18 +64,13 @@ class EncryptedProjectFile:
 
         updated_at = self.updated_at.isoformat()
 
-        mix_version_id: None | str | Unset
-        if isinstance(self.mix_version_id, Unset):
-            mix_version_id = UNSET
-        else:
-            mix_version_id = self.mix_version_id
-
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
             {
                 "projectId": project_id,
                 "fileId": file_id,
+                "entryId": entry_id,
                 "encryptedObjectId": encrypted_object_id,
                 "createdBy": created_by,
                 "fileKind": file_kind,
@@ -84,17 +81,17 @@ class EncryptedProjectFile:
                 "updatedAt": updated_at,
             }
         )
-        if mix_version_id is not UNSET:
-            field_dict["mixVersionId"] = mix_version_id
 
         return field_dict
 
     @classmethod
-    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+    def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
         project_id = d.pop("projectId")
 
         file_id = d.pop("fileId")
+
+        entry_id = d.pop("entryId")
 
         encrypted_object_id = d.pop("encryptedObjectId")
 
@@ -108,22 +105,14 @@ class EncryptedProjectFile:
 
         mime_type = d.pop("mimeType")
 
-        created_at = parse_datetime(d.pop("createdAt"))
+        created_at = datetime.datetime.fromisoformat(d.pop("createdAt"))
 
-        updated_at = parse_datetime(d.pop("updatedAt"))
-
-        def _parse_mix_version_id(data: object) -> None | str | Unset:
-            if data is None:
-                return data
-            if isinstance(data, Unset):
-                return data
-            return cast(None | str | Unset, data)
-
-        mix_version_id = _parse_mix_version_id(d.pop("mixVersionId", UNSET))
+        updated_at = datetime.datetime.fromisoformat(d.pop("updatedAt"))
 
         encrypted_project_file = cls(
             project_id=project_id,
             file_id=file_id,
+            entry_id=entry_id,
             encrypted_object_id=encrypted_object_id,
             created_by=created_by,
             file_kind=file_kind,
@@ -132,7 +121,6 @@ class EncryptedProjectFile:
             mime_type=mime_type,
             created_at=created_at,
             updated_at=updated_at,
-            mix_version_id=mix_version_id,
         )
 
         return encrypted_project_file

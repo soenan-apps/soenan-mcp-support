@@ -1,7 +1,7 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class DeleteEncryptedProjectFileSecFetchSite(str, Enum):
+class DeleteEncryptedProjectFileSecFetchSite(StrEnum):
     SAME_ORIGIN = "same-origin"
 
     def __str__(self) -> str:

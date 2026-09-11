@@ -4,7 +4,7 @@ from urllib.parse import quote
 
 import httpx
 
-from ...client import Client
+from ...client import AuthenticatedClient, Client
 from ...models.error_envelope import ErrorEnvelope
 from ...models.object_state_response import ObjectStateResponse
 from ...models.put_encrypted_object_manifest_sec_fetch_site import (
@@ -20,17 +20,17 @@ def _get_kwargs(
     *,
     body: PutManifestRequest,
     origin: str,
-    audaligo_transfer_continuation: str | Unset = UNSET,
     sec_fetch_site: PutEncryptedObjectManifestSecFetchSite | Unset = UNSET,
+    audaligo_transfer_continuation: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
     headers["Origin"] = origin
 
-    if not isinstance(audaligo_transfer_continuation, Unset):
-        headers["Audaligo-Transfer-Continuation"] = audaligo_transfer_continuation
-
     if not isinstance(sec_fetch_site, Unset):
         headers["Sec-Fetch-Site"] = str(sec_fetch_site)
+
+    if not isinstance(audaligo_transfer_continuation, Unset):
+        headers["Audaligo-Transfer-Continuation"] = audaligo_transfer_continuation
 
     _kwargs: dict[str, Any] = {
         "method": "put",
@@ -49,7 +49,7 @@ def _get_kwargs(
 
 
 def _parse_response(
-    *, client: Client, response: httpx.Response
+    *, client: AuthenticatedClient | Client, response: httpx.Response
 ) -> ErrorEnvelope | ObjectStateResponse:
     if response.status_code == 200:
         response_200 = ObjectStateResponse.from_dict(response.json())
@@ -67,7 +67,7 @@ def _parse_response(
 
 
 def _build_response(
-    *, client: Client, response: httpx.Response
+    *, client: AuthenticatedClient | Client, response: httpx.Response
 ) -> Response[ErrorEnvelope | ObjectStateResponse]:
     return Response(
         status_code=HTTPStatus(response.status_code),
@@ -81,19 +81,19 @@ def sync_detailed(
     project: str,
     upload: str,
     *,
-    client: Client,
+    client: AuthenticatedClient,
     body: PutManifestRequest,
     origin: str,
-    audaligo_transfer_continuation: str | Unset = UNSET,
     sec_fetch_site: PutEncryptedObjectManifestSecFetchSite | Unset = UNSET,
+    audaligo_transfer_continuation: str | Unset = UNSET,
 ) -> Response[ErrorEnvelope | ObjectStateResponse]:
     """
     Args:
         project (str):
         upload (str):
         origin (str):
-        audaligo_transfer_continuation (str | Unset):
         sec_fetch_site (PutEncryptedObjectManifestSecFetchSite | Unset):
+        audaligo_transfer_continuation (str | Unset):
         body (PutManifestRequest):
 
     Raises:
@@ -109,8 +109,8 @@ def sync_detailed(
         upload=upload,
         body=body,
         origin=origin,
-        audaligo_transfer_continuation=audaligo_transfer_continuation,
         sec_fetch_site=sec_fetch_site,
+        audaligo_transfer_continuation=audaligo_transfer_continuation,
     )
 
     response = client.get_httpx_client().request(
@@ -124,19 +124,19 @@ def sync(
     project: str,
     upload: str,
     *,
-    client: Client,
+    client: AuthenticatedClient,
     body: PutManifestRequest,
     origin: str,
-    audaligo_transfer_continuation: str | Unset = UNSET,
     sec_fetch_site: PutEncryptedObjectManifestSecFetchSite | Unset = UNSET,
+    audaligo_transfer_continuation: str | Unset = UNSET,
 ) -> ErrorEnvelope | ObjectStateResponse | None:
     """
     Args:
         project (str):
         upload (str):
         origin (str):
-        audaligo_transfer_continuation (str | Unset):
         sec_fetch_site (PutEncryptedObjectManifestSecFetchSite | Unset):
+        audaligo_transfer_continuation (str | Unset):
         body (PutManifestRequest):
 
     Raises:
@@ -153,8 +153,8 @@ def sync(
         client=client,
         body=body,
         origin=origin,
-        audaligo_transfer_continuation=audaligo_transfer_continuation,
         sec_fetch_site=sec_fetch_site,
+        audaligo_transfer_continuation=audaligo_transfer_continuation,
     ).parsed
 
 
@@ -162,19 +162,19 @@ async def asyncio_detailed(
     project: str,
     upload: str,
     *,
-    client: Client,
+    client: AuthenticatedClient,
     body: PutManifestRequest,
     origin: str,
-    audaligo_transfer_continuation: str | Unset = UNSET,
     sec_fetch_site: PutEncryptedObjectManifestSecFetchSite | Unset = UNSET,
+    audaligo_transfer_continuation: str | Unset = UNSET,
 ) -> Response[ErrorEnvelope | ObjectStateResponse]:
     """
     Args:
         project (str):
         upload (str):
         origin (str):
-        audaligo_transfer_continuation (str | Unset):
         sec_fetch_site (PutEncryptedObjectManifestSecFetchSite | Unset):
+        audaligo_transfer_continuation (str | Unset):
         body (PutManifestRequest):
 
     Raises:
@@ -190,8 +190,8 @@ async def asyncio_detailed(
         upload=upload,
         body=body,
         origin=origin,
-        audaligo_transfer_continuation=audaligo_transfer_continuation,
         sec_fetch_site=sec_fetch_site,
+        audaligo_transfer_continuation=audaligo_transfer_continuation,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -203,19 +203,19 @@ async def asyncio(
     project: str,
     upload: str,
     *,
-    client: Client,
+    client: AuthenticatedClient,
     body: PutManifestRequest,
     origin: str,
-    audaligo_transfer_continuation: str | Unset = UNSET,
     sec_fetch_site: PutEncryptedObjectManifestSecFetchSite | Unset = UNSET,
+    audaligo_transfer_continuation: str | Unset = UNSET,
 ) -> ErrorEnvelope | ObjectStateResponse | None:
     """
     Args:
         project (str):
         upload (str):
         origin (str):
-        audaligo_transfer_continuation (str | Unset):
         sec_fetch_site (PutEncryptedObjectManifestSecFetchSite | Unset):
+        audaligo_transfer_continuation (str | Unset):
         body (PutManifestRequest):
 
     Raises:
@@ -233,7 +233,7 @@ async def asyncio(
             client=client,
             body=body,
             origin=origin,
-            audaligo_transfer_continuation=audaligo_transfer_continuation,
             sec_fetch_site=sec_fetch_site,
+            audaligo_transfer_continuation=audaligo_transfer_continuation,
         )
     ).parsed

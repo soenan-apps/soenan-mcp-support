@@ -1,7 +1,7 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class TermsAcceptanceRequiredProductSessionKind(str, Enum):
+class TermsAcceptanceRequiredProductSessionKind(StrEnum):
     TERMSACCEPTANCEREQUIRED = "termsAcceptanceRequired"
 
     def __str__(self) -> str:

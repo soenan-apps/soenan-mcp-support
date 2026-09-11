@@ -1,7 +1,7 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class CreateTimelineCommentSecFetchSite(str, Enum):
+class CreateTimelineCommentSecFetchSite(StrEnum):
     SAME_ORIGIN = "same-origin"
 
     def __str__(self) -> str:

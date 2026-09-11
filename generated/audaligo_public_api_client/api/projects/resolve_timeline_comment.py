@@ -8,7 +8,9 @@ from ...client import AuthenticatedClient, Client
 from ...models.comment_envelope import CommentEnvelope
 from ...models.error_envelope import ErrorEnvelope
 from ...models.resolve_comment_request import ResolveCommentRequest
-from ...models.resolve_timeline_comment_sec_fetch_site import ResolveTimelineCommentSecFetchSite
+from ...models.resolve_timeline_comment_sec_fetch_site import (
+    ResolveTimelineCommentSecFetchSite,
+)
 from ...types import UNSET, Response, Unset
 
 

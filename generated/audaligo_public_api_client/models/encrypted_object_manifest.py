@@ -4,12 +4,15 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
+from typing_extensions import Self
 
 from ..models.encrypted_object_manifest_suite_id import EncryptedObjectManifestSuiteId
 from ..models.encrypted_object_manifest_type import EncryptedObjectManifestType
 
 if TYPE_CHECKING:
-    from ..models.encrypted_object_manifest_encryption import EncryptedObjectManifestEncryption
+    from ..models.encrypted_object_manifest_encryption import (
+        EncryptedObjectManifestEncryption,
+    )
     from ..models.manifest_object import ManifestObject
 
 
@@ -59,8 +62,10 @@ class EncryptedObjectManifest:
         return field_dict
 
     @classmethod
-    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.encrypted_object_manifest_encryption import EncryptedObjectManifestEncryption
+    def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.encrypted_object_manifest_encryption import (
+            EncryptedObjectManifestEncryption,
+        )
         from ..models.manifest_object import ManifestObject
 
         d = dict(src_dict)

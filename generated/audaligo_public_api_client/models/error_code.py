@@ -1,7 +1,7 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class ErrorCode(str, Enum):
+class ErrorCode(StrEnum):
     ACCESS_DENIED = "access_denied"
     AUTHORIZATION_UNAVAILABLE = "authorization_unavailable"
     CHAT_UNAVAILABLE = "chat_unavailable"
@@ -27,8 +27,13 @@ class ErrorCode(str, Enum):
     PRODUCT_ACCESS_REQUIRED = "product_access_required"
     PROJECT_ACCESS_DENIED = "project_access_denied"
     PROJECT_CONFLICT = "project_conflict"
+    PROJECT_ENTRY_NAME_CONFLICT = "project_entry_name_conflict"
+    PROJECT_ENTRY_REVISION_CONFLICT = "project_entry_revision_conflict"
+    PROJECT_FOLDER_NOT_EMPTY = "project_folder_not_empty"
     PROJECT_RESOURCE_NOT_FOUND = "project_resource_not_found"
     PROJECT_SLUG_CONFLICT = "project_slug_conflict"
+    PROJECT_TASK_ASSIGNEE_UNAVAILABLE = "project_task_assignee_unavailable"
+    PROJECT_TASK_REVISION_CONFLICT = "project_task_revision_conflict"
     RATE_LIMITED = "rate_limited"
     RATE_LIMIT_UNAVAILABLE = "rate_limit_unavailable"
     REQUEST_TOO_LARGE = "request_too_large"

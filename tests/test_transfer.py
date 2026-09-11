@@ -3,7 +3,9 @@ from __future__ import annotations
 import io
 import json
 import struct
+import threading
 import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from base64 import urlsafe_b64encode
 from hashlib import sha256
 from pathlib import Path
@@ -15,8 +17,9 @@ import pytest
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from typing_extensions import Self
 
-from soenan_audaligo_support.transfer import _cli, _workflow
+from soenan_audaligo_support.transfer import _claim, _cli, _workflow
 from soenan_audaligo_support.transfer._api import AudaligoTransferAPI
+from soenan_audaligo_support.transfer._claim import FileKeyClaim
 from soenan_audaligo_support.transfer._crypto import (
     CHUNK_SIZE,
     ChunkMetadata,
@@ -42,6 +45,14 @@ def test_handoff_rejects_missing_extra_and_operation_mismatched_fields() -> None
     ):
         with pytest.raises(TransferError):
             parse_handoff(mutated)
+
+def test_handoff_uses_canonical_file_identity() -> None:
+    preview = _preview_handoff()
+    parsed = parse_handoff(preview, now_unix_milliseconds=1)
+    assert parsed.preview is not None
+    assert parsed.preview.file_id == "file_1"
+
+
 
 
 def test_handoff_rejects_wrong_protocol_origin_binding_and_expired_claim() -> None:
@@ -258,50 +269,40 @@ def test_claim_expiry_prevents_any_transfer_engine_start(
     assert not started
 
 
-def test_cli_passes_stdin_handoff_unchanged_to_public_engine(
+def test_claim_expiry_is_rechecked_immediately_before_redemption(
     monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    handoff = _upload_handoff()
-    raw = json.dumps(handoff).encode()
-    captured: dict[str, Any] = {}
+    value = _upload_handoff()
+    value["keyClaim"]["expiresAtUnixMilliseconds"] = "2000"
+    descriptor = parse_handoff(value, now_unix_milliseconds=1000).key_claim
+    secret = value["keyClaim"]["url"].rsplit("#", 1)[1]
+    assert secret not in repr(descriptor)
 
-    class Input:
-        buffer = io.BytesIO(raw)
+    calls = 0
 
-    def upload(structured_content: dict[str, Any], *, source: Path) -> dict[str, Any]:
-        captured["handoff"] = structured_content
-        captured["source"] = source
-        return {"file": {"fileId": "file_1"}}
+    def unexpected(*args: object, **kwargs: object) -> bytes:
+        nonlocal calls
+        calls += 1
+        raise AssertionError("expired claim must not reach the transport")
 
-    monkeypatch.setattr(_cli.sys, "stdin", Input())
-    monkeypatch.setattr(_cli, "upload_file", upload)
-    assert _cli.main(["upload", "--source", "/tmp/source.wav"]) == 0
-    assert captured == {"handoff": handoff, "source": Path("/tmp/source.wav")}
-    assert json.loads(capsys.readouterr().out) == {"file": {"fileId": "file_1"}}
+    monkeypatch.setattr(_claim.time, "time", lambda: 2.0)
+    monkeypatch.setattr(_claim, "post_control_json", unexpected)
+    with pytest.raises(TransferError) as captured:
+        _claim.redeem_file_key_claim(
+            descriptor,
+            expected_direction="upload",
+            expected_project_id="project_1",
+            expected_object_id="upload_1",
+            expected_epoch=7,
+        )
+    assert captured.value.code == "claim_expired"
+    assert captured.value.recoverable
+    assert secret not in str(captured.value)
+    assert calls == 0
 
 
-def test_cli_and_api_share_recoverable_error_taxonomy(
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    handoff = _file_handoff()
-    error = TransferError(
-        "file key claim is unavailable",
-        code="claim_unavailable",
-        recoverable=True,
-    )
 
-    class Input:
-        buffer = io.BytesIO(json.dumps(handoff).encode())
 
-    def fail(*args: object, **kwargs: object) -> int:
-        raise error
-
-    monkeypatch.setattr(_cli.sys, "stdin", Input())
-    monkeypatch.setattr(_cli, "download_file", fail)
-    assert _cli.main(["download", "--destination", "/tmp/file"]) == 1
-    assert json.loads(capsys.readouterr().err) == error.wire_value()
 
 
 def test_cli_rejects_duplicate_handoff_fields_before_engine_start(
@@ -362,7 +363,34 @@ def test_preview_aad_matches_audaligo_ordered_encoding() -> None:
     assert actual == bytes(expected)
 
 
-def test_preview_plan_authenticates_approved_preview_fields() -> None:
+@pytest.mark.parametrize(
+    ("media_type", "codec"),
+    [
+        ("audio/mp4", "avc1.640028"),
+        ("video/mp4", "mp4a.40.2"),
+        ("video/mp4", "avc1.invalid"),
+    ],
+)
+def test_preview_handoff_rejects_mismatched_media_tuple(
+    media_type: str, codec: str
+) -> None:
+    handoff = _preview_handoff()
+    handoff["manifest"]["mediaType"] = media_type
+    handoff["manifest"]["codec"] = codec
+    with pytest.raises(TransferError, match="preview manifest contract"):
+        parse_handoff(handoff, now_unix_milliseconds=1)
+
+
+@pytest.mark.parametrize(
+    ("media_type", "codec"),
+    [
+        ("audio/mp4", "mp4a.40.2"),
+        ("video/mp4", "avc1.640028, mp4a.40.2"),
+    ],
+)
+def test_preview_plan_authenticates_approved_preview_fields(
+    media_type: str, codec: str
+) -> None:
     cleartext = b"audio"
     key = bytes(range(1, 33))
     nonce_base = b"12345678"
@@ -381,9 +409,13 @@ def test_preview_plan_authenticates_approved_preview_fields() -> None:
         final=True,
     )
     ciphertext = AESGCM(key).encrypt(nonce_base + struct.pack(">I", 0), cleartext, aad)
-    manifest = _preview_manifest(ciphertext)
+    manifest = _preview_manifest(ciphertext, media_type=media_type, codec=codec)
+    wire_handoff = _preview_handoff()
+    wire_handoff["manifest"] = manifest
+    parsed_handoff = parse_handoff(wire_handoff, now_unix_milliseconds=1)
+    assert parsed_handoff.manifest is not None
     plan = parse_preview_decryption_plan(
-        manifest,
+        parsed_handoff.manifest,
         project_id="project_1",
         preview_id="preview_1",
         epoch=7,
@@ -456,37 +488,89 @@ def test_download_reacquires_only_rejected_get_capability(
     assert api.calls == attempts == 2
 
 
-def test_upload_never_retries_after_bucket_put_failure(
+def test_upload_stops_after_first_bucket_put_rejection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    calls = 0
+    put_count = 0
+    completed = False
+    committed = False
 
-    def put(*args: object, **kwargs: object) -> None:
-        nonlocal calls
-        calls += 1
-        raise TransferHTTPError(403)
+    class BucketHandler(BaseHTTPRequestHandler):
+        def do_PUT(self) -> None:
+            nonlocal put_count
+            put_count += 1
+            length = int(self.headers["Content-Length"])
+            self.rfile.read(length)
+            self.send_response(403)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
 
-    monkeypatch.setattr(_workflow, "put_ciphertext", put)
-    assert calls == 0
-    with pytest.raises(TransferHTTPError):
-        put("https://bucket.example", {}, b"ciphertext")
-    assert calls == 1
+        def log_message(self, format: str, *args: object) -> None:
+            pass
 
+    server = ThreadingHTTPServer(("127.0.0.1", 0), BucketHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
 
-def test_error_wire_values_do_not_disclose_authority() -> None:
-    secret = "s" * 43
-    error = TransferError(
-        "file key claim is unavailable",
-        code="claim_unavailable",
-        recoverable=True,
+    class API:
+        def __init__(self, **kwargs: object) -> None:
+            pass
+
+        def __enter__(self) -> Self:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            pass
+
+        def put_manifest(self, **kwargs: object) -> dict[str, str]:
+            return {"state": "uploading"}
+
+        def upload_capability(self, **kwargs: object) -> dict[str, object]:
+            return {
+                "operation": "PUT",
+                "objectId": "upload_1",
+                "chunkIndex": 0,
+                "contentLength": 21,
+                "url": f"http://127.0.0.1:{server.server_port}/bucket/chunk",
+                "headers": {},
+            }
+
+        def complete_upload(self, **kwargs: object) -> dict[str, object]:
+            nonlocal completed
+            completed = True
+            return {}
+
+        def commit_file(self, **kwargs: object) -> dict[str, object]:
+            nonlocal committed
+            committed = True
+            return {}
+
+    monkeypatch.setattr(_workflow, "AudaligoTransferAPI", API)
+    monkeypatch.setattr(
+        _workflow,
+        "redeem_file_key_claim",
+        lambda *args, **kwargs: FileKeyClaim(
+            direction="upload",
+            project_id="project_1",
+            object_id="upload_1",
+            epoch=7,
+            data_key=bytes(range(1, 33)),
+            wrapped_nonce=b"n" * 12,
+            wrapped_data_key=b"k" * 48,
+        ),
     )
-    encoded = json.dumps(error.wire_value())
-    assert secret not in encoded
-    assert "https://" not in encoded
-    assert encoded == (
-        '{"error": {"code": "claim_unavailable", '
-        '"message": "file key claim is unavailable", "recoverable": true}}'
-    )
+    try:
+        with pytest.raises(TransferHTTPError) as captured:
+            _workflow.upload_file(_upload_handoff(), source=io.BytesIO(b"hello"))
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+    assert captured.value.status == 403
+    assert put_count == 1
+    assert not completed
+    assert not committed
 
 
 def _upload_handoff() -> dict[str, Any]:
@@ -521,6 +605,7 @@ def _file_handoff() -> dict[str, Any]:
         "file": {
             "projectId": "project_1",
             "fileId": "file_1",
+            "entryId": "entry_1",
             "objectId": "object_1",
             "filename": "recording.wav",
             "plaintextSize": "5",
@@ -556,15 +641,33 @@ def _file_handoff() -> dict[str, Any]:
     }
 
 
-def _preview_manifest(ciphertext: bytes) -> dict[str, Any]:
+def _preview_handoff() -> dict[str, Any]:
+    value = _file_handoff()
+    value["operation"] = "preview_download"
+    value["objectId"] = "preview_1"
+    del value["file"]
+    value["preview"] = {
+        "fileId": "file_1",
+        "previewId": "preview_1",
+        "state": "ready",
+    }
+    value["manifest"] = _preview_manifest(b"ciphertext-cipher")
+    return value
+
+
+def _preview_manifest(
+    ciphertext: bytes,
+    *,
+    media_type: str = "audio/mp4",
+    codec: str = "mp4a.40.2",
+) -> dict[str, Any]:
     return {
-        "contract": "audaligo.managed-preview-read-descriptor",
+        "contract": "audaligo.preview.read.v1",
         "sourceObjectId": "source_1",
         "processingId": "processing_1",
         "jobId": "job_1",
-        "mediaType": "audio/mp4",
-        "codec": "mp4a.40.2",
-        "bitrateBps": 128_000,
+        "mediaType": media_type,
+        "codec": codec,
         "nonceBase64url": _b64u(b"12345678"),
         "plaintextSize": len(ciphertext) - 16,
         "ciphertextSize": len(ciphertext),

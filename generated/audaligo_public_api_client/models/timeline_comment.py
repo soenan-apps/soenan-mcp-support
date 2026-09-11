@@ -5,12 +5,16 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
-
-from ..types import parse_datetime
+from typing_extensions import Self
 
 if TYPE_CHECKING:
     from ..models.comment_reply import CommentReply
+    from ..models.file_review_anchor import FileReviewAnchor
     from ..models.member_actor import MemberActor
+    from ..models.review_pin_region import ReviewPinRegion
+    from ..models.review_rectangle_region import ReviewRectangleRegion
+    from ..models.review_time_span import ReviewTimeSpan
+    from ..models.stage_review_anchor import StageReviewAnchor
 
 
 T = TypeVar("T", bound="TimelineComment")
@@ -21,10 +25,9 @@ class TimelineComment:
     """
     Attributes:
         id (str):
-        version_id (None | str):
-        time_seconds (float | None):
-        end_time_seconds (float | None): Exclusive end of a reviewed time range. Null means the comment is anchored to
-            the point at timeSeconds.
+        anchor (FileReviewAnchor | StageReviewAnchor):
+        time_span (None | ReviewTimeSpan):
+        region (None | ReviewPinRegion | ReviewRectangleRegion):
         tag (None | str):
         body (str):
         author (MemberActor):
@@ -34,9 +37,9 @@ class TimelineComment:
     """
 
     id: str
-    version_id: None | str
-    time_seconds: float | None
-    end_time_seconds: float | None
+    anchor: FileReviewAnchor | StageReviewAnchor
+    time_span: None | ReviewTimeSpan
+    region: None | ReviewPinRegion | ReviewRectangleRegion
     tag: None | str
     body: str
     author: MemberActor
@@ -45,16 +48,32 @@ class TimelineComment:
     replies: list[CommentReply]
 
     def to_dict(self) -> dict[str, Any]:
+        from ..models.file_review_anchor import FileReviewAnchor
+        from ..models.review_pin_region import ReviewPinRegion
+        from ..models.review_rectangle_region import ReviewRectangleRegion
+        from ..models.review_time_span import ReviewTimeSpan
+
         id = self.id
 
-        version_id: None | str
-        version_id = self.version_id
+        anchor: dict[str, Any]
+        if isinstance(self.anchor, FileReviewAnchor):
+            anchor = self.anchor.to_dict()
+        else:
+            anchor = self.anchor.to_dict()
 
-        time_seconds: float | None
-        time_seconds = self.time_seconds
+        time_span: dict[str, Any] | None
+        if isinstance(self.time_span, ReviewTimeSpan):
+            time_span = self.time_span.to_dict()
+        else:
+            time_span = self.time_span
 
-        end_time_seconds: float | None
-        end_time_seconds = self.end_time_seconds
+        region: dict[str, Any] | None
+        if isinstance(self.region, ReviewPinRegion) or isinstance(
+            self.region, ReviewRectangleRegion
+        ):
+            region = self.region.to_dict()
+        else:
+            region = self.region
 
         tag: None | str
         tag = self.tag
@@ -77,9 +96,9 @@ class TimelineComment:
         field_dict.update(
             {
                 "id": id,
-                "versionId": version_id,
-                "timeSeconds": time_seconds,
-                "endTimeSeconds": end_time_seconds,
+                "anchor": anchor,
+                "timeSpan": time_span,
+                "region": region,
                 "tag": tag,
                 "body": body,
                 "author": author,
@@ -92,33 +111,80 @@ class TimelineComment:
         return field_dict
 
     @classmethod
-    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+    def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.comment_reply import CommentReply
+        from ..models.file_review_anchor import FileReviewAnchor
         from ..models.member_actor import MemberActor
+        from ..models.review_pin_region import ReviewPinRegion
+        from ..models.review_rectangle_region import (
+            ReviewRectangleRegion,
+        )
+        from ..models.review_time_span import ReviewTimeSpan
+        from ..models.stage_review_anchor import StageReviewAnchor
 
         d = dict(src_dict)
         id = d.pop("id")
 
-        def _parse_version_id(data: object) -> None | str:
+        def _parse_anchor(data: object) -> FileReviewAnchor | StageReviewAnchor:
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                componentsschemas_review_anchor_type_0 = FileReviewAnchor.from_dict(
+                    data
+                )
+
+                return componentsschemas_review_anchor_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            if not isinstance(data, dict):
+                raise TypeError()
+            componentsschemas_review_anchor_type_1 = StageReviewAnchor.from_dict(data)
+
+            return componentsschemas_review_anchor_type_1
+
+        anchor = _parse_anchor(d.pop("anchor"))
+
+        def _parse_time_span(data: object) -> None | ReviewTimeSpan:
             if data is None:
                 return data
-            return cast(None | str, data)
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                time_span_type_1 = ReviewTimeSpan.from_dict(data)
 
-        version_id = _parse_version_id(d.pop("versionId"))
+                return time_span_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | ReviewTimeSpan, data)
 
-        def _parse_time_seconds(data: object) -> float | None:
+        time_span = _parse_time_span(d.pop("timeSpan"))
+
+        def _parse_region(
+            data: object,
+        ) -> None | ReviewPinRegion | ReviewRectangleRegion:
             if data is None:
                 return data
-            return cast(float | None, data)
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                componentsschemas_review_region_type_0 = ReviewPinRegion.from_dict(data)
 
-        time_seconds = _parse_time_seconds(d.pop("timeSeconds"))
+                return componentsschemas_review_region_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                componentsschemas_review_region_type_1 = (
+                    ReviewRectangleRegion.from_dict(data)
+                )
 
-        def _parse_end_time_seconds(data: object) -> float | None:
-            if data is None:
-                return data
-            return cast(float | None, data)
+                return componentsschemas_review_region_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | ReviewPinRegion | ReviewRectangleRegion, data)
 
-        end_time_seconds = _parse_end_time_seconds(d.pop("endTimeSeconds"))
+        region = _parse_region(d.pop("region"))
 
         def _parse_tag(data: object) -> None | str:
             if data is None:
@@ -133,7 +199,7 @@ class TimelineComment:
 
         resolved = d.pop("resolved")
 
-        created_at = parse_datetime(d.pop("createdAt"))
+        created_at = datetime.datetime.fromisoformat(d.pop("createdAt"))
 
         replies = []
         _replies = d.pop("replies")
@@ -144,9 +210,9 @@ class TimelineComment:
 
         timeline_comment = cls(
             id=id,
-            version_id=version_id,
-            time_seconds=time_seconds,
-            end_time_seconds=end_time_seconds,
+            anchor=anchor,
+            time_span=time_span,
+            region=region,
             tag=tag,
             body=body,
             author=author,

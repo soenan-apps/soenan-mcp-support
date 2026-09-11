@@ -1,7 +1,7 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class EncryptedObjectManifestEncryptionContentKeyAlg(str, Enum):
+class EncryptedObjectManifestEncryptionContentKeyAlg(StrEnum):
     A256GCM = "A256GCM"
 
     def __str__(self) -> str:

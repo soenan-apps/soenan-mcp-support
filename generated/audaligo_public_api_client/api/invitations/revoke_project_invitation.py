@@ -7,7 +7,9 @@ import httpx
 from ...client import AuthenticatedClient, Client
 from ...models.error_envelope import ErrorEnvelope
 from ...models.invitation_status import InvitationStatus
-from ...models.revoke_project_invitation_sec_fetch_site import RevokeProjectInvitationSecFetchSite
+from ...models.revoke_project_invitation_sec_fetch_site import (
+    RevokeProjectInvitationSecFetchSite,
+)
 from ...types import UNSET, Response, Unset
 
 

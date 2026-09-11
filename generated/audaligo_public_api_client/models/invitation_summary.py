@@ -5,10 +5,10 @@ from collections.abc import Mapping
 from typing import Any, TypeVar
 
 from attrs import define as _attrs_define
+from typing_extensions import Self
 
 from ..models.invitation_summary_access_role import InvitationSummaryAccessRole
 from ..models.invitation_summary_state import InvitationSummaryState
-from ..types import parse_datetime
 
 T = TypeVar("T", bound="InvitationSummary")
 
@@ -71,7 +71,7 @@ class InvitationSummary:
         return field_dict
 
     @classmethod
-    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+    def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
         id = d.pop("id")
 
@@ -83,11 +83,11 @@ class InvitationSummary:
 
         token_generation = d.pop("tokenGeneration")
 
-        issued_at = parse_datetime(d.pop("issuedAt"))
+        issued_at = datetime.datetime.fromisoformat(d.pop("issuedAt"))
 
-        expires_at = parse_datetime(d.pop("expiresAt"))
+        expires_at = datetime.datetime.fromisoformat(d.pop("expiresAt"))
 
-        created_at = parse_datetime(d.pop("createdAt"))
+        created_at = datetime.datetime.fromisoformat(d.pop("createdAt"))
 
         invitation_summary = cls(
             id=id,

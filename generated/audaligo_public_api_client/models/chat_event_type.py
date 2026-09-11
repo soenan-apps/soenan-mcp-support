@@ -1,7 +1,7 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class ChatEventType(str, Enum):
+class ChatEventType(StrEnum):
     DELETED = "deleted"
     EDITED = "edited"
     SENT = "sent"

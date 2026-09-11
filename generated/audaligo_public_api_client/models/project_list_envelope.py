@@ -4,9 +4,11 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
+from typing_extensions import Self
 
 if TYPE_CHECKING:
     from ..models.project_list_item import ProjectListItem
+    from ..models.project_organization import ProjectOrganization
 
 
 T = TypeVar("T", bound="ProjectListEnvelope")
@@ -17,11 +19,11 @@ class ProjectListEnvelope:
     """
     Attributes:
         projects (list[ProjectListItem]):
-        can_create_project (bool):
+        creation_organizations (list[ProjectOrganization]):
     """
 
     projects: list[ProjectListItem]
-    can_create_project: bool
+    creation_organizations: list[ProjectOrganization]
 
     def to_dict(self) -> dict[str, Any]:
         projects = []
@@ -29,22 +31,26 @@ class ProjectListEnvelope:
             projects_item = projects_item_data.to_dict()
             projects.append(projects_item)
 
-        can_create_project = self.can_create_project
+        creation_organizations = []
+        for creation_organizations_item_data in self.creation_organizations:
+            creation_organizations_item = creation_organizations_item_data.to_dict()
+            creation_organizations.append(creation_organizations_item)
 
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
             {
                 "projects": projects,
-                "canCreateProject": can_create_project,
+                "creationOrganizations": creation_organizations,
             }
         )
 
         return field_dict
 
     @classmethod
-    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+    def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.project_list_item import ProjectListItem
+        from ..models.project_organization import ProjectOrganization
 
         d = dict(src_dict)
         projects = []
@@ -54,11 +60,18 @@ class ProjectListEnvelope:
 
             projects.append(projects_item)
 
-        can_create_project = d.pop("canCreateProject")
+        creation_organizations = []
+        _creation_organizations = d.pop("creationOrganizations")
+        for creation_organizations_item_data in _creation_organizations:
+            creation_organizations_item = ProjectOrganization.from_dict(
+                creation_organizations_item_data
+            )
+
+            creation_organizations.append(creation_organizations_item)
 
         project_list_envelope = cls(
             projects=projects,
-            can_create_project=can_create_project,
+            creation_organizations=creation_organizations,
         )
 
         return project_list_envelope

@@ -68,7 +68,6 @@ def upload_file(
             expected_project_id=handoff.project_id,
             expected_object_id=handoff.object_id,
             expected_epoch=handoff.epoch,
-            expected_origin=handoff.control_origin,
             timeouts=timeouts,
             transport=claim_transport,
         )
@@ -134,7 +133,6 @@ def upload_file(
                 upload_id=handoff.object_id,
                 filename=upload.filename,
                 plaintext_size=upload.plaintext_size,
-                mix_version_id=upload.mix_version_id,
             )
     except EncryptionContractError as error:
         raise TransferError(str(error)) from None
@@ -226,7 +224,6 @@ def _redeem_download_claim(
         expected_project_id=handoff.project_id,
         expected_object_id=handoff.object_id,
         expected_epoch=handoff.epoch,
-        expected_origin=handoff.control_origin,
         timeouts=timeouts,
         transport=claim_transport,
     )

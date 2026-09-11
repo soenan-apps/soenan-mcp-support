@@ -1,17 +1,10 @@
 """Contains some shared types for properties"""
 
-import datetime
 from collections.abc import Mapping, MutableMapping
 from http import HTTPStatus
 from typing import IO, BinaryIO, Generic, Literal, TypeVar
 
 from attrs import define
-
-
-def parse_datetime(value: str) -> datetime.datetime:
-    """Parse RFC 3339 UTC timestamps on every supported Python version."""
-    normalized = value[:-1] + "+00:00" if value.endswith(("Z", "z")) else value
-    return datetime.datetime.fromisoformat(normalized)
 
 
 class Unset:

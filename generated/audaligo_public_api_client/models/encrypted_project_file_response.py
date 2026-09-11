@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
+from typing_extensions import Self
 
 from ..types import UNSET, Unset
 
@@ -48,8 +49,10 @@ class EncryptedProjectFileResponse:
         return field_dict
 
     @classmethod
-    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.encrypted_project_file import EncryptedProjectFile
+    def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.encrypted_project_file import (
+            EncryptedProjectFile,
+        )
 
         d = dict(src_dict)
         ok = d.pop("ok")
