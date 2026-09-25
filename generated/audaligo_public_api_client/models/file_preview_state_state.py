@@ -1,7 +1,7 @@
-from enum import StrEnum
+from enum import Enum
 
 
-class FilePreviewStateState(StrEnum):
+class FilePreviewStateState(str, Enum):
     FAILED = "failed"
     PROCESSING = "processing"
     QUEUED = "queued"

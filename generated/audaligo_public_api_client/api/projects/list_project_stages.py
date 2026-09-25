@@ -8,6 +8,7 @@ from ...client import AuthenticatedClient, Client
 from ...models.error_envelope import ErrorEnvelope
 from ...models.project_stage_list_response import ProjectStageListResponse
 from ...models.project_stage_status import ProjectStageStatus
+from ...models.stage_content_purpose import StageContentPurpose
 from ...types import UNSET, Response, Unset
 
 
@@ -15,6 +16,7 @@ def _get_kwargs(
     project: str,
     *,
     status: ProjectStageStatus | Unset = UNSET,
+    purpose: StageContentPurpose | Unset = UNSET,
     cursor: str | Unset = UNSET,
     limit: int | Unset = 100,
 ) -> dict[str, Any]:
@@ -26,6 +28,12 @@ def _get_kwargs(
         json_status = status.value
 
     params["status"] = json_status
+
+    json_purpose: str | Unset = UNSET
+    if not isinstance(purpose, Unset):
+        json_purpose = purpose.value
+
+    params["purpose"] = json_purpose
 
     params["cursor"] = cursor
 
@@ -73,6 +81,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient,
     status: ProjectStageStatus | Unset = UNSET,
+    purpose: StageContentPurpose | Unset = UNSET,
     cursor: str | Unset = UNSET,
     limit: int | Unset = 100,
 ) -> Response[ErrorEnvelope | ProjectStageListResponse]:
@@ -80,6 +89,7 @@ def sync_detailed(
     Args:
         project (str):
         status (ProjectStageStatus | Unset):
+        purpose (StageContentPurpose | Unset):
         cursor (str | Unset):
         limit (int | Unset):  Default: 100.
 
@@ -94,6 +104,7 @@ def sync_detailed(
     kwargs = _get_kwargs(
         project=project,
         status=status,
+        purpose=purpose,
         cursor=cursor,
         limit=limit,
     )
@@ -110,6 +121,7 @@ def sync(
     *,
     client: AuthenticatedClient,
     status: ProjectStageStatus | Unset = UNSET,
+    purpose: StageContentPurpose | Unset = UNSET,
     cursor: str | Unset = UNSET,
     limit: int | Unset = 100,
 ) -> ErrorEnvelope | ProjectStageListResponse | None:
@@ -117,6 +129,7 @@ def sync(
     Args:
         project (str):
         status (ProjectStageStatus | Unset):
+        purpose (StageContentPurpose | Unset):
         cursor (str | Unset):
         limit (int | Unset):  Default: 100.
 
@@ -132,6 +145,7 @@ def sync(
         project=project,
         client=client,
         status=status,
+        purpose=purpose,
         cursor=cursor,
         limit=limit,
     ).parsed
@@ -142,6 +156,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient,
     status: ProjectStageStatus | Unset = UNSET,
+    purpose: StageContentPurpose | Unset = UNSET,
     cursor: str | Unset = UNSET,
     limit: int | Unset = 100,
 ) -> Response[ErrorEnvelope | ProjectStageListResponse]:
@@ -149,6 +164,7 @@ async def asyncio_detailed(
     Args:
         project (str):
         status (ProjectStageStatus | Unset):
+        purpose (StageContentPurpose | Unset):
         cursor (str | Unset):
         limit (int | Unset):  Default: 100.
 
@@ -163,6 +179,7 @@ async def asyncio_detailed(
     kwargs = _get_kwargs(
         project=project,
         status=status,
+        purpose=purpose,
         cursor=cursor,
         limit=limit,
     )
@@ -177,6 +194,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient,
     status: ProjectStageStatus | Unset = UNSET,
+    purpose: StageContentPurpose | Unset = UNSET,
     cursor: str | Unset = UNSET,
     limit: int | Unset = 100,
 ) -> ErrorEnvelope | ProjectStageListResponse | None:
@@ -184,6 +202,7 @@ async def asyncio(
     Args:
         project (str):
         status (ProjectStageStatus | Unset):
+        purpose (StageContentPurpose | Unset):
         cursor (str | Unset):
         limit (int | Unset):  Default: 100.
 
@@ -200,6 +219,7 @@ async def asyncio(
             project=project,
             client=client,
             status=status,
+            purpose=purpose,
             cursor=cursor,
             limit=limit,
         )

@@ -1,7 +1,7 @@
-from enum import StrEnum
+from enum import Enum
 
 
-class PreviewPlaybackLoudnessUnavailableKind(StrEnum):
+class PreviewPlaybackLoudnessUnavailableKind(str, Enum):
     UNAVAILABLE = "unavailable"
 
     def __str__(self) -> str:

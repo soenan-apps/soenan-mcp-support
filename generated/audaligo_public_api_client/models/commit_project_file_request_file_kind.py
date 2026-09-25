@@ -1,7 +1,7 @@
-from enum import StrEnum
+from enum import Enum
 
 
-class CommitProjectFileRequestFileKind(StrEnum):
+class CommitProjectFileRequestFileKind(str, Enum):
     PROJECT_FILE = "project_file"
 
     def __str__(self) -> str:

@@ -63,9 +63,7 @@ class ProjectKeyRing:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.project_key_epoch_material import (
-            ProjectKeyEpochMaterial,
-        )
+        from ..models.project_key_epoch_material import ProjectKeyEpochMaterial
 
         d = dict(src_dict)
         v = ProjectKeyRingV(d.pop("v"))

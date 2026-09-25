@@ -1,0 +1,243 @@
+from http import HTTPStatus
+from typing import Any
+from urllib.parse import quote
+
+import httpx
+
+from ...client import AuthenticatedClient, Client
+from ...models.error_envelope import ErrorEnvelope
+from ...models.object_state_response import ObjectStateResponse
+from ...models.preview_upload_manifest import PreviewUploadManifest
+from ...models.put_file_preview_upload_manifest_sec_fetch_site import (
+    PutFilePreviewUploadManifestSecFetchSite,
+)
+from ...types import UNSET, Response, Unset
+
+
+def _get_kwargs(
+    project: str,
+    file: str,
+    *,
+    body: PreviewUploadManifest,
+    origin: str,
+    sec_fetch_site: PutFilePreviewUploadManifestSecFetchSite | Unset = UNSET,
+    audaligo_transfer_continuation: str | Unset = UNSET,
+) -> dict[str, Any]:
+    headers: dict[str, Any] = {}
+    headers["Origin"] = origin
+
+    if not isinstance(sec_fetch_site, Unset):
+        headers["Sec-Fetch-Site"] = str(sec_fetch_site)
+
+    if not isinstance(audaligo_transfer_continuation, Unset):
+        headers["Audaligo-Transfer-Continuation"] = audaligo_transfer_continuation
+
+    _kwargs: dict[str, Any] = {
+        "method": "put",
+        "url": "/api/projects/{project}/files/{file}/preview-upload/manifest".format(
+            project=quote(str(project), safe=""),
+            file=quote(str(file), safe=""),
+        ),
+    }
+
+    _kwargs["json"] = body.to_dict()
+
+    headers["Content-Type"] = "application/json"
+
+    _kwargs["headers"] = headers
+    return _kwargs
+
+
+def _parse_response(
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> ErrorEnvelope | ObjectStateResponse:
+    if response.status_code == 200:
+        response_200 = ObjectStateResponse.from_dict(response.json())
+
+        return response_200
+
+    if response.status_code == 201:
+        response_201 = ObjectStateResponse.from_dict(response.json())
+
+        return response_201
+
+    response_default = ErrorEnvelope.from_dict(response.json())
+
+    return response_default
+
+
+def _build_response(
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> Response[ErrorEnvelope | ObjectStateResponse]:
+    return Response(
+        status_code=HTTPStatus(response.status_code),
+        content=response.content,
+        headers=response.headers,
+        parsed=_parse_response(client=client, response=response),
+    )
+
+
+def sync_detailed(
+    project: str,
+    file: str,
+    *,
+    client: AuthenticatedClient,
+    body: PreviewUploadManifest,
+    origin: str,
+    sec_fetch_site: PutFilePreviewUploadManifestSecFetchSite | Unset = UNSET,
+    audaligo_transfer_continuation: str | Unset = UNSET,
+) -> Response[ErrorEnvelope | ObjectStateResponse]:
+    """
+    Args:
+        project (str):
+        file (str):
+        origin (str):
+        sec_fetch_site (PutFilePreviewUploadManifestSecFetchSite | Unset):
+        audaligo_transfer_continuation (str | Unset):
+        body (PreviewUploadManifest): Client-encrypted Opus WebM sidecar metadata for a committed
+            source file; identity and epoch must match the source-bound preview reservation.
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        Response[ErrorEnvelope | ObjectStateResponse]
+    """
+
+    kwargs = _get_kwargs(
+        project=project,
+        file=file,
+        body=body,
+        origin=origin,
+        sec_fetch_site=sec_fetch_site,
+        audaligo_transfer_continuation=audaligo_transfer_continuation,
+    )
+
+    response = client.get_httpx_client().request(
+        **kwargs,
+    )
+
+    return _build_response(client=client, response=response)
+
+
+def sync(
+    project: str,
+    file: str,
+    *,
+    client: AuthenticatedClient,
+    body: PreviewUploadManifest,
+    origin: str,
+    sec_fetch_site: PutFilePreviewUploadManifestSecFetchSite | Unset = UNSET,
+    audaligo_transfer_continuation: str | Unset = UNSET,
+) -> ErrorEnvelope | ObjectStateResponse | None:
+    """
+    Args:
+        project (str):
+        file (str):
+        origin (str):
+        sec_fetch_site (PutFilePreviewUploadManifestSecFetchSite | Unset):
+        audaligo_transfer_continuation (str | Unset):
+        body (PreviewUploadManifest): Client-encrypted Opus WebM sidecar metadata for a committed
+            source file; identity and epoch must match the source-bound preview reservation.
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        ErrorEnvelope | ObjectStateResponse
+    """
+
+    return sync_detailed(
+        project=project,
+        file=file,
+        client=client,
+        body=body,
+        origin=origin,
+        sec_fetch_site=sec_fetch_site,
+        audaligo_transfer_continuation=audaligo_transfer_continuation,
+    ).parsed
+
+
+async def asyncio_detailed(
+    project: str,
+    file: str,
+    *,
+    client: AuthenticatedClient,
+    body: PreviewUploadManifest,
+    origin: str,
+    sec_fetch_site: PutFilePreviewUploadManifestSecFetchSite | Unset = UNSET,
+    audaligo_transfer_continuation: str | Unset = UNSET,
+) -> Response[ErrorEnvelope | ObjectStateResponse]:
+    """
+    Args:
+        project (str):
+        file (str):
+        origin (str):
+        sec_fetch_site (PutFilePreviewUploadManifestSecFetchSite | Unset):
+        audaligo_transfer_continuation (str | Unset):
+        body (PreviewUploadManifest): Client-encrypted Opus WebM sidecar metadata for a committed
+            source file; identity and epoch must match the source-bound preview reservation.
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        Response[ErrorEnvelope | ObjectStateResponse]
+    """
+
+    kwargs = _get_kwargs(
+        project=project,
+        file=file,
+        body=body,
+        origin=origin,
+        sec_fetch_site=sec_fetch_site,
+        audaligo_transfer_continuation=audaligo_transfer_continuation,
+    )
+
+    response = await client.get_async_httpx_client().request(**kwargs)
+
+    return _build_response(client=client, response=response)
+
+
+async def asyncio(
+    project: str,
+    file: str,
+    *,
+    client: AuthenticatedClient,
+    body: PreviewUploadManifest,
+    origin: str,
+    sec_fetch_site: PutFilePreviewUploadManifestSecFetchSite | Unset = UNSET,
+    audaligo_transfer_continuation: str | Unset = UNSET,
+) -> ErrorEnvelope | ObjectStateResponse | None:
+    """
+    Args:
+        project (str):
+        file (str):
+        origin (str):
+        sec_fetch_site (PutFilePreviewUploadManifestSecFetchSite | Unset):
+        audaligo_transfer_continuation (str | Unset):
+        body (PreviewUploadManifest): Client-encrypted Opus WebM sidecar metadata for a committed
+            source file; identity and epoch must match the source-bound preview reservation.
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        ErrorEnvelope | ObjectStateResponse
+    """
+
+    return (
+        await asyncio_detailed(
+            project=project,
+            file=file,
+            client=client,
+            body=body,
+            origin=origin,
+            sec_fetch_site=sec_fetch_site,
+            audaligo_transfer_continuation=audaligo_transfer_continuation,
+        )
+    ).parsed

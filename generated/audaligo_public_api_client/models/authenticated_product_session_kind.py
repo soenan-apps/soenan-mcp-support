@@ -1,7 +1,7 @@
-from enum import StrEnum
+from enum import Enum
 
 
-class AuthenticatedProductSessionKind(StrEnum):
+class AuthenticatedProductSessionKind(str, Enum):
     AUTHENTICATED = "authenticated"
 
     def __str__(self) -> str:

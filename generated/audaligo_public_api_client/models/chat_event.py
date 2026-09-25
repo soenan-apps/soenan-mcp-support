@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
+from dateutil.parser import isoparse
 from typing_extensions import Self
 
 from ..models.chat_event_type import ChatEventType
@@ -56,15 +57,9 @@ class ChatEvent:
     body: None | str | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.comment_project_reference import (
-            CommentProjectReference,
-        )
-        from ..models.file_project_reference import (
-            FileProjectReference,
-        )
-        from ..models.stage_project_reference import (
-            StageProjectReference,
-        )
+        from ..models.comment_project_reference import CommentProjectReference
+        from ..models.file_project_reference import FileProjectReference
+        from ..models.stage_project_reference import StageProjectReference
 
         type_ = self.type_.value
 
@@ -127,18 +122,12 @@ class ChatEvent:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.comment_project_reference import (
-            CommentProjectReference,
-        )
+        from ..models.comment_project_reference import CommentProjectReference
         from ..models.comment_reply_project_reference import (
             CommentReplyProjectReference,
         )
-        from ..models.file_project_reference import (
-            FileProjectReference,
-        )
-        from ..models.stage_project_reference import (
-            StageProjectReference,
-        )
+        from ..models.file_project_reference import FileProjectReference
+        from ..models.stage_project_reference import StageProjectReference
 
         d = dict(src_dict)
         type_ = ChatEventType(d.pop("type"))
@@ -211,7 +200,7 @@ class ChatEvent:
 
             references.append(references_item)
 
-        committed_at = datetime.datetime.fromisoformat(d.pop("committedAt"))
+        committed_at = isoparse(d.pop("committedAt"))
 
         def _parse_body(data: object) -> None | str | Unset:
             if data is None:

@@ -1,7 +1,7 @@
-from enum import StrEnum
+from enum import Enum
 
 
-class ReadDescriptorContract(StrEnum):
+class ReadDescriptorContract(str, Enum):
     AUDALIGO_MANAGED_PROJECT_FILE_READ_DESCRIPTOR = (
         "audaligo.managed-project-file-read-descriptor"
     )

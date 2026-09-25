@@ -13,14 +13,21 @@ from audaligo_public_api_client import Client
 from audaligo_public_api_client.api.encrypted_objects import (
     commit_encrypted_project_file,
     complete_encrypted_object_chunks,
+    complete_file_preview_upload,
     create_chunk_upload_capability,
+    create_file_preview_chunk_upload_capability,
+    create_file_preview_upload,
     get_chunk_read_capability,
     put_encrypted_object_manifest,
+    put_file_preview_upload_manifest,
+    reset_file_preview_upload,
 )
 from audaligo_public_api_client.models.commit_project_file_request import (
     CommitProjectFileRequest,
 )
 from audaligo_public_api_client.models.put_manifest_request import PutManifestRequest
+from audaligo_public_api_client.models.preview_upload_manifest import PreviewUploadManifest
+from audaligo_public_api_client.models.reset_preview_upload_request import ResetPreviewUploadRequest
 from audaligo_public_api_client.types import Response
 from typing_extensions import Self
 
@@ -169,6 +176,69 @@ class AudaligoTransferAPI:
             audaligo_transfer_continuation=self._continuation,
         )
         return self._body(response, HTTPStatus.OK, HTTPStatus.CREATED)
+
+    def begin_preview_upload(
+        self, *, project_id: str, file_id: str
+    ) -> Mapping[str, Any]:
+        response = self._request(
+            create_file_preview_upload.sync_detailed,
+            project_id,
+            file_id,
+            origin=self._origin,
+            audaligo_transfer_continuation=self._continuation,
+        )
+        return self._body(response, HTTPStatus.OK, HTTPStatus.CREATED)
+
+    def reset_preview_upload(
+        self, *, project_id: str, file_id: str, expected_preview_id: str
+    ) -> Mapping[str, Any]:
+        response = self._request(
+            reset_file_preview_upload.sync_detailed,
+            project_id,
+            file_id,
+            body=ResetPreviewUploadRequest(expected_preview_id=expected_preview_id),
+            origin=self._origin,
+            audaligo_transfer_continuation=self._continuation,
+        )
+        return self._body(response, HTTPStatus.OK)
+
+    def put_preview_manifest(
+        self, *, project_id: str, file_id: str, manifest: Mapping[str, Any]
+    ) -> Mapping[str, Any]:
+        response = self._request(
+            put_file_preview_upload_manifest.sync_detailed,
+            project_id,
+            file_id,
+            body=PreviewUploadManifest.from_dict(manifest),
+            origin=self._origin,
+            audaligo_transfer_continuation=self._continuation,
+        )
+        return self._body(response, HTTPStatus.OK, HTTPStatus.CREATED)
+
+    def preview_upload_capability(
+        self, *, project_id: str, file_id: str, chunk_index: int
+    ) -> Mapping[str, Any]:
+        response = self._request(
+            create_file_preview_chunk_upload_capability.sync_detailed,
+            project_id,
+            file_id,
+            chunk_index,
+            origin=self._origin,
+            audaligo_transfer_continuation=self._continuation,
+        )
+        return self._capability(response)
+
+    def complete_preview_upload(
+        self, *, project_id: str, file_id: str
+    ) -> Mapping[str, Any]:
+        response = self._request(
+            complete_file_preview_upload.sync_detailed,
+            project_id,
+            file_id,
+            origin=self._origin,
+            audaligo_transfer_continuation=self._continuation,
+        )
+        return self._body(response, HTTPStatus.OK)
 
     def read_capability(
         self,

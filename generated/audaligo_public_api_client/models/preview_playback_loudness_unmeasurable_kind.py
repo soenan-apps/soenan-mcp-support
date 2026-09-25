@@ -1,7 +1,7 @@
-from enum import StrEnum
+from enum import Enum
 
 
-class PreviewPlaybackLoudnessUnmeasurableKind(StrEnum):
+class PreviewPlaybackLoudnessUnmeasurableKind(str, Enum):
     UNMEASURABLE = "unmeasurable"
 
     def __str__(self) -> str:

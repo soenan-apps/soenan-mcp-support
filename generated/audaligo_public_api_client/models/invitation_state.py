@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from typing import Any, TypeVar, cast
 
 from attrs import define as _attrs_define
+from dateutil.parser import isoparse
 from typing_extensions import Self
 
 from ..models.invitation_state_access_role import InvitationStateAccessRole
@@ -103,9 +104,9 @@ class InvitationState:
 
         token_generation = d.pop("tokenGeneration")
 
-        issued_at = datetime.datetime.fromisoformat(d.pop("issuedAt"))
+        issued_at = isoparse(d.pop("issuedAt"))
 
-        expires_at = datetime.datetime.fromisoformat(d.pop("expiresAt"))
+        expires_at = isoparse(d.pop("expiresAt"))
 
         def _parse_consumed_at(data: object) -> datetime.datetime | None | Unset:
             if data is None:
@@ -115,7 +116,7 @@ class InvitationState:
             try:
                 if not isinstance(data, str):
                     raise TypeError()
-                consumed_at_type_1 = datetime.datetime.fromisoformat(data)
+                consumed_at_type_1 = isoparse(data)
 
                 return consumed_at_type_1
             except (TypeError, ValueError, AttributeError, KeyError):
@@ -132,7 +133,7 @@ class InvitationState:
             try:
                 if not isinstance(data, str):
                     raise TypeError()
-                revoked_at_type_1 = datetime.datetime.fromisoformat(data)
+                revoked_at_type_1 = isoparse(data)
 
                 return revoked_at_type_1
             except (TypeError, ValueError, AttributeError, KeyError):

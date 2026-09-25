@@ -1,7 +1,7 @@
-from enum import StrEnum
+from enum import Enum
 
 
-class CurrentMembershipAccessRole(StrEnum):
+class CurrentMembershipAccessRole(str, Enum):
     EDITOR = "editor"
     OWNER = "owner"
     VIEWER = "viewer"

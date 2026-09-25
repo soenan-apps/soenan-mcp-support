@@ -1,7 +1,7 @@
-from enum import StrEnum
+from enum import Enum
 
 
-class StageProjectReferenceKind(StrEnum):
+class StageProjectReferenceKind(str, Enum):
     STAGE = "stage"
 
     def __str__(self) -> str:

@@ -1,7 +1,7 @@
-from enum import StrEnum
+from enum import Enum
 
 
-class ProjectStageStatus(StrEnum):
+class ProjectStageStatus(str, Enum):
     DRAFT = "draft"
     PUBLISHED = "published"
 

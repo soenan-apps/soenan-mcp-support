@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
+from dateutil.parser import isoparse
 from typing_extensions import Self
 
 from ..models.bucket_capability_contract import BucketCapabilityContract
@@ -94,7 +95,7 @@ class BucketCapability:
 
         chunk_index = d.pop("chunkIndex")
 
-        expires_at = datetime.datetime.fromisoformat(d.pop("expiresAt"))
+        expires_at = isoparse(d.pop("expiresAt"))
 
         content_length = d.pop("contentLength")
 

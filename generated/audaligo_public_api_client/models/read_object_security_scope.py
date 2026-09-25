@@ -1,7 +1,7 @@
-from enum import StrEnum
+from enum import Enum
 
 
-class ReadObjectSecurityScope(StrEnum):
+class ReadObjectSecurityScope(str, Enum):
     MANAGED_ENCRYPTION = "managed_encryption"
     MANAGED_PROCESSING = "managed_processing"
 

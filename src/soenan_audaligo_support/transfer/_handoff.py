@@ -23,7 +23,10 @@ class UploadMetadata:
     filename: str
     plaintext_size: int
     operation_id: str
-
+    preview_profile: str | None = None
+    preview_id: str | None = None
+    processing_id: str | None = None
+    job_id: str | None = None
 
 @dataclass(frozen=True)
 class FileMetadata:
@@ -89,6 +92,10 @@ def parse_handoff(
     }
     if operation != "upload":
         required.add("manifest")
+    else:
+        preview_fields = {"previewId", "processingId", "jobId"}
+        if preview_fields.intersection(structured_content):
+            required.update(preview_fields)
     _exact_fields(structured_content, required, "structuredContent")
     if structured_content.get("protocolVersion") != TRANSFER_PROTOCOL:
         raise TransferError("structuredContent protocol is unsupported")
@@ -112,6 +119,18 @@ def parse_handoff(
 
     if operation == "upload":
         upload = _upload_metadata(structured_content.get("upload"))
+        if (upload.preview_profile is None) != ("previewId" not in structured_content):
+            raise TransferError("preview upload bindings do not match")
+        if "previewId" in structured_content:
+            upload = UploadMetadata(
+                filename=upload.filename,
+                plaintext_size=upload.plaintext_size,
+                operation_id=upload.operation_id,
+                preview_profile=upload.preview_profile,
+                preview_id=_identifier(structured_content, "previewId"),
+                processing_id=_identifier(structured_content, "processingId"),
+                job_id=_identifier(structured_content, "jobId"),
+            )
         return TransferHandoff(
             operation=operation,
             project_id=project_id,
@@ -210,11 +229,18 @@ def _claim_descriptor(
 def _upload_metadata(value: Any) -> UploadMetadata:
     value = _object(value, "upload")
     required = {"filename", "plaintextSize", "operationId"}
+    if "previewProfile" in value:
+        required.add("previewProfile")
+        if value["previewProfile"] not in {
+            "opus-webm-v1", "aac-lc-128k-m4a-v1", "h264-aac-fmp4-v1"
+        }:
+            raise TransferError("preview profile is unsupported")
     _exact_fields(value, required, "upload")
     return UploadMetadata(
         filename=_bounded_string(value, "filename", 1024),
         plaintext_size=_positive_wire_integer(value, "plaintextSize"),
         operation_id=_identifier(value, "operationId"),
+        preview_profile=value.get("previewProfile"),
     )
 
 
@@ -322,6 +348,7 @@ def _preview_manifest(value: Any) -> Mapping[str, Any]:
     codec = _bounded_string(value, "codec", 256)
     if value.get("contract") != "audaligo.preview.read.v1" or not (
         (media_type == "audio/mp4" and codec == "mp4a.40.2")
+        or (media_type == "audio/webm" and codec == "opus")
         or (
             media_type == "video/mp4"
             and re.fullmatch(r"avc1\.[0-9A-Fa-f]{6}(, ?mp4a\.40\.2)?", codec)

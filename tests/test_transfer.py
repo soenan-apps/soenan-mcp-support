@@ -6,7 +6,7 @@ import struct
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from base64 import urlsafe_b64encode
+from base64 import urlsafe_b64decode, urlsafe_b64encode
 from hashlib import sha256
 from pathlib import Path
 from types import SimpleNamespace
@@ -23,6 +23,8 @@ from soenan_audaligo_support.transfer._claim import FileKeyClaim
 from soenan_audaligo_support.transfer._crypto import (
     CHUNK_SIZE,
     ChunkMetadata,
+    chunk_aad,
+    chunk_nonce,
     parse_preview_decryption_plan,
     preview_chunk_aad,
 )
@@ -45,6 +47,140 @@ def test_handoff_rejects_missing_extra_and_operation_mismatched_fields() -> None
     ):
         with pytest.raises(TransferError):
             parse_handoff(mutated)
+
+def test_preview_upload_handoff_requires_complete_source_binding() -> None:
+    handoff = _upload_handoff()
+    handoff["upload"]["previewProfile"] = "opus-webm-v1"
+    handoff["previewId"] = "preview_1"
+    handoff["processingId"] = "processing_1"
+    handoff["jobId"] = "job_1"
+    parsed = parse_handoff(handoff, now_unix_milliseconds=1)
+    assert parsed.upload is not None
+    assert parsed.upload.preview_profile == "opus-webm-v1"
+    assert parsed.upload.preview_id == "preview_1"
+    for missing in ("previewId", "processingId", "jobId"):
+        incomplete = {key: value for key, value in handoff.items() if key != missing}
+        with pytest.raises(TransferError):
+            parse_handoff(incomplete, now_unix_milliseconds=1)
+    for unsupported_profile in ("opus-128k-webm-v1", "aac-legacy"):
+        handoff["upload"]["previewProfile"] = unsupported_profile
+        with pytest.raises(TransferError):
+            parse_handoff(handoff, now_unix_milliseconds=1)
+
+@pytest.mark.parametrize("profile", [
+    "aac-lc-128k-m4a-v1",
+    "h264-aac-fmp4-v1",
+])
+def test_legacy_preview_upload_handoff_keeps_source_bindings(profile: str) -> None:
+    handoff = _upload_handoff()
+    handoff["upload"]["previewProfile"] = profile
+    handoff.update(previewId="preview_1", processingId="processing_1", jobId="job_1")
+    parsed = parse_handoff(handoff, now_unix_milliseconds=1)
+    assert parsed.upload is not None
+    assert (
+        parsed.upload.preview_profile,
+        parsed.upload.preview_id,
+        parsed.upload.processing_id,
+        parsed.upload.job_id,
+    ) == (profile, "preview_1", "processing_1", "job_1")
+
+
+@pytest.mark.parametrize("profile,filename,source", [
+    (
+        "aac-lc-128k-m4a-v1", "recording.wav",
+        struct.pack("<4sI4s", b"RIFF", 38, b"WAVE")
+        + struct.pack("<4sIHHIIHH", b"fmt ", 16, 1, 1, 8000, 16000, 2, 16)
+        + struct.pack("<4sI", b"data", 2) + b"\x00\x00",
+    ),
+    ("h264-aac-fmp4-v1", "scene.mp4", b"\x00\x00\x00\x10ftypisom"),
+])
+def test_legacy_preview_upload_commits_source_without_local_sidecar(
+    monkeypatch: pytest.MonkeyPatch, profile: str, filename: str, source: bytes,
+) -> None:
+    handoff = _upload_handoff()
+    handoff["upload"].update(
+        filename=filename, plaintextSize=str(len(source)), previewProfile=profile,
+    )
+    handoff.update(previewId="preview_1", processingId="processing_1", jobId="job_1")
+    uploaded: list[bytes] = []
+    manifest: dict[str, Any] = {}
+    completed = False
+
+    class API:
+        def __init__(self, **kwargs: object) -> None:
+            pass
+
+        def __enter__(self) -> Self:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            pass
+
+        def put_manifest(self, **kwargs: Any) -> dict[str, str]:
+            manifest.update(kwargs["manifest"])
+            return {"state": "uploading"}
+
+        def upload_capability(self, **kwargs: object) -> dict[str, object]:
+            return {
+                "operation": "PUT", "objectId": "upload_1", "chunkIndex": 0,
+                "contentLength": len(source) + 16,
+                "url": "https://bucket.example/source", "headers": {},
+            }
+
+        def complete_upload(self, **kwargs: object) -> dict[str, str]:
+            nonlocal completed
+            completed = True
+            return {"state": "ready"}
+
+        def commit_file(self, **kwargs: object) -> dict[str, object]:
+            assert completed and len(uploaded) == 1
+            assert kwargs["filename"] == filename
+            return {"fileId": kwargs["file_id"]}
+
+        def begin_preview_upload(self, **kwargs: object) -> None:
+            pytest.fail("legacy previews must be processed by server jobs")
+
+    monkeypatch.setattr(_workflow, "AudaligoTransferAPI", API)
+    monkeypatch.setattr(_workflow, "redeem_file_key_claim", lambda *args, **kwargs: FileKeyClaim(
+        direction="upload", project_id="project_1", object_id="upload_1",
+        epoch=7, data_key=b"k" * 32, wrapped_nonce=b"n" * 12,
+        wrapped_data_key=b"w" * 48,
+    ))
+    monkeypatch.setattr(_workflow, "put_ciphertext", lambda url, headers, ciphertext, **kwargs: uploaded.append(ciphertext))
+    monkeypatch.setattr(
+        _workflow, "preflight_wav_preview",
+        lambda *args, **kwargs: pytest.fail("legacy previews must not use Opus WAV preflight"),
+    )
+    monkeypatch.setattr(
+        _workflow, "_upload_preview",
+        lambda *args, **kwargs: pytest.fail("legacy previews must not create a local sidecar"),
+    )
+    result = _workflow.upload_file(handoff, source=io.BytesIO(source))
+    assert result == {"fileId": handoff["upload"]["operationId"]}
+    assert completed and len(uploaded) == 1
+    object_manifest = manifest["object"]
+    assert object_manifest["plaintext_size"] == len(source)
+    assert object_manifest["chunks"][0]["ciphertext_sha256_b64u"] == _b64u(
+        sha256(uploaded[0]).digest()
+    )
+    nonce_base = urlsafe_b64decode(object_manifest["nonce_base_b64u"] + "==")
+    assert AESGCM(b"k" * 32).decrypt(
+        chunk_nonce(nonce_base, 0),
+        uploaded[0],
+        chunk_aad(
+            project_id="project_1",
+            file_id=handoff["upload"]["operationId"],
+            object_id="upload_1",
+            epoch=7,
+            total_plaintext_size=len(source),
+            chunk_count=1,
+            chunk_index=0,
+            plaintext_offset=0,
+            plaintext_length=len(source),
+            final=True,
+        ),
+    ) == source
+
 
 def test_handoff_uses_canonical_file_identity() -> None:
     preview = _preview_handoff()
@@ -137,6 +273,83 @@ def test_continuation_control_client_never_sends_authorization_header() -> None:
     assert len(requests) == 1
     assert "authorization" not in requests[0].headers
     assert requests[0].headers["Audaligo-Transfer-Continuation"] == "c" * 43
+
+
+def test_preview_control_uses_generated_source_bound_routes_and_continuation() -> None:
+    requests: list[httpx.Request] = []
+    session = {
+        "previewId": "preview_1", "sourceObjectId": "source_1",
+        "processingId": "processing_1", "jobId": "job_1",
+        "epoch": "7", "nonceBaseB64u": _b64u(b"12345678"),
+        "state": "reserved",
+        "keyClaim": _key_claim(),
+    }
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path.endswith("/preview-upload/reset"):
+            return httpx.Response(
+                200,
+                json={
+                    **session,
+                    "previewId": "preview_2",
+                    "processingId": "processing_2",
+                    "jobId": "job_2",
+                    "nonceBaseB64u": _b64u(b"87654321"),
+                },
+            )
+        if request.url.path.endswith("/preview-upload"):
+            return httpx.Response(200, json=session)
+        return httpx.Response(
+            201 if request.method == "PUT" else 200,
+            json={"ok": True, "objectId": "preview_2", "state": "ready"},
+        )
+
+    manifest = {
+        "sourceObjectId": "source_1", "previewId": "preview_2",
+        "processingId": "processing_2", "jobId": "job_2",
+        "epoch": 7, "nonceBaseB64u": _b64u(b"87654321"),
+        "plaintextSize": 5, "ciphertextSize": 21, "chunkSize": CHUNK_SIZE,
+        "chunks": [{
+            "chunkIndex": 0, "plaintextOffset": 0, "plaintextSize": 5,
+            "ciphertextOffset": 0, "ciphertextSize": 21,
+            "ciphertextSha256B64u": _b64u(sha256(b"ciphertext").digest()),
+            "finalChunk": True,
+        }],
+        "media": {
+            "durationSeconds": 1.0, "mimeType": "audio/webm", "codecs": "opus",
+            "sampleRate": 48000, "channels": 2, "bitrate": 128000,
+            "playbackLoudness": {"kind": "unmeasurable"},
+        },
+    }
+    with AudaligoTransferAPI(
+        control_origin="https://audaligo.example",
+        continuation="c" * 43,
+        timeouts=DEFAULT_TIMEOUTS,
+        control_transport=httpx.MockTransport(handle),
+    ) as api:
+        assert api.begin_preview_upload(project_id="project_1", file_id="file_1") == session
+        fresh = api.reset_preview_upload(
+            project_id="project_1", file_id="file_1", expected_preview_id="preview_1",
+        )
+        assert fresh["previewId"] == "preview_2"
+        api.put_preview_manifest(
+            project_id="project_1", file_id="file_1", manifest=manifest,
+        )
+        api.complete_preview_upload(project_id="project_1", file_id="file_1")
+    assert [request.url.path for request in requests] == [
+        "/api/projects/project_1/files/file_1/preview-upload",
+        "/api/projects/project_1/files/file_1/preview-upload/reset",
+        "/api/projects/project_1/files/file_1/preview-upload/manifest",
+        "/api/projects/project_1/files/file_1/preview-upload/completion",
+    ]
+    assert all(
+        request.headers["Audaligo-Transfer-Continuation"] == "c" * 43
+        and "authorization" not in request.headers
+        for request in requests
+    )
+    assert json.loads(requests[1].content) == {"expectedPreviewId": "preview_1"}
+    assert json.loads(requests[2].content) == manifest
 
 
 def test_control_request_total_deadline_includes_dribbling_response_parse() -> None:
@@ -366,6 +579,8 @@ def test_preview_aad_matches_audaligo_ordered_encoding() -> None:
 @pytest.mark.parametrize(
     ("media_type", "codec"),
     [
+        ("audio/webm", "mp4a.40.2"),
+        ("video/webm", "opus"),
         ("audio/mp4", "avc1.640028"),
         ("video/mp4", "mp4a.40.2"),
         ("video/mp4", "avc1.invalid"),
@@ -385,6 +600,7 @@ def test_preview_handoff_rejects_mismatched_media_tuple(
     ("media_type", "codec"),
     [
         ("audio/mp4", "mp4a.40.2"),
+        ("audio/webm", "opus"),
         ("video/mp4", "avc1.640028, mp4a.40.2"),
     ],
 )

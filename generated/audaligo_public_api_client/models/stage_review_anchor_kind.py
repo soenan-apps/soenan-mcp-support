@@ -1,7 +1,7 @@
-from enum import StrEnum
+from enum import Enum
 
 
-class StageReviewAnchorKind(StrEnum):
+class StageReviewAnchorKind(str, Enum):
     STAGE = "stage"
 
     def __str__(self) -> str:

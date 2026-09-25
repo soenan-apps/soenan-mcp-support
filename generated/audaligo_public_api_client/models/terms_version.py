@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from typing import Any, TypeVar
 
 from attrs import define as _attrs_define
+from dateutil.parser import isoparse
 from typing_extensions import Self
 
 T = TypeVar("T", bound="TermsVersion")
@@ -82,9 +83,9 @@ class TermsVersion:
 
         language_tag = d.pop("languageTag")
 
-        published_at = datetime.datetime.fromisoformat(d.pop("publishedAt"))
+        published_at = isoparse(d.pop("publishedAt"))
 
-        effective_at = datetime.datetime.fromisoformat(d.pop("effectiveAt"))
+        effective_at = isoparse(d.pop("effectiveAt"))
 
         terms_version = cls(
             id=id,

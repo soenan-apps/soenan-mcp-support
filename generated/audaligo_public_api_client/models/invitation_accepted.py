@@ -54,9 +54,7 @@ class InvitationAccepted:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.accepted_invitation_state import (
-            AcceptedInvitationState,
-        )
+        from ..models.accepted_invitation_state import AcceptedInvitationState
         from ..models.invitation_membership import InvitationMembership
         from ..models.invitation_project import InvitationProject
 

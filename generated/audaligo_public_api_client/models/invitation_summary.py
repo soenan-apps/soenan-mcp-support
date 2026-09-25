@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from typing import Any, TypeVar
 
 from attrs import define as _attrs_define
+from dateutil.parser import isoparse
 from typing_extensions import Self
 
 from ..models.invitation_summary_access_role import InvitationSummaryAccessRole
@@ -83,11 +84,11 @@ class InvitationSummary:
 
         token_generation = d.pop("tokenGeneration")
 
-        issued_at = datetime.datetime.fromisoformat(d.pop("issuedAt"))
+        issued_at = isoparse(d.pop("issuedAt"))
 
-        expires_at = datetime.datetime.fromisoformat(d.pop("expiresAt"))
+        expires_at = isoparse(d.pop("expiresAt"))
 
-        created_at = datetime.datetime.fromisoformat(d.pop("createdAt"))
+        created_at = isoparse(d.pop("createdAt"))
 
         invitation_summary = cls(
             id=id,

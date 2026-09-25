@@ -1,7 +1,7 @@
-from enum import StrEnum
+from enum import Enum
 
 
-class ProjectFolderEntryKind(StrEnum):
+class ProjectFolderEntryKind(str, Enum):
     FOLDER = "folder"
 
     def __str__(self) -> str:

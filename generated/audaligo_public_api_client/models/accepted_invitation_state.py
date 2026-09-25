@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from typing import Any, TypeVar
 
 from attrs import define as _attrs_define
+from dateutil.parser import isoparse
 from typing_extensions import Self
 
 from ..models.accepted_invitation_state_state import AcceptedInvitationStateState
@@ -58,7 +59,7 @@ class AcceptedInvitationState:
 
         state = AcceptedInvitationStateState(d.pop("state"))
 
-        consumed_at = datetime.datetime.fromisoformat(d.pop("consumedAt"))
+        consumed_at = isoparse(d.pop("consumedAt"))
 
         accepted_invitation_state = cls(
             id=id,

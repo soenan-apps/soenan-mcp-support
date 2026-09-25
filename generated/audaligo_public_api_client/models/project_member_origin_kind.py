@@ -1,7 +1,7 @@
-from enum import StrEnum
+from enum import Enum
 
 
-class ProjectMemberOriginKind(StrEnum):
+class ProjectMemberOriginKind(str, Enum):
     INVITATION = "invitation"
     ORGANIZATION_PARTICIPATION = "organization_participation"
     PROJECT_CREATION = "project_creation"

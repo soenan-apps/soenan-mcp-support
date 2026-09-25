@@ -49,9 +49,7 @@ class CreateUploadRequest:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.preview_intent import PreviewIntent
-        from ..models.project_file_entry_intent import (
-            ProjectFileEntryIntent,
-        )
+        from ..models.project_file_entry_intent import ProjectFileEntryIntent
 
         d = dict(src_dict)
         entry_intent = ProjectFileEntryIntent.from_dict(d.pop("entryIntent"))

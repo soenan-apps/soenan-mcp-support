@@ -14,6 +14,7 @@ dependencies = [
   "cryptography==50.0.0",
   "httpx>=0.23.1,<0.29.0",
   "typing-extensions>=4.7.1",
+  "python-dateutil>=2.8.2,<3",
 ]
 classifiers = [
   "Development Status :: 3 - Alpha",

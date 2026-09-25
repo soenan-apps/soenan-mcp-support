@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
+from dateutil.parser import isoparse
 from typing_extensions import Self
 
 if TYPE_CHECKING:
@@ -116,9 +117,7 @@ class TimelineComment:
         from ..models.file_review_anchor import FileReviewAnchor
         from ..models.member_actor import MemberActor
         from ..models.review_pin_region import ReviewPinRegion
-        from ..models.review_rectangle_region import (
-            ReviewRectangleRegion,
-        )
+        from ..models.review_rectangle_region import ReviewRectangleRegion
         from ..models.review_time_span import ReviewTimeSpan
         from ..models.stage_review_anchor import StageReviewAnchor
 
@@ -199,7 +198,7 @@ class TimelineComment:
 
         resolved = d.pop("resolved")
 
-        created_at = datetime.datetime.fromisoformat(d.pop("createdAt"))
+        created_at = isoparse(d.pop("createdAt"))
 
         replies = []
         _replies = d.pop("replies")

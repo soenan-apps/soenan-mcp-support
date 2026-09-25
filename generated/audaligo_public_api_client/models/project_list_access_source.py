@@ -1,7 +1,7 @@
-from enum import StrEnum
+from enum import Enum
 
 
-class ProjectListAccessSource(StrEnum):
+class ProjectListAccessSource(str, Enum):
     INVITATION = "invitation"
     ORGANIZATION = "organization"
 

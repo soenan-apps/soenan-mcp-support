@@ -1,7 +1,7 @@
-from enum import StrEnum
+from enum import Enum
 
 
-class ProjectFileSourceState(StrEnum):
+class ProjectFileSourceState(str, Enum):
     AVAILABLE = "available"
     DELETED = "deleted"
 

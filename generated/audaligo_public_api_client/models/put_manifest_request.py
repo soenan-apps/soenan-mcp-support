@@ -37,9 +37,7 @@ class PutManifestRequest:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.encrypted_object_manifest import (
-            EncryptedObjectManifest,
-        )
+        from ..models.encrypted_object_manifest import EncryptedObjectManifest
 
         d = dict(src_dict)
         manifest = EncryptedObjectManifest.from_dict(d.pop("manifest"))

@@ -68,9 +68,7 @@ class CommitProjectFileRequest:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.project_file_entry_intent import (
-            ProjectFileEntryIntent,
-        )
+        from ..models.project_file_entry_intent import ProjectFileEntryIntent
 
         d = dict(src_dict)
         encrypted_object_id = d.pop("encryptedObjectId")

@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from typing import Any, TypeVar
 
 from attrs import define as _attrs_define
+from dateutil.parser import isoparse
 from typing_extensions import Self
 
 from ..models.encrypted_project_file_file_kind import EncryptedProjectFileFileKind
@@ -105,9 +106,9 @@ class EncryptedProjectFile:
 
         mime_type = d.pop("mimeType")
 
-        created_at = datetime.datetime.fromisoformat(d.pop("createdAt"))
+        created_at = isoparse(d.pop("createdAt"))
 
-        updated_at = datetime.datetime.fromisoformat(d.pop("updatedAt"))
+        updated_at = isoparse(d.pop("updatedAt"))
 
         encrypted_project_file = cls(
             project_id=project_id,

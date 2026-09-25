@@ -1,7 +1,7 @@
-from enum import StrEnum
+from enum import Enum
 
 
-class PreviewIntentMediaType(StrEnum):
+class PreviewIntentMediaType(str, Enum):
     APPLICATIONOCTET_STREAM = "application/octet-stream"
     AUDIOWAV = "audio/wav"
     AUDIOWAVE = "audio/wave"

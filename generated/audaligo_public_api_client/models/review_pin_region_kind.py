@@ -1,7 +1,7 @@
-from enum import StrEnum
+from enum import Enum
 
 
-class ReviewPinRegionKind(StrEnum):
+class ReviewPinRegionKind(str, Enum):
     PIN = "pin"
 
     def __str__(self) -> str:

@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
+from dateutil.parser import isoparse
 from typing_extensions import Self
 
 from ..models.project_file_source_state import ProjectFileSourceState
@@ -74,7 +75,7 @@ class ProjectFile:
 
         size_bytes = d.pop("sizeBytes")
 
-        created_at = datetime.datetime.fromisoformat(d.pop("createdAt"))
+        created_at = isoparse(d.pop("createdAt"))
 
         source_state = ProjectFileSourceState(d.pop("sourceState"))
 

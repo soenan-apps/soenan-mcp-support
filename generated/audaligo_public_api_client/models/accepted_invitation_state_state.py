@@ -1,7 +1,7 @@
-from enum import StrEnum
+from enum import Enum
 
 
-class AcceptedInvitationStateState(StrEnum):
+class AcceptedInvitationStateState(str, Enum):
     ACCEPTED = "accepted"
 
     def __str__(self) -> str:

@@ -1,7 +1,7 @@
-from enum import StrEnum
+from enum import Enum
 
 
-class ProjectKeyRingContract(StrEnum):
+class ProjectKeyRingContract(str, Enum):
     AUDALIGO_PROJECT_KEYRING = "audaligo.project-keyring"
 
     def __str__(self) -> str:

@@ -1,7 +1,7 @@
-from enum import StrEnum
+from enum import Enum
 
 
-class CreateProjectSecFetchSite(StrEnum):
+class CreateProjectSecFetchSite(str, Enum):
     SAME_ORIGIN = "same-origin"
 
     def __str__(self) -> str:

@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
+from dateutil.parser import isoparse
 from typing_extensions import Self
 
 from ..models.project_stage_status import ProjectStageStatus
@@ -25,6 +26,7 @@ class ProjectStage:
         status (ProjectStageStatus):
         revision (int):
         version_number (int | None):
+        label (None | str): Single-line display name; length is measured in UTF-16 code units.
         contents (list[StageContent]):
         created_at (datetime.datetime):
         updated_at (datetime.datetime):
@@ -36,6 +38,7 @@ class ProjectStage:
     status: ProjectStageStatus
     revision: int
     version_number: int | None
+    label: None | str
     contents: list[StageContent]
     created_at: datetime.datetime
     updated_at: datetime.datetime
@@ -52,6 +55,9 @@ class ProjectStage:
 
         version_number: int | None
         version_number = self.version_number
+
+        label: None | str
+        label = self.label
 
         contents = []
         for contents_item_data in self.contents:
@@ -77,6 +83,7 @@ class ProjectStage:
                 "status": status,
                 "revision": revision,
                 "versionNumber": version_number,
+                "label": label,
                 "contents": contents,
                 "createdAt": created_at,
                 "updatedAt": updated_at,
@@ -106,6 +113,13 @@ class ProjectStage:
 
         version_number = _parse_version_number(d.pop("versionNumber"))
 
+        def _parse_label(data: object) -> None | str:
+            if data is None:
+                return data
+            return cast(None | str, data)
+
+        label = _parse_label(d.pop("label"))
+
         contents = []
         _contents = d.pop("contents")
         for contents_item_data in _contents:
@@ -113,9 +127,9 @@ class ProjectStage:
 
             contents.append(contents_item)
 
-        created_at = datetime.datetime.fromisoformat(d.pop("createdAt"))
+        created_at = isoparse(d.pop("createdAt"))
 
-        updated_at = datetime.datetime.fromisoformat(d.pop("updatedAt"))
+        updated_at = isoparse(d.pop("updatedAt"))
 
         def _parse_published_at(data: object) -> datetime.datetime | None:
             if data is None:
@@ -123,7 +137,7 @@ class ProjectStage:
             try:
                 if not isinstance(data, str):
                     raise TypeError()
-                published_at_type_0 = datetime.datetime.fromisoformat(data)
+                published_at_type_0 = isoparse(data)
 
                 return published_at_type_0
             except (TypeError, ValueError, AttributeError, KeyError):
@@ -138,6 +152,7 @@ class ProjectStage:
             status=status,
             revision=revision,
             version_number=version_number,
+            label=label,
             contents=contents,
             created_at=created_at,
             updated_at=updated_at,

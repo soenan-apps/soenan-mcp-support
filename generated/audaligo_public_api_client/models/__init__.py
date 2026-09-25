@@ -33,12 +33,21 @@ from .commit_project_file_request_file_kind import CommitProjectFileRequestFileK
 from .complete_encrypted_object_chunks_sec_fetch_site import (
     CompleteEncryptedObjectChunksSecFetchSite,
 )
+from .complete_file_preview_upload_sec_fetch_site import (
+    CompleteFilePreviewUploadSecFetchSite,
+)
 from .create_chunk_upload_capability_sec_fetch_site import (
     CreateChunkUploadCapabilitySecFetchSite,
 )
 from .create_comment_reply_sec_fetch_site import CreateCommentReplySecFetchSite
 from .create_encrypted_object_upload_sec_fetch_site import (
     CreateEncryptedObjectUploadSecFetchSite,
+)
+from .create_file_preview_chunk_upload_capability_sec_fetch_site import (
+    CreateFilePreviewChunkUploadCapabilitySecFetchSite,
+)
+from .create_file_preview_upload_sec_fetch_site import (
+    CreateFilePreviewUploadSecFetchSite,
 )
 from .create_invitation_request import CreateInvitationRequest
 from .create_invitation_request_access_role import CreateInvitationRequestAccessRole
@@ -103,6 +112,7 @@ from .file_preview_response import FilePreviewResponse
 from .file_preview_segment import FilePreviewSegment
 from .file_preview_segment_page import FilePreviewSegmentPage
 from .file_preview_state import FilePreviewState
+from .file_preview_state_preparation import FilePreviewStatePreparation
 from .file_preview_state_state import FilePreviewStateState
 from .file_project_reference import FileProjectReference
 from .file_project_reference_kind import FileProjectReferenceKind
@@ -150,6 +160,22 @@ from .preview_playback_loudness_unmeasurable_kind import (
 from .preview_playback_loudness_unmeasurable_policy_version import (
     PreviewPlaybackLoudnessUnmeasurablePolicyVersion,
 )
+from .preview_upload_key_claim import PreviewUploadKeyClaim
+from .preview_upload_key_claim_protocol import PreviewUploadKeyClaimProtocol
+from .preview_upload_loudness_measured import PreviewUploadLoudnessMeasured
+from .preview_upload_loudness_measured_kind import PreviewUploadLoudnessMeasuredKind
+from .preview_upload_loudness_unmeasurable import PreviewUploadLoudnessUnmeasurable
+from .preview_upload_loudness_unmeasurable_kind import (
+    PreviewUploadLoudnessUnmeasurableKind,
+)
+from .preview_upload_manifest import PreviewUploadManifest
+from .preview_upload_manifest_chunk_size import PreviewUploadManifestChunkSize
+from .preview_upload_media import PreviewUploadMedia
+from .preview_upload_media_codecs import PreviewUploadMediaCodecs
+from .preview_upload_media_mime_type import PreviewUploadMediaMimeType
+from .preview_upload_media_sample_rate import PreviewUploadMediaSampleRate
+from .preview_upload_session import PreviewUploadSession
+from .preview_upload_session_state import PreviewUploadSessionState
 from .product_session_metadata import ProductSessionMetadata
 from .product_session_metadata_client_kind import ProductSessionMetadataClientKind
 from .product_session_organization import ProductSessionOrganization
@@ -205,6 +231,9 @@ from .publish_project_stage_sec_fetch_site import PublishProjectStageSecFetchSit
 from .put_encrypted_object_manifest_sec_fetch_site import (
     PutEncryptedObjectManifestSecFetchSite,
 )
+from .put_file_preview_upload_manifest_sec_fetch_site import (
+    PutFilePreviewUploadManifestSecFetchSite,
+)
 from .put_manifest_request import PutManifestRequest
 from .read_descriptor import ReadDescriptor
 from .read_descriptor_contract import ReadDescriptorContract
@@ -217,6 +246,54 @@ from .read_object_security_scope import ReadObjectSecurityScope
 from .read_object_suite_id import ReadObjectSuiteId
 from .read_object_wrap_alg import ReadObjectWrapAlg
 from .read_project_file import ReadProjectFile
+from .realtime_error import RealtimeError
+from .realtime_error_code import RealtimeErrorCode
+from .realtime_error_type import RealtimeErrorType
+from .realtime_preview_lifecycle_invalidated import RealtimePreviewLifecycleInvalidated
+from .realtime_preview_lifecycle_invalidated_type import (
+    RealtimePreviewLifecycleInvalidatedType,
+)
+from .realtime_project_changes_catch_up_required import (
+    RealtimeProjectChangesCatchUpRequired,
+)
+from .realtime_project_changes_catch_up_required_reason import (
+    RealtimeProjectChangesCatchUpRequiredReason,
+)
+from .realtime_project_changes_catch_up_required_type import (
+    RealtimeProjectChangesCatchUpRequiredType,
+)
+from .realtime_project_changes_subscribed import RealtimeProjectChangesSubscribed
+from .realtime_project_changes_subscribed_type import (
+    RealtimeProjectChangesSubscribedType,
+)
+from .realtime_project_chat_catch_up_required import RealtimeProjectChatCatchUpRequired
+from .realtime_project_chat_catch_up_required_reason import (
+    RealtimeProjectChatCatchUpRequiredReason,
+)
+from .realtime_project_chat_catch_up_required_type import (
+    RealtimeProjectChatCatchUpRequiredType,
+)
+from .realtime_project_chat_error import RealtimeProjectChatError
+from .realtime_project_chat_error_code import RealtimeProjectChatErrorCode
+from .realtime_project_chat_error_type import RealtimeProjectChatErrorType
+from .realtime_project_chat_event_hint import RealtimeProjectChatEventHint
+from .realtime_project_chat_event_hint_type import RealtimeProjectChatEventHintType
+from .realtime_project_chat_subscribed import RealtimeProjectChatSubscribed
+from .realtime_project_chat_subscribed_type import RealtimeProjectChatSubscribedType
+from .realtime_project_files_invalidated import RealtimeProjectFilesInvalidated
+from .realtime_project_files_invalidated_type import RealtimeProjectFilesInvalidatedType
+from .realtime_project_review_invalidated import RealtimeProjectReviewInvalidated
+from .realtime_project_review_invalidated_type import (
+    RealtimeProjectReviewInvalidatedType,
+)
+from .realtime_project_schedule_invalidated import RealtimeProjectScheduleInvalidated
+from .realtime_project_schedule_invalidated_type import (
+    RealtimeProjectScheduleInvalidatedType,
+)
+from .realtime_project_summaries_invalidated import RealtimeProjectSummariesInvalidated
+from .realtime_project_summaries_invalidated_type import (
+    RealtimeProjectSummariesInvalidatedType,
+)
 from .refresh_product_session_sec_fetch_site import RefreshProductSessionSecFetchSite
 from .refresh_session_response import RefreshSessionResponse
 from .regenerate_invitation_request import RegenerateInvitationRequest
@@ -225,6 +302,8 @@ from .regenerate_project_invitation_sec_fetch_site import (
 )
 from .remove_project_member_sec_fetch_site import RemoveProjectMemberSecFetchSite
 from .reply_envelope import ReplyEnvelope
+from .reset_file_preview_upload_sec_fetch_site import ResetFilePreviewUploadSecFetchSite
+from .reset_preview_upload_request import ResetPreviewUploadRequest
 from .resolve_comment_request import ResolveCommentRequest
 from .resolve_timeline_comment_sec_fetch_site import ResolveTimelineCommentSecFetchSite
 from .responsibility import Responsibility
@@ -279,6 +358,10 @@ from .update_project_participation_policy_sec_fetch_site import (
 from .update_project_responsibility_sec_fetch_site import (
     UpdateProjectResponsibilitySecFetchSite,
 )
+from .update_project_stage_label_request import UpdateProjectStageLabelRequest
+from .update_project_stage_label_sec_fetch_site import (
+    UpdateProjectStageLabelSecFetchSite,
+)
 from .update_project_stage_request import UpdateProjectStageRequest
 from .update_project_stage_sec_fetch_site import UpdateProjectStageSecFetchSite
 from .update_project_task_request import UpdateProjectTaskRequest
@@ -314,9 +397,12 @@ __all__ = (
     "CommitProjectFileRequest",
     "CommitProjectFileRequestFileKind",
     "CompleteEncryptedObjectChunksSecFetchSite",
+    "CompleteFilePreviewUploadSecFetchSite",
     "CreateChunkUploadCapabilitySecFetchSite",
     "CreateCommentReplySecFetchSite",
     "CreateEncryptedObjectUploadSecFetchSite",
+    "CreateFilePreviewChunkUploadCapabilitySecFetchSite",
+    "CreateFilePreviewUploadSecFetchSite",
     "CreateInvitationRequest",
     "CreateInvitationRequestAccessRole",
     "CreateProjectFolderRequest",
@@ -366,6 +452,7 @@ __all__ = (
     "FilePreviewSegment",
     "FilePreviewSegmentPage",
     "FilePreviewState",
+    "FilePreviewStatePreparation",
     "FilePreviewStateState",
     "FileProjectReference",
     "FileProjectReferenceKind",
@@ -405,6 +492,20 @@ __all__ = (
     "PreviewPlaybackLoudnessUnmeasurable",
     "PreviewPlaybackLoudnessUnmeasurableKind",
     "PreviewPlaybackLoudnessUnmeasurablePolicyVersion",
+    "PreviewUploadKeyClaim",
+    "PreviewUploadKeyClaimProtocol",
+    "PreviewUploadLoudnessMeasured",
+    "PreviewUploadLoudnessMeasuredKind",
+    "PreviewUploadLoudnessUnmeasurable",
+    "PreviewUploadLoudnessUnmeasurableKind",
+    "PreviewUploadManifest",
+    "PreviewUploadManifestChunkSize",
+    "PreviewUploadMedia",
+    "PreviewUploadMediaCodecs",
+    "PreviewUploadMediaMimeType",
+    "PreviewUploadMediaSampleRate",
+    "PreviewUploadSession",
+    "PreviewUploadSessionState",
     "ProductSessionMetadata",
     "ProductSessionMetadataClientKind",
     "ProductSessionOrganization",
@@ -458,6 +559,7 @@ __all__ = (
     "PublishProjectStageRequest",
     "PublishProjectStageSecFetchSite",
     "PutEncryptedObjectManifestSecFetchSite",
+    "PutFilePreviewUploadManifestSecFetchSite",
     "PutManifestRequest",
     "ReadDescriptor",
     "ReadDescriptorContract",
@@ -470,12 +572,42 @@ __all__ = (
     "ReadObjectSuiteId",
     "ReadObjectWrapAlg",
     "ReadProjectFile",
+    "RealtimeError",
+    "RealtimeErrorCode",
+    "RealtimeErrorType",
+    "RealtimePreviewLifecycleInvalidated",
+    "RealtimePreviewLifecycleInvalidatedType",
+    "RealtimeProjectChangesCatchUpRequired",
+    "RealtimeProjectChangesCatchUpRequiredReason",
+    "RealtimeProjectChangesCatchUpRequiredType",
+    "RealtimeProjectChangesSubscribed",
+    "RealtimeProjectChangesSubscribedType",
+    "RealtimeProjectChatCatchUpRequired",
+    "RealtimeProjectChatCatchUpRequiredReason",
+    "RealtimeProjectChatCatchUpRequiredType",
+    "RealtimeProjectChatError",
+    "RealtimeProjectChatErrorCode",
+    "RealtimeProjectChatErrorType",
+    "RealtimeProjectChatEventHint",
+    "RealtimeProjectChatEventHintType",
+    "RealtimeProjectChatSubscribed",
+    "RealtimeProjectChatSubscribedType",
+    "RealtimeProjectFilesInvalidated",
+    "RealtimeProjectFilesInvalidatedType",
+    "RealtimeProjectReviewInvalidated",
+    "RealtimeProjectReviewInvalidatedType",
+    "RealtimeProjectScheduleInvalidated",
+    "RealtimeProjectScheduleInvalidatedType",
+    "RealtimeProjectSummariesInvalidated",
+    "RealtimeProjectSummariesInvalidatedType",
     "RefreshProductSessionSecFetchSite",
     "RefreshSessionResponse",
     "RegenerateInvitationRequest",
     "RegenerateProjectInvitationSecFetchSite",
     "RemoveProjectMemberSecFetchSite",
     "ReplyEnvelope",
+    "ResetFilePreviewUploadSecFetchSite",
+    "ResetPreviewUploadRequest",
     "ResolveCommentRequest",
     "ResolveTimelineCommentSecFetchSite",
     "Responsibility",
@@ -514,6 +646,8 @@ __all__ = (
     "UpdateProjectParticipationPolicyRequest",
     "UpdateProjectParticipationPolicySecFetchSite",
     "UpdateProjectResponsibilitySecFetchSite",
+    "UpdateProjectStageLabelRequest",
+    "UpdateProjectStageLabelSecFetchSite",
     "UpdateProjectStageRequest",
     "UpdateProjectStageSecFetchSite",
     "UpdateProjectTaskRequest",

@@ -1,7 +1,7 @@
-from enum import StrEnum
+from enum import Enum
 
 
-class PreviewPlaybackLoudnessMeasuredKind(StrEnum):
+class PreviewPlaybackLoudnessMeasuredKind(str, Enum):
     MEASURED = "measured"
 
     def __str__(self) -> str:

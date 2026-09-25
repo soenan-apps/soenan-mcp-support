@@ -42,9 +42,7 @@ class FilePreviewReadDescriptorResponse:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.file_preview_read_descriptor import (
-            FilePreviewReadDescriptor,
-        )
+        from ..models.file_preview_read_descriptor import FilePreviewReadDescriptor
 
         d = dict(src_dict)
         ok = d.pop("ok")

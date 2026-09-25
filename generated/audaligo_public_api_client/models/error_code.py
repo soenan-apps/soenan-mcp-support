@@ -1,7 +1,7 @@
-from enum import StrEnum
+from enum import Enum
 
 
-class ErrorCode(StrEnum):
+class ErrorCode(str, Enum):
     ACCESS_DENIED = "access_denied"
     AUTHORIZATION_UNAVAILABLE = "authorization_unavailable"
     CHAT_UNAVAILABLE = "chat_unavailable"
@@ -24,6 +24,8 @@ class ErrorCode(StrEnum):
     NOT_AUTHOR = "not_author"
     NOT_FOUND = "not_found"
     ORIGIN_NOT_ALLOWED = "origin_not_allowed"
+    PREVIEW_MANIFEST_CONFLICT = "preview_manifest_conflict"
+    PREVIEW_REQUIRED = "preview_required"
     PRODUCT_ACCESS_REQUIRED = "product_access_required"
     PROJECT_ACCESS_DENIED = "project_access_denied"
     PROJECT_CONFLICT = "project_conflict"

@@ -24,12 +24,18 @@ class UploadSessionResponse:
         key_epoch (int):
         entry_intent (ProjectFileEntryIntent):
         preview_intent (PreviewIntent | Unset):
+        preview_id (str | Unset):
+        processing_id (str | Unset):
+        job_id (str | Unset):
     """
 
     upload_id: str
     key_epoch: int
     entry_intent: ProjectFileEntryIntent
     preview_intent: PreviewIntent | Unset = UNSET
+    preview_id: str | Unset = UNSET
+    processing_id: str | Unset = UNSET
+    job_id: str | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         upload_id = self.upload_id
@@ -42,6 +48,12 @@ class UploadSessionResponse:
         if not isinstance(self.preview_intent, Unset):
             preview_intent = self.preview_intent.to_dict()
 
+        preview_id = self.preview_id
+
+        processing_id = self.processing_id
+
+        job_id = self.job_id
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -53,15 +65,19 @@ class UploadSessionResponse:
         )
         if preview_intent is not UNSET:
             field_dict["previewIntent"] = preview_intent
+        if preview_id is not UNSET:
+            field_dict["previewId"] = preview_id
+        if processing_id is not UNSET:
+            field_dict["processingId"] = processing_id
+        if job_id is not UNSET:
+            field_dict["jobId"] = job_id
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.preview_intent import PreviewIntent
-        from ..models.project_file_entry_intent import (
-            ProjectFileEntryIntent,
-        )
+        from ..models.project_file_entry_intent import ProjectFileEntryIntent
 
         d = dict(src_dict)
         upload_id = d.pop("uploadId")
@@ -77,11 +93,20 @@ class UploadSessionResponse:
         else:
             preview_intent = PreviewIntent.from_dict(_preview_intent)
 
+        preview_id = d.pop("previewId", UNSET)
+
+        processing_id = d.pop("processingId", UNSET)
+
+        job_id = d.pop("jobId", UNSET)
+
         upload_session_response = cls(
             upload_id=upload_id,
             key_epoch=key_epoch,
             entry_intent=entry_intent,
             preview_intent=preview_intent,
+            preview_id=preview_id,
+            processing_id=processing_id,
+            job_id=job_id,
         )
 
         return upload_session_response

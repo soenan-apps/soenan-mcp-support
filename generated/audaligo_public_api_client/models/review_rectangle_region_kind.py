@@ -1,7 +1,7 @@
-from enum import StrEnum
+from enum import Enum
 
 
-class ReviewRectangleRegionKind(StrEnum):
+class ReviewRectangleRegionKind(str, Enum):
     RECTANGLE = "rectangle"
 
     def __str__(self) -> str:

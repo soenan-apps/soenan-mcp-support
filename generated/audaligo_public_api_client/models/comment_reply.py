@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
+from dateutil.parser import isoparse
 from typing_extensions import Self
 
 if TYPE_CHECKING:
@@ -42,15 +43,9 @@ class CommentReply:
     created_at: datetime.datetime
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.comment_project_reference import (
-            CommentProjectReference,
-        )
-        from ..models.file_project_reference import (
-            FileProjectReference,
-        )
-        from ..models.stage_project_reference import (
-            StageProjectReference,
-        )
+        from ..models.comment_project_reference import CommentProjectReference
+        from ..models.file_project_reference import FileProjectReference
+        from ..models.stage_project_reference import StageProjectReference
 
         id = self.id
 
@@ -90,19 +85,13 @@ class CommentReply:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.comment_project_reference import (
-            CommentProjectReference,
-        )
+        from ..models.comment_project_reference import CommentProjectReference
         from ..models.comment_reply_project_reference import (
             CommentReplyProjectReference,
         )
-        from ..models.file_project_reference import (
-            FileProjectReference,
-        )
+        from ..models.file_project_reference import FileProjectReference
         from ..models.member_actor import MemberActor
-        from ..models.stage_project_reference import (
-            StageProjectReference,
-        )
+        from ..models.stage_project_reference import StageProjectReference
 
         d = dict(src_dict)
         id = d.pop("id")
@@ -165,7 +154,7 @@ class CommentReply:
 
         author = MemberActor.from_dict(d.pop("author"))
 
-        created_at = datetime.datetime.fromisoformat(d.pop("createdAt"))
+        created_at = isoparse(d.pop("createdAt"))
 
         comment_reply = cls(
             id=id,

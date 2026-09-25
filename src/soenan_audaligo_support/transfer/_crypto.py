@@ -64,6 +64,7 @@ class EncryptionPlan:
     wrapped_nonce: bytes
     wrapped_data_key: bytes
     chunks: tuple[ChunkMetadata, ...]
+    source_sha256: bytes | None = None
 
     def manifest(self) -> dict[str, object]:
         return {
@@ -116,6 +117,117 @@ class EncryptionPlan:
                 final=chunk.final,
             ),
         )
+
+
+@dataclass(frozen=True)
+class PreviewEncryptionPlan:
+    project_id: str
+    source_object_id: str
+    processing_id: str
+    preview_id: str
+    job_id: str
+    epoch: int
+    plaintext_size: int
+    nonce_base: bytes
+    data_key: bytes
+    chunks: tuple[ChunkMetadata, ...]
+
+    def seal_chunk(self, cleartext: bytes, index: int) -> bytes:
+        chunk = self.chunks[index]
+        if len(cleartext) != chunk.plaintext_size:
+            raise EncryptionContractError("preview plaintext chunk size does not match plan")
+        return AESGCM(self.data_key).encrypt(
+            chunk_nonce(self.nonce_base, index),
+            cleartext,
+            preview_chunk_aad(
+                project_id=self.project_id,
+                source_object_id=self.source_object_id,
+                processing_id=self.processing_id,
+                preview_id=self.preview_id,
+                job_id=self.job_id,
+                total_plaintext_size=self.plaintext_size,
+                chunk_count=len(self.chunks),
+                chunk_size=CHUNK_SIZE,
+                chunk_index=index,
+                plaintext_offset=chunk.plaintext_offset,
+                plaintext_length=chunk.plaintext_size,
+                final=chunk.final,
+            ),
+        )
+
+
+def build_preview_encryption_plan(
+    stream: BinaryIO,
+    *,
+    project_id: str,
+    source_object_id: str,
+    processing_id: str,
+    preview_id: str,
+    job_id: str,
+    epoch: int,
+    data_key: bytes,
+    nonce_base: bytes,
+    plaintext_size: int,
+) -> PreviewEncryptionPlan:
+    for context in (project_id, source_object_id, processing_id, preview_id, job_id):
+        _context(context)
+    if isinstance(epoch, bool) or not 0 <= epoch <= MAXIMUM_WIRE_INTEGER:
+        raise EncryptionContractError("epoch must be a canonical wire integer")
+    if len(data_key) != 32 or not any(data_key):
+        raise EncryptionContractError("data key must be a nonzero 256-bit key")
+    if len(nonce_base) != 8:
+        raise EncryptionContractError("preview nonce base must be eight bytes")
+    if plaintext_size <= 0:
+        raise EncryptionContractError("preview plaintext size must be positive")
+    count = (plaintext_size + CHUNK_SIZE - 1) // CHUNK_SIZE
+    if count > MAXIMUM_CHUNKS:
+        raise EncryptionContractError("preview exceeds managed chunk limit")
+    # Audaligo reserves the nonce base with the preview identity; retries must
+    # retain both it and the encoded bytes to avoid reusing a nonce for new text.
+    start = stream.tell()
+    chunks: list[ChunkMetadata] = []
+    plaintext_offset = ciphertext_offset = 0
+    for index in range(count):
+        length = min(CHUNK_SIZE, plaintext_size - plaintext_offset)
+        final = index + 1 == count
+        ciphertext = AESGCM(data_key).encrypt(
+            chunk_nonce(nonce_base, index),
+            _read_exact(stream, length),
+            preview_chunk_aad(
+                project_id=project_id,
+                source_object_id=source_object_id,
+                processing_id=processing_id,
+                preview_id=preview_id,
+                job_id=job_id,
+                total_plaintext_size=plaintext_size,
+                chunk_count=count,
+                chunk_size=CHUNK_SIZE,
+                chunk_index=index,
+                plaintext_offset=plaintext_offset,
+                plaintext_length=length,
+                final=final,
+            ),
+        )
+        chunks.append(
+            ChunkMetadata(
+                index=index,
+                ciphertext_offset=ciphertext_offset,
+                ciphertext_sha256=sha256(ciphertext).digest(),
+                ciphertext_size=len(ciphertext),
+                final=final,
+                plaintext_offset=plaintext_offset,
+                plaintext_size=length,
+            )
+        )
+        plaintext_offset += length
+        ciphertext_offset += len(ciphertext)
+    if stream.read(1):
+        raise EncryptionContractError("preview stream exceeds its declared size")
+    stream.seek(start)
+    return PreviewEncryptionPlan(
+        project_id, source_object_id, processing_id, preview_id, job_id,
+        epoch, plaintext_size, nonce_base, data_key, tuple(chunks),
+    )
 
 
 @dataclass(frozen=True)
@@ -235,6 +347,7 @@ def build_encryption_plan(
     wrapped_nonce: bytes,
     wrapped_data_key: bytes,
     plaintext_size: int,
+    capture_source_sha256: bool = False,
 ) -> EncryptionPlan:
     _context(project_id)
     _context(file_id)
@@ -263,9 +376,12 @@ def build_encryption_plan(
     chunks: list[ChunkMetadata] = []
     plaintext_offset = 0
     ciphertext_offset = 0
+    source_digest = sha256() if capture_source_sha256 else None
     for index in range(chunk_count):
         plaintext_length = min(CHUNK_SIZE, plaintext_size - plaintext_offset)
         cleartext = _read_exact(stream, plaintext_length)
+        if source_digest is not None:
+            source_digest.update(cleartext)
         final = index + 1 == chunk_count
         ciphertext = AESGCM(data_key).encrypt(
             chunk_nonce(nonce_base, index),
@@ -311,6 +427,7 @@ def build_encryption_plan(
         wrapped_nonce=wrapped_nonce,
         wrapped_data_key=wrapped_data_key,
         chunks=tuple(chunks),
+        source_sha256=source_digest.digest() if source_digest is not None else None,
     )
 
 

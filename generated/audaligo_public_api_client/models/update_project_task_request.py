@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from typing import Any, TypeVar, cast
 
 from attrs import define as _attrs_define
+from dateutil.parser import isoparse
 from typing_extensions import Self
 
 from ..models.project_task_status import ProjectTaskStatus
@@ -67,9 +68,9 @@ class UpdateProjectTaskRequest:
 
         title = d.pop("title")
 
-        start_date = datetime.date.fromisoformat(d.pop("startDate"))
+        start_date = isoparse(d.pop("startDate")).date()
 
-        end_date = datetime.date.fromisoformat(d.pop("endDate"))
+        end_date = isoparse(d.pop("endDate")).date()
 
         def _parse_assignee_membership_id(data: object) -> None | str:
             if data is None:

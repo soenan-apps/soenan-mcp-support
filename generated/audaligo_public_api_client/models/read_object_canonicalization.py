@@ -1,7 +1,7 @@
-from enum import StrEnum
+from enum import Enum
 
 
-class ReadObjectCanonicalization(StrEnum):
+class ReadObjectCanonicalization(str, Enum):
     JCS_RFC8785 = "JCS-RFC8785"
 
     def __str__(self) -> str:

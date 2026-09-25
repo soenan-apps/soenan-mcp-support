@@ -1,7 +1,7 @@
-from enum import StrEnum
+from enum import Enum
 
 
-class PreviewPlaybackLoudnessMeasuredPolicyVersion(StrEnum):
+class PreviewPlaybackLoudnessMeasuredPolicyVersion(str, Enum):
     EBU_R128_PLAYBACK_V1 = "ebu-r128-playback-v1"
 
     def __str__(self) -> str:

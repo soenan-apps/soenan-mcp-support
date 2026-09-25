@@ -1,7 +1,7 @@
-from enum import StrEnum
+from enum import Enum
 
 
-class ReadObjectManifestType(StrEnum):
+class ReadObjectManifestType(str, Enum):
     AUDALIGO_MANAGED_ENCRYPTED_OBJECT_MANIFEST = (
         "audaligo.managed-encrypted-object-manifest"
     )

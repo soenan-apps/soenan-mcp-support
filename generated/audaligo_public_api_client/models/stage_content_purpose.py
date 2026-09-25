@@ -1,7 +1,7 @@
-from enum import StrEnum
+from enum import Enum
 
 
-class StageContentPurpose(StrEnum):
+class StageContentPurpose(str, Enum):
     MIX = "mix"
     MODEL_3D = "model_3d"
     PRODUCTION_PLAN = "production_plan"

@@ -1,7 +1,7 @@
-from enum import StrEnum
+from enum import Enum
 
 
-class CommentProjectReferenceKind(StrEnum):
+class CommentProjectReferenceKind(str, Enum):
     COMMENT = "comment"
 
     def __str__(self) -> str:

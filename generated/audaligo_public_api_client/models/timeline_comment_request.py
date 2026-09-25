@@ -37,9 +37,7 @@ class TimelineCommentRequest:
     def to_dict(self) -> dict[str, Any]:
         from ..models.file_review_anchor import FileReviewAnchor
         from ..models.review_pin_region import ReviewPinRegion
-        from ..models.review_rectangle_region import (
-            ReviewRectangleRegion,
-        )
+        from ..models.review_rectangle_region import ReviewRectangleRegion
         from ..models.review_time_span import ReviewTimeSpan
 
         anchor: dict[str, Any]
@@ -84,9 +82,7 @@ class TimelineCommentRequest:
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.file_review_anchor import FileReviewAnchor
         from ..models.review_pin_region import ReviewPinRegion
-        from ..models.review_rectangle_region import (
-            ReviewRectangleRegion,
-        )
+        from ..models.review_rectangle_region import ReviewRectangleRegion
         from ..models.review_time_span import ReviewTimeSpan
         from ..models.stage_review_anchor import StageReviewAnchor
 

@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
+from dateutil.parser import isoparse
 from typing_extensions import Self
 
 from ..models.project_file_entry_kind import ProjectFileEntryKind
@@ -99,9 +100,7 @@ class ProjectFileEntry:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.project_entry_breadcrumb import (
-            ProjectEntryBreadcrumb,
-        )
+        from ..models.project_entry_breadcrumb import ProjectEntryBreadcrumb
         from ..models.project_file import ProjectFile
 
         d = dict(src_dict)
@@ -122,9 +121,9 @@ class ProjectFileEntry:
 
         revision = d.pop("revision")
 
-        created_at = datetime.datetime.fromisoformat(d.pop("createdAt"))
+        created_at = isoparse(d.pop("createdAt"))
 
-        updated_at = datetime.datetime.fromisoformat(d.pop("updatedAt"))
+        updated_at = isoparse(d.pop("updatedAt"))
 
         def _parse_deleted_at(data: object) -> datetime.datetime | None:
             if data is None:
@@ -132,7 +131,7 @@ class ProjectFileEntry:
             try:
                 if not isinstance(data, str):
                     raise TypeError()
-                deleted_at_type_1 = datetime.datetime.fromisoformat(data)
+                deleted_at_type_1 = isoparse(data)
 
                 return deleted_at_type_1
             except (TypeError, ValueError, AttributeError, KeyError):

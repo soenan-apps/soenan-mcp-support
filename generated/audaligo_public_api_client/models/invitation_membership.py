@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from typing import Any, TypeVar, cast
 
 from attrs import define as _attrs_define
+from dateutil.parser import isoparse
 from typing_extensions import Self
 
 from ..models.invitation_membership_access_role import InvitationMembershipAccessRole
@@ -108,7 +109,7 @@ class InvitationMembership:
             try:
                 if not isinstance(data, str):
                     raise TypeError()
-                joined_at_type_1 = datetime.datetime.fromisoformat(data)
+                joined_at_type_1 = isoparse(data)
 
                 return joined_at_type_1
             except (TypeError, ValueError, AttributeError, KeyError):
@@ -125,7 +126,7 @@ class InvitationMembership:
             try:
                 if not isinstance(data, str):
                     raise TypeError()
-                removed_at_type_1 = datetime.datetime.fromisoformat(data)
+                removed_at_type_1 = isoparse(data)
 
                 return removed_at_type_1
             except (TypeError, ValueError, AttributeError, KeyError):

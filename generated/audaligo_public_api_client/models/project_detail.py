@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
+from dateutil.parser import isoparse
 from typing_extensions import Self
 
 from ..models.project_detail_status import ProjectDetailStatus
@@ -136,9 +137,9 @@ class ProjectDetail:
 
         responsibility = Responsibility.from_dict(d.pop("responsibility"))
 
-        created_at = datetime.datetime.fromisoformat(d.pop("createdAt"))
+        created_at = isoparse(d.pop("createdAt"))
 
-        updated_at = datetime.datetime.fromisoformat(d.pop("updatedAt"))
+        updated_at = isoparse(d.pop("updatedAt"))
 
         brief = ProjectBrief.from_dict(d.pop("brief"))
 

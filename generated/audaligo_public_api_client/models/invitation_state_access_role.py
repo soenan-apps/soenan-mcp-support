@@ -1,7 +1,7 @@
-from enum import StrEnum
+from enum import Enum
 
 
-class InvitationStateAccessRole(StrEnum):
+class InvitationStateAccessRole(str, Enum):
     EDITOR = "editor"
     VIEWER = "viewer"
 

@@ -1,7 +1,7 @@
-from enum import StrEnum
+from enum import Enum
 
 
-class ProjectParticipationPolicy(StrEnum):
+class ProjectParticipationPolicy(str, Enum):
     ORGANIZATION = "organization"
     PRIVATE = "private"
 

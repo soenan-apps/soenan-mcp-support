@@ -38,15 +38,9 @@ class SendChatMessageRequest:
     ]
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.comment_project_reference import (
-            CommentProjectReference,
-        )
-        from ..models.file_project_reference import (
-            FileProjectReference,
-        )
-        from ..models.stage_project_reference import (
-            StageProjectReference,
-        )
+        from ..models.comment_project_reference import CommentProjectReference
+        from ..models.file_project_reference import FileProjectReference
+        from ..models.stage_project_reference import StageProjectReference
 
         client_operation_id = self.client_operation_id
 
@@ -83,18 +77,12 @@ class SendChatMessageRequest:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.comment_project_reference import (
-            CommentProjectReference,
-        )
+        from ..models.comment_project_reference import CommentProjectReference
         from ..models.comment_reply_project_reference import (
             CommentReplyProjectReference,
         )
-        from ..models.file_project_reference import (
-            FileProjectReference,
-        )
-        from ..models.stage_project_reference import (
-            StageProjectReference,
-        )
+        from ..models.file_project_reference import FileProjectReference
+        from ..models.stage_project_reference import StageProjectReference
 
         d = dict(src_dict)
         client_operation_id = d.pop("clientOperationId")

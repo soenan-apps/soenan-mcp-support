@@ -1,7 +1,7 @@
-from enum import StrEnum
+from enum import Enum
 
 
-class ProjectTaskStatus(StrEnum):
+class ProjectTaskStatus(str, Enum):
     DONE = "done"
     IN_PROGRESS = "in_progress"
     NOT_STARTED = "not_started"

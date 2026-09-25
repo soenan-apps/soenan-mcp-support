@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 from attrs import define as _attrs_define
 from typing_extensions import Self
 
+from ..models.file_preview_state_preparation import FilePreviewStatePreparation
 from ..models.file_preview_state_state import FilePreviewStateState
 
 if TYPE_CHECKING:
@@ -22,6 +23,8 @@ class FilePreviewState:
         file_id (str):
         preview_id (str):
         state (FilePreviewStateState):
+        preparation (FilePreviewStatePreparation): Client upload is still owned by the uploader; server jobs handle
+            historical AAC/video previews.
         reason (None | str):
         media (FilePreviewMedia | None):
     """
@@ -29,6 +32,7 @@ class FilePreviewState:
     file_id: str
     preview_id: str
     state: FilePreviewStateState
+    preparation: FilePreviewStatePreparation
     reason: None | str
     media: FilePreviewMedia | None
 
@@ -40,6 +44,8 @@ class FilePreviewState:
         preview_id = self.preview_id
 
         state = self.state.value
+
+        preparation = self.preparation.value
 
         reason: None | str
         reason = self.reason
@@ -57,6 +63,7 @@ class FilePreviewState:
                 "fileId": file_id,
                 "previewId": preview_id,
                 "state": state,
+                "preparation": preparation,
                 "reason": reason,
                 "media": media,
             }
@@ -74,6 +81,8 @@ class FilePreviewState:
         preview_id = d.pop("previewId")
 
         state = FilePreviewStateState(d.pop("state"))
+
+        preparation = FilePreviewStatePreparation(d.pop("preparation"))
 
         def _parse_reason(data: object) -> None | str:
             if data is None:
@@ -101,6 +110,7 @@ class FilePreviewState:
             file_id=file_id,
             preview_id=preview_id,
             state=state,
+            preparation=preparation,
             reason=reason,
             media=media,
         )

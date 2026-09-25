@@ -69,12 +69,8 @@ class AuthenticatedProductSession:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.product_session_metadata import (
-            ProductSessionMetadata,
-        )
-        from ..models.product_session_organization import (
-            ProductSessionOrganization,
-        )
+        from ..models.product_session_metadata import ProductSessionMetadata
+        from ..models.product_session_organization import ProductSessionOrganization
         from ..models.product_session_user import ProductSessionUser
 
         d = dict(src_dict)

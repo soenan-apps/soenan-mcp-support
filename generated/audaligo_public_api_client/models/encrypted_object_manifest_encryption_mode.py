@@ -1,7 +1,7 @@
-from enum import StrEnum
+from enum import Enum
 
 
-class EncryptedObjectManifestEncryptionMode(StrEnum):
+class EncryptedObjectManifestEncryptionMode(str, Enum):
     MANAGED_PROJECT_KEY = "managed-project-key"
 
     def __str__(self) -> str:

@@ -45,9 +45,7 @@ class EncryptedProjectFileListResponse:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.encrypted_project_file import (
-            EncryptedProjectFile,
-        )
+        from ..models.encrypted_project_file import EncryptedProjectFile
 
         d = dict(src_dict)
         ok = d.pop("ok")

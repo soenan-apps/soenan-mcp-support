@@ -1,7 +1,7 @@
-from enum import StrEnum
+from enum import Enum
 
 
-class InvitationMembershipState(StrEnum):
+class InvitationMembershipState(str, Enum):
     ACTIVE = "active"
     REMOVED = "removed"
 

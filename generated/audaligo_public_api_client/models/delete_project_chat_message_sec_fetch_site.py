@@ -1,7 +1,7 @@
-from enum import StrEnum
+from enum import Enum
 
 
-class DeleteProjectChatMessageSecFetchSite(StrEnum):
+class DeleteProjectChatMessageSecFetchSite(str, Enum):
     SAME_ORIGIN = "same-origin"
 
     def __str__(self) -> str:
