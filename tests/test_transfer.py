@@ -17,10 +17,10 @@ import pytest
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from typing_extensions import Self
 
-from soenan_audaligo_support.transfer import _claim, _cli, _workflow
-from soenan_audaligo_support.transfer._api import AudaligoTransferAPI
-from soenan_audaligo_support.transfer._claim import FileKeyClaim
-from soenan_audaligo_support.transfer._crypto import (
+from soenan_arteligo_support.transfer import _claim, _cli, _workflow
+from soenan_arteligo_support.transfer._api import ArteligoTransferAPI
+from soenan_arteligo_support.transfer._claim import FileKeyClaim
+from soenan_arteligo_support.transfer._crypto import (
     CHUNK_SIZE,
     ChunkMetadata,
     chunk_aad,
@@ -28,8 +28,8 @@ from soenan_audaligo_support.transfer._crypto import (
     parse_preview_decryption_plan,
     preview_chunk_aad,
 )
-from soenan_audaligo_support.transfer._handoff import parse_handoff
-from soenan_audaligo_support.transfer._http import (
+from soenan_arteligo_support.transfer._handoff import parse_handoff
+from soenan_arteligo_support.transfer._http import (
     DEFAULT_TIMEOUTS,
     TransferError,
     TransferHTTPError,
@@ -140,7 +140,7 @@ def test_legacy_preview_upload_commits_source_without_local_sidecar(
         def begin_preview_upload(self, **kwargs: object) -> None:
             pytest.fail("legacy previews must be processed by server jobs")
 
-    monkeypatch.setattr(_workflow, "AudaligoTransferAPI", API)
+    monkeypatch.setattr(_workflow, "ArteligoTransferAPI", API)
     monkeypatch.setattr(_workflow, "redeem_file_key_claim", lambda *args, **kwargs: FileKeyClaim(
         direction="upload", project_id="project_1", object_id="upload_1",
         epoch=7, data_key=b"k" * 32, wrapped_nonce=b"n" * 12,
@@ -194,7 +194,15 @@ def test_handoff_uses_canonical_file_identity() -> None:
 def test_handoff_rejects_wrong_protocol_origin_binding_and_expired_claim() -> None:
     valid = _upload_handoff()
     variants = (
-        {**valid, "protocolVersion": "audaligo.encrypted-transfer.v2"},
+        {**valid, "protocolVersion": "arteligo.encrypted-transfer.v2"},
+        {**valid, "protocolVersion": "audaligo.encrypted-transfer.v1"},
+        {
+            **valid,
+            "keyClaim": {
+                **valid["keyClaim"],
+                "protocol": "audaligo.file-key-claim.v1",
+            },
+        },
         {
             **valid,
             "keyClaim": {
@@ -249,7 +257,7 @@ def test_continuation_control_client_never_sends_authorization_header() -> None:
             200,
             json={
                 "capability": {
-                    "contract": "audaligo.railway-bucket-capability",
+                    "contract": "arteligo.railway-bucket-capability",
                     "v": 1,
                     "operation": "GET",
                     "objectId": "object_1",
@@ -262,8 +270,8 @@ def test_continuation_control_client_never_sends_authorization_header() -> None:
             },
         )
 
-    with AudaligoTransferAPI(
-        control_origin="https://audaligo.example",
+    with ArteligoTransferAPI(
+        control_origin="https://arteligo.example",
         continuation="c" * 43,
         timeouts=DEFAULT_TIMEOUTS,
         control_transport=httpx.MockTransport(handle),
@@ -272,7 +280,7 @@ def test_continuation_control_client_never_sends_authorization_header() -> None:
 
     assert len(requests) == 1
     assert "authorization" not in requests[0].headers
-    assert requests[0].headers["Audaligo-Transfer-Continuation"] == "c" * 43
+    assert requests[0].headers["Arteligo-Transfer-Continuation"] == "c" * 43
 
 
 def test_preview_control_uses_generated_source_bound_routes_and_continuation() -> None:
@@ -322,8 +330,8 @@ def test_preview_control_uses_generated_source_bound_routes_and_continuation() -
             "playbackLoudness": {"kind": "unmeasurable"},
         },
     }
-    with AudaligoTransferAPI(
-        control_origin="https://audaligo.example",
+    with ArteligoTransferAPI(
+        control_origin="https://arteligo.example",
         continuation="c" * 43,
         timeouts=DEFAULT_TIMEOUTS,
         control_transport=httpx.MockTransport(handle),
@@ -344,7 +352,7 @@ def test_preview_control_uses_generated_source_bound_routes_and_continuation() -
         "/api/projects/project_1/files/file_1/preview-upload/completion",
     ]
     assert all(
-        request.headers["Audaligo-Transfer-Continuation"] == "c" * 43
+        request.headers["Arteligo-Transfer-Continuation"] == "c" * 43
         and "authorization" not in request.headers
         for request in requests
     )
@@ -356,7 +364,7 @@ def test_control_request_total_deadline_includes_dribbling_response_parse() -> N
     payload = json.dumps(
         {
             "capability": {
-                "contract": "audaligo.railway-bucket-capability",
+                "contract": "arteligo.railway-bucket-capability",
                 "v": 1,
                 "operation": "GET",
                 "objectId": "object_1",
@@ -381,8 +389,8 @@ def test_control_request_total_deadline_includes_dribbling_response_parse() -> N
     started = time.monotonic()
     with (
         pytest.raises(TransferTimeoutError) as captured,
-        AudaligoTransferAPI(
-            control_origin="https://audaligo.example",
+        ArteligoTransferAPI(
+            control_origin="https://arteligo.example",
             continuation="c" * 43,
             timeouts=TransferTimeouts(connect=0.05, read=0.05, total=0.05),
             control_transport=httpx.MockTransport(handle),
@@ -440,14 +448,14 @@ def test_later_chunk_failure_writes_nothing_to_nonseekable_destination(
             raise TransferError("later chunk failed")
         return b"a"
 
-    monkeypatch.setattr(_workflow, "AudaligoTransferAPI", API)
+    monkeypatch.setattr(_workflow, "ArteligoTransferAPI", API)
     monkeypatch.setattr(_workflow, "_download_ciphertext_chunk", download_chunk)
     destination = NonseekableDestination()
 
     with pytest.raises(TransferError, match="later chunk failed"):
         _workflow._download(
             SimpleNamespace(
-                control_origin="https://audaligo.example",
+                control_origin="https://arteligo.example",
                 continuation="c" * 43,
                 project_id="project_1",
             ),
@@ -537,7 +545,7 @@ def test_cli_rejects_duplicate_handoff_fields_before_engine_start(
     assert not called
 
 
-def test_preview_aad_matches_audaligo_ordered_encoding() -> None:
+def test_preview_aad_preserves_persisted_format_encoding() -> None:
     actual = preview_chunk_aad(
         project_id="project_1",
         source_object_id="source_1",
@@ -761,7 +769,7 @@ def test_upload_stops_after_first_bucket_put_rejection(
             committed = True
             return {}
 
-    monkeypatch.setattr(_workflow, "AudaligoTransferAPI", API)
+    monkeypatch.setattr(_workflow, "ArteligoTransferAPI", API)
     monkeypatch.setattr(
         _workflow,
         "redeem_file_key_claim",
@@ -797,8 +805,8 @@ def _upload_handoff() -> dict[str, Any]:
         "epoch": "7",
         "keyClaim": _key_claim(),
         "continuation": "c" * 43,
-        "controlOrigin": "https://audaligo.example",
-        "protocolVersion": "audaligo.encrypted-transfer.v1",
+        "controlOrigin": "https://arteligo.example",
+        "protocolVersion": "arteligo.encrypted-transfer.v1",
         "upload": {
             "filename": "recording.wav",
             "plaintextSize": "5",
@@ -816,8 +824,8 @@ def _file_handoff() -> dict[str, Any]:
         "epoch": "7",
         "keyClaim": _key_claim(),
         "continuation": "c" * 43,
-        "controlOrigin": "https://audaligo.example",
-        "protocolVersion": "audaligo.encrypted-transfer.v1",
+        "controlOrigin": "https://arteligo.example",
+        "protocolVersion": "arteligo.encrypted-transfer.v1",
         "file": {
             "projectId": "project_1",
             "fileId": "file_1",
@@ -904,9 +912,9 @@ def _preview_manifest(
 
 def _key_claim() -> dict[str, Any]:
     return {
-        "url": f"https://audaligo.example/claims/key#{'a' * 43}",
+        "url": f"https://arteligo.example/claims/key#{'a' * 43}",
         "expiresAtUnixMilliseconds": "4102444800000",
-        "protocol": "audaligo.file-key-claim.v1",
+        "protocol": "arteligo.file-key-claim.v1",
     }
 
 

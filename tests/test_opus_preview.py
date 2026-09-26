@@ -13,16 +13,16 @@ from typing import Any
 import pytest
 from typing_extensions import Self
 
-from soenan_audaligo_support.transfer import _workflow
-from soenan_audaligo_support.transfer._claim import FileKeyClaim
-from soenan_audaligo_support.transfer._crypto import (
+from soenan_arteligo_support.transfer import _workflow
+from soenan_arteligo_support.transfer._claim import FileKeyClaim
+from soenan_arteligo_support.transfer._crypto import (
     build_preview_encryption_plan,
     parse_preview_decryption_plan,
 )
-from soenan_audaligo_support.transfer._http import (
+from soenan_arteligo_support.transfer._http import (
     TransferError, TransferSizeMismatch, TransferTimeoutError,
 )
-from soenan_audaligo_support.transfer._opus import (
+from soenan_arteligo_support.transfer._opus import (
     preflight_wav_preview, prepare_opus_preview,
 )
 
@@ -197,7 +197,7 @@ def test_insufficient_local_disk_stops_before_media_process(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from types import SimpleNamespace
-    from soenan_audaligo_support.transfer import _opus
+    from soenan_arteligo_support.transfer import _opus
 
     data = _wav()
     monkeypatch.setattr(_opus.shutil, "disk_usage", lambda path: SimpleNamespace(free=0))
@@ -214,12 +214,12 @@ def _handoff(size: int) -> dict[str, Any]:
     return {
         "operation": "upload", "projectId": "project_1", "objectId": "source_1",
         "epoch": "7", "continuation": "c" * 43,
-        "controlOrigin": "https://audaligo.example",
-        "protocolVersion": "audaligo.encrypted-transfer.v1",
+        "controlOrigin": "https://arteligo.example",
+        "protocolVersion": "arteligo.encrypted-transfer.v1",
         "keyClaim": {
-            "url": f"https://audaligo.example/key-claims/source#{'a' * 43}",
+            "url": f"https://arteligo.example/key-claims/source#{'a' * 43}",
             "expiresAtUnixMilliseconds": "4102444800000",
-            "protocol": "audaligo.file-key-claim.v1",
+            "protocol": "arteligo.file-key-claim.v1",
         },
         "upload": {
             "filename": "recording.wav", "plaintextSize": str(size),
@@ -281,9 +281,9 @@ def test_source_commit_precedes_scoped_preview_publication(
                 "epoch": "7", "state": preview_state,
                 "nonceBaseB64u": _b64(bytes([108 + index]) * 8),
                 "keyClaim": {
-                    "url": f"https://audaligo.example/key-claims/preview#{'b' * 43}",
+                    "url": f"https://arteligo.example/key-claims/preview#{'b' * 43}",
                     "expiresAtUnixMilliseconds": "4102444800000",
-                    "protocol": "audaligo.file-key-claim.v1",
+                    "protocol": "arteligo.file-key-claim.v1",
                 },
             }
 
@@ -300,9 +300,9 @@ def test_source_commit_precedes_scoped_preview_publication(
                 "epoch": "7", "state": "reserved",
                 "nonceBaseB64u": _b64(bytes([108 + index]) * 8),
                 "keyClaim": {
-                    "url": f"https://audaligo.example/key-claims/preview#{'b' * 43}",
+                    "url": f"https://arteligo.example/key-claims/preview#{'b' * 43}",
                     "expiresAtUnixMilliseconds": "4102444800000",
-                    "protocol": "audaligo.file-key-claim.v1",
+                    "protocol": "arteligo.file-key-claim.v1",
                 },
             }
 
@@ -336,7 +336,7 @@ def test_source_commit_precedes_scoped_preview_publication(
             wrapped_nonce=b"w" * 12, wrapped_data_key=b"d" * 48,
         )
 
-    monkeypatch.setattr(_workflow, "AudaligoTransferAPI", API)
+    monkeypatch.setattr(_workflow, "ArteligoTransferAPI", API)
     monkeypatch.setattr(_workflow, "redeem_file_key_claim", key_claim)
     monkeypatch.setattr(
         _workflow, "put_ciphertext",
@@ -420,7 +420,7 @@ def test_ready_preview_retry_does_not_reset_or_encode(
             wrapped_nonce=b"w" * 12, wrapped_data_key=b"d" * 48,
         )
 
-    monkeypatch.setattr(_workflow, "AudaligoTransferAPI", API)
+    monkeypatch.setattr(_workflow, "ArteligoTransferAPI", API)
     monkeypatch.setattr(_workflow, "redeem_file_key_claim", claim)
     monkeypatch.setattr(
         _workflow, "prepare_opus_preview",

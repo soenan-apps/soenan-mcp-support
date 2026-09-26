@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "soenan-audaligo-support"
+name = "soenan-arteligo-support"
 version = "0.1.0"
-description = "MCP-authorized client-side encrypted Audaligo transfers"
+description = "MCP-authorized client-side encrypted Arteligo transfers"
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "Soenan" }]
@@ -32,10 +32,10 @@ classifiers = [
 Repository = "https://github.com/soenan-apps/soenan-mcp-support"
 
 [project.scripts]
-soenan-audaligo-transfer = "soenan_audaligo_support.transfer._cli:main"
+soenan-arteligo-transfer = "soenan_arteligo_support.transfer._cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src", "generated"]
 
 [tool.setuptools.package-data]
-soenan_audaligo_support = ["py.typed"]
+soenan_arteligo_support = ["py.typed"]
