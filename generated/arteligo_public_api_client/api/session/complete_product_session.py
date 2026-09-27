@@ -12,6 +12,7 @@ def _get_kwargs(
     *,
     code: str,
     state: str,
+    iss: str,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
@@ -19,6 +20,8 @@ def _get_kwargs(
     params["code"] = code
 
     params["state"] = state
+
+    params["iss"] = iss
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -59,11 +62,13 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     code: str,
     state: str,
+    iss: str,
 ) -> Response[Any | ErrorEnvelope]:
     """
     Args:
         code (str):
         state (str):
+        iss (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -76,6 +81,7 @@ def sync_detailed(
     kwargs = _get_kwargs(
         code=code,
         state=state,
+        iss=iss,
     )
 
     response = client.get_httpx_client().request(
@@ -90,11 +96,13 @@ def sync(
     client: AuthenticatedClient | Client,
     code: str,
     state: str,
+    iss: str,
 ) -> Any | ErrorEnvelope | None:
     """
     Args:
         code (str):
         state (str):
+        iss (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -108,6 +116,7 @@ def sync(
         client=client,
         code=code,
         state=state,
+        iss=iss,
     ).parsed
 
 
@@ -116,11 +125,13 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     code: str,
     state: str,
+    iss: str,
 ) -> Response[Any | ErrorEnvelope]:
     """
     Args:
         code (str):
         state (str):
+        iss (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -133,6 +144,7 @@ async def asyncio_detailed(
     kwargs = _get_kwargs(
         code=code,
         state=state,
+        iss=iss,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -145,11 +157,13 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     code: str,
     state: str,
+    iss: str,
 ) -> Any | ErrorEnvelope | None:
     """
     Args:
         code (str):
         state (str):
+        iss (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -164,5 +178,6 @@ async def asyncio(
             client=client,
             code=code,
             state=state,
+            iss=iss,
         )
     ).parsed

@@ -17,12 +17,13 @@ def _get_kwargs(
     task: str,
     *,
     body: UpdateProjectTaskRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: UpdateProjectTaskSecFetchSite | Unset = UNSET,
     idempotency_key: str,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
-    headers["Origin"] = origin
+    if not isinstance(origin, Unset):
+        headers["Origin"] = origin
 
     if not isinstance(sec_fetch_site, Unset):
         headers["Sec-Fetch-Site"] = str(sec_fetch_site)
@@ -75,7 +76,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient,
     body: UpdateProjectTaskRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: UpdateProjectTaskSecFetchSite | Unset = UNSET,
     idempotency_key: str,
 ) -> Response[ErrorEnvelope | ProjectTaskResponse]:
@@ -83,7 +84,7 @@ def sync_detailed(
     Args:
         project (str):
         task (str):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (UpdateProjectTaskSecFetchSite | Unset):
         idempotency_key (str):
         body (UpdateProjectTaskRequest):
@@ -118,7 +119,7 @@ def sync(
     *,
     client: AuthenticatedClient,
     body: UpdateProjectTaskRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: UpdateProjectTaskSecFetchSite | Unset = UNSET,
     idempotency_key: str,
 ) -> ErrorEnvelope | ProjectTaskResponse | None:
@@ -126,7 +127,7 @@ def sync(
     Args:
         project (str):
         task (str):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (UpdateProjectTaskSecFetchSite | Unset):
         idempotency_key (str):
         body (UpdateProjectTaskRequest):
@@ -156,7 +157,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient,
     body: UpdateProjectTaskRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: UpdateProjectTaskSecFetchSite | Unset = UNSET,
     idempotency_key: str,
 ) -> Response[ErrorEnvelope | ProjectTaskResponse]:
@@ -164,7 +165,7 @@ async def asyncio_detailed(
     Args:
         project (str):
         task (str):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (UpdateProjectTaskSecFetchSite | Unset):
         idempotency_key (str):
         body (UpdateProjectTaskRequest):
@@ -197,7 +198,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient,
     body: UpdateProjectTaskRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: UpdateProjectTaskSecFetchSite | Unset = UNSET,
     idempotency_key: str,
 ) -> ErrorEnvelope | ProjectTaskResponse | None:
@@ -205,7 +206,7 @@ async def asyncio(
     Args:
         project (str):
         task (str):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (UpdateProjectTaskSecFetchSite | Unset):
         idempotency_key (str):
         body (UpdateProjectTaskRequest):

@@ -20,11 +20,12 @@ def _get_kwargs(
     project: str,
     *,
     body: UpdateProjectParticipationPolicyRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: UpdateProjectParticipationPolicySecFetchSite | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
-    headers["Origin"] = origin
+    if not isinstance(origin, Unset):
+        headers["Origin"] = origin
 
     if not isinstance(sec_fetch_site, Unset):
         headers["Sec-Fetch-Site"] = str(sec_fetch_site)
@@ -73,13 +74,13 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: UpdateProjectParticipationPolicyRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: UpdateProjectParticipationPolicySecFetchSite | Unset = UNSET,
 ) -> Response[ErrorEnvelope | ProjectEnvelope]:
     """
     Args:
         project (str):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (UpdateProjectParticipationPolicySecFetchSite | Unset):
         body (UpdateProjectParticipationPolicyRequest):
 
@@ -110,13 +111,13 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: UpdateProjectParticipationPolicyRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: UpdateProjectParticipationPolicySecFetchSite | Unset = UNSET,
 ) -> ErrorEnvelope | ProjectEnvelope | None:
     """
     Args:
         project (str):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (UpdateProjectParticipationPolicySecFetchSite | Unset):
         body (UpdateProjectParticipationPolicyRequest):
 
@@ -142,13 +143,13 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: UpdateProjectParticipationPolicyRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: UpdateProjectParticipationPolicySecFetchSite | Unset = UNSET,
 ) -> Response[ErrorEnvelope | ProjectEnvelope]:
     """
     Args:
         project (str):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (UpdateProjectParticipationPolicySecFetchSite | Unset):
         body (UpdateProjectParticipationPolicyRequest):
 
@@ -177,13 +178,13 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: UpdateProjectParticipationPolicyRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: UpdateProjectParticipationPolicySecFetchSite | Unset = UNSET,
 ) -> ErrorEnvelope | ProjectEnvelope | None:
     """
     Args:
         project (str):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (UpdateProjectParticipationPolicySecFetchSite | Unset):
         body (UpdateProjectParticipationPolicyRequest):
 

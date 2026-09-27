@@ -19,12 +19,13 @@ def _get_kwargs(
     upload: str,
     *,
     body: PutManifestRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: PutEncryptedObjectManifestSecFetchSite | Unset = UNSET,
     arteligo_transfer_continuation: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
-    headers["Origin"] = origin
+    if not isinstance(origin, Unset):
+        headers["Origin"] = origin
 
     if not isinstance(sec_fetch_site, Unset):
         headers["Sec-Fetch-Site"] = str(sec_fetch_site)
@@ -83,7 +84,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient,
     body: PutManifestRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: PutEncryptedObjectManifestSecFetchSite | Unset = UNSET,
     arteligo_transfer_continuation: str | Unset = UNSET,
 ) -> Response[ErrorEnvelope | ObjectStateResponse]:
@@ -91,7 +92,7 @@ def sync_detailed(
     Args:
         project (str):
         upload (str):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (PutEncryptedObjectManifestSecFetchSite | Unset):
         arteligo_transfer_continuation (str | Unset):
         body (PutManifestRequest):
@@ -126,7 +127,7 @@ def sync(
     *,
     client: AuthenticatedClient,
     body: PutManifestRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: PutEncryptedObjectManifestSecFetchSite | Unset = UNSET,
     arteligo_transfer_continuation: str | Unset = UNSET,
 ) -> ErrorEnvelope | ObjectStateResponse | None:
@@ -134,7 +135,7 @@ def sync(
     Args:
         project (str):
         upload (str):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (PutEncryptedObjectManifestSecFetchSite | Unset):
         arteligo_transfer_continuation (str | Unset):
         body (PutManifestRequest):
@@ -164,7 +165,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient,
     body: PutManifestRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: PutEncryptedObjectManifestSecFetchSite | Unset = UNSET,
     arteligo_transfer_continuation: str | Unset = UNSET,
 ) -> Response[ErrorEnvelope | ObjectStateResponse]:
@@ -172,7 +173,7 @@ async def asyncio_detailed(
     Args:
         project (str):
         upload (str):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (PutEncryptedObjectManifestSecFetchSite | Unset):
         arteligo_transfer_continuation (str | Unset):
         body (PutManifestRequest):
@@ -205,7 +206,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient,
     body: PutManifestRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: PutEncryptedObjectManifestSecFetchSite | Unset = UNSET,
     arteligo_transfer_continuation: str | Unset = UNSET,
 ) -> ErrorEnvelope | ObjectStateResponse | None:
@@ -213,7 +214,7 @@ async def asyncio(
     Args:
         project (str):
         upload (str):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (PutEncryptedObjectManifestSecFetchSite | Unset):
         arteligo_transfer_continuation (str | Unset):
         body (PutManifestRequest):

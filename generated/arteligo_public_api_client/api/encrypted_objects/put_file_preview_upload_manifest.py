@@ -19,12 +19,13 @@ def _get_kwargs(
     file: str,
     *,
     body: PreviewUploadManifest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: PutFilePreviewUploadManifestSecFetchSite | Unset = UNSET,
     arteligo_transfer_continuation: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
-    headers["Origin"] = origin
+    if not isinstance(origin, Unset):
+        headers["Origin"] = origin
 
     if not isinstance(sec_fetch_site, Unset):
         headers["Sec-Fetch-Site"] = str(sec_fetch_site)
@@ -83,7 +84,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient,
     body: PreviewUploadManifest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: PutFilePreviewUploadManifestSecFetchSite | Unset = UNSET,
     arteligo_transfer_continuation: str | Unset = UNSET,
 ) -> Response[ErrorEnvelope | ObjectStateResponse]:
@@ -91,7 +92,7 @@ def sync_detailed(
     Args:
         project (str):
         file (str):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (PutFilePreviewUploadManifestSecFetchSite | Unset):
         arteligo_transfer_continuation (str | Unset):
         body (PreviewUploadManifest): Client-encrypted Opus WebM sidecar metadata for a committed
@@ -127,7 +128,7 @@ def sync(
     *,
     client: AuthenticatedClient,
     body: PreviewUploadManifest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: PutFilePreviewUploadManifestSecFetchSite | Unset = UNSET,
     arteligo_transfer_continuation: str | Unset = UNSET,
 ) -> ErrorEnvelope | ObjectStateResponse | None:
@@ -135,7 +136,7 @@ def sync(
     Args:
         project (str):
         file (str):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (PutFilePreviewUploadManifestSecFetchSite | Unset):
         arteligo_transfer_continuation (str | Unset):
         body (PreviewUploadManifest): Client-encrypted Opus WebM sidecar metadata for a committed
@@ -166,7 +167,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient,
     body: PreviewUploadManifest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: PutFilePreviewUploadManifestSecFetchSite | Unset = UNSET,
     arteligo_transfer_continuation: str | Unset = UNSET,
 ) -> Response[ErrorEnvelope | ObjectStateResponse]:
@@ -174,7 +175,7 @@ async def asyncio_detailed(
     Args:
         project (str):
         file (str):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (PutFilePreviewUploadManifestSecFetchSite | Unset):
         arteligo_transfer_continuation (str | Unset):
         body (PreviewUploadManifest): Client-encrypted Opus WebM sidecar metadata for a committed
@@ -208,7 +209,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient,
     body: PreviewUploadManifest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: PutFilePreviewUploadManifestSecFetchSite | Unset = UNSET,
     arteligo_transfer_continuation: str | Unset = UNSET,
 ) -> ErrorEnvelope | ObjectStateResponse | None:
@@ -216,7 +217,7 @@ async def asyncio(
     Args:
         project (str):
         file (str):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (PutFilePreviewUploadManifestSecFetchSite | Unset):
         arteligo_transfer_continuation (str | Unset):
         body (PreviewUploadManifest): Client-encrypted Opus WebM sidecar metadata for a committed

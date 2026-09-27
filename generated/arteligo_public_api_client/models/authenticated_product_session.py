@@ -24,7 +24,6 @@ class AuthenticatedProductSession:
         kind (AuthenticatedProductSessionKind):
         authenticated (bool):
         user (ProductSessionUser):
-        active_organization (ProductSessionOrganization):
         joined_organizations (list[ProductSessionOrganization]):
         session (ProductSessionMetadata):
     """
@@ -32,7 +31,6 @@ class AuthenticatedProductSession:
     kind: AuthenticatedProductSessionKind
     authenticated: bool
     user: ProductSessionUser
-    active_organization: ProductSessionOrganization
     joined_organizations: list[ProductSessionOrganization]
     session: ProductSessionMetadata
 
@@ -42,8 +40,6 @@ class AuthenticatedProductSession:
         authenticated = self.authenticated
 
         user = self.user.to_dict()
-
-        active_organization = self.active_organization.to_dict()
 
         joined_organizations = []
         for joined_organizations_item_data in self.joined_organizations:
@@ -59,7 +55,6 @@ class AuthenticatedProductSession:
                 "kind": kind,
                 "authenticated": authenticated,
                 "user": user,
-                "activeOrganization": active_organization,
                 "joinedOrganizations": joined_organizations,
                 "session": session,
             }
@@ -80,10 +75,6 @@ class AuthenticatedProductSession:
 
         user = ProductSessionUser.from_dict(d.pop("user"))
 
-        active_organization = ProductSessionOrganization.from_dict(
-            d.pop("activeOrganization")
-        )
-
         joined_organizations = []
         _joined_organizations = d.pop("joinedOrganizations")
         for joined_organizations_item_data in _joined_organizations:
@@ -99,7 +90,6 @@ class AuthenticatedProductSession:
             kind=kind,
             authenticated=authenticated,
             user=user,
-            active_organization=active_organization,
             joined_organizations=joined_organizations,
             session=session,
         )

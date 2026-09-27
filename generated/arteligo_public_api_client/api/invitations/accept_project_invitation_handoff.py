@@ -16,14 +16,19 @@ from ...types import UNSET, Response, Unset
 def _get_kwargs(
     *,
     body: InvitationHandoffAccept,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: AcceptProjectInvitationHandoffSecFetchSite | Unset = UNSET,
+    x_arteligo_invitation_handoff: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
-    headers["Origin"] = origin
+    if not isinstance(origin, Unset):
+        headers["Origin"] = origin
 
     if not isinstance(sec_fetch_site, Unset):
         headers["Sec-Fetch-Site"] = str(sec_fetch_site)
+
+    if not isinstance(x_arteligo_invitation_handoff, Unset):
+        headers["X-Arteligo-Invitation-Handoff"] = x_arteligo_invitation_handoff
 
     _kwargs: dict[str, Any] = {
         "method": "post",
@@ -66,15 +71,17 @@ def sync_detailed(
     *,
     client: AuthenticatedClient,
     body: InvitationHandoffAccept,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: AcceptProjectInvitationHandoffSecFetchSite | Unset = UNSET,
+    x_arteligo_invitation_handoff: str | Unset = UNSET,
 ) -> Response[ErrorEnvelope | InvitationStatus]:
-    """Requires the product session and the HttpOnly binding cookie named for the invitation ID in the
-    request body.
+    """Requires either the Web session and HttpOnly invitation binding, or a native Account Bearer and its
+    same-subject/session handoff header. Mixing transports is rejected.
 
     Args:
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (AcceptProjectInvitationHandoffSecFetchSite | Unset):
+        x_arteligo_invitation_handoff (str | Unset):
         body (InvitationHandoffAccept):
 
     Raises:
@@ -89,6 +96,7 @@ def sync_detailed(
         body=body,
         origin=origin,
         sec_fetch_site=sec_fetch_site,
+        x_arteligo_invitation_handoff=x_arteligo_invitation_handoff,
     )
 
     response = client.get_httpx_client().request(
@@ -102,15 +110,17 @@ def sync(
     *,
     client: AuthenticatedClient,
     body: InvitationHandoffAccept,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: AcceptProjectInvitationHandoffSecFetchSite | Unset = UNSET,
+    x_arteligo_invitation_handoff: str | Unset = UNSET,
 ) -> ErrorEnvelope | InvitationStatus | None:
-    """Requires the product session and the HttpOnly binding cookie named for the invitation ID in the
-    request body.
+    """Requires either the Web session and HttpOnly invitation binding, or a native Account Bearer and its
+    same-subject/session handoff header. Mixing transports is rejected.
 
     Args:
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (AcceptProjectInvitationHandoffSecFetchSite | Unset):
+        x_arteligo_invitation_handoff (str | Unset):
         body (InvitationHandoffAccept):
 
     Raises:
@@ -126,6 +136,7 @@ def sync(
         body=body,
         origin=origin,
         sec_fetch_site=sec_fetch_site,
+        x_arteligo_invitation_handoff=x_arteligo_invitation_handoff,
     ).parsed
 
 
@@ -133,15 +144,17 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient,
     body: InvitationHandoffAccept,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: AcceptProjectInvitationHandoffSecFetchSite | Unset = UNSET,
+    x_arteligo_invitation_handoff: str | Unset = UNSET,
 ) -> Response[ErrorEnvelope | InvitationStatus]:
-    """Requires the product session and the HttpOnly binding cookie named for the invitation ID in the
-    request body.
+    """Requires either the Web session and HttpOnly invitation binding, or a native Account Bearer and its
+    same-subject/session handoff header. Mixing transports is rejected.
 
     Args:
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (AcceptProjectInvitationHandoffSecFetchSite | Unset):
+        x_arteligo_invitation_handoff (str | Unset):
         body (InvitationHandoffAccept):
 
     Raises:
@@ -156,6 +169,7 @@ async def asyncio_detailed(
         body=body,
         origin=origin,
         sec_fetch_site=sec_fetch_site,
+        x_arteligo_invitation_handoff=x_arteligo_invitation_handoff,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -167,15 +181,17 @@ async def asyncio(
     *,
     client: AuthenticatedClient,
     body: InvitationHandoffAccept,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: AcceptProjectInvitationHandoffSecFetchSite | Unset = UNSET,
+    x_arteligo_invitation_handoff: str | Unset = UNSET,
 ) -> ErrorEnvelope | InvitationStatus | None:
-    """Requires the product session and the HttpOnly binding cookie named for the invitation ID in the
-    request body.
+    """Requires either the Web session and HttpOnly invitation binding, or a native Account Bearer and its
+    same-subject/session handoff header. Mixing transports is rejected.
 
     Args:
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (AcceptProjectInvitationHandoffSecFetchSite | Unset):
+        x_arteligo_invitation_handoff (str | Unset):
         body (InvitationHandoffAccept):
 
     Raises:
@@ -192,5 +208,6 @@ async def asyncio(
             body=body,
             origin=origin,
             sec_fetch_site=sec_fetch_site,
+            x_arteligo_invitation_handoff=x_arteligo_invitation_handoff,
         )
     ).parsed

@@ -18,12 +18,13 @@ def _get_kwargs(
     upload: str,
     chunk: int,
     *,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: CreateChunkUploadCapabilitySecFetchSite | Unset = UNSET,
     arteligo_transfer_continuation: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
-    headers["Origin"] = origin
+    if not isinstance(origin, Unset):
+        headers["Origin"] = origin
 
     if not isinstance(sec_fetch_site, Unset):
         headers["Sec-Fetch-Site"] = str(sec_fetch_site)
@@ -74,7 +75,7 @@ def sync_detailed(
     chunk: int,
     *,
     client: AuthenticatedClient,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: CreateChunkUploadCapabilitySecFetchSite | Unset = UNSET,
     arteligo_transfer_continuation: str | Unset = UNSET,
 ) -> Response[CapabilityResponse | ErrorEnvelope]:
@@ -83,7 +84,7 @@ def sync_detailed(
         project (str):
         upload (str):
         chunk (int):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (CreateChunkUploadCapabilitySecFetchSite | Unset):
         arteligo_transfer_continuation (str | Unset):
 
@@ -117,7 +118,7 @@ def sync(
     chunk: int,
     *,
     client: AuthenticatedClient,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: CreateChunkUploadCapabilitySecFetchSite | Unset = UNSET,
     arteligo_transfer_continuation: str | Unset = UNSET,
 ) -> CapabilityResponse | ErrorEnvelope | None:
@@ -126,7 +127,7 @@ def sync(
         project (str):
         upload (str):
         chunk (int):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (CreateChunkUploadCapabilitySecFetchSite | Unset):
         arteligo_transfer_continuation (str | Unset):
 
@@ -155,7 +156,7 @@ async def asyncio_detailed(
     chunk: int,
     *,
     client: AuthenticatedClient,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: CreateChunkUploadCapabilitySecFetchSite | Unset = UNSET,
     arteligo_transfer_continuation: str | Unset = UNSET,
 ) -> Response[CapabilityResponse | ErrorEnvelope]:
@@ -164,7 +165,7 @@ async def asyncio_detailed(
         project (str):
         upload (str):
         chunk (int):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (CreateChunkUploadCapabilitySecFetchSite | Unset):
         arteligo_transfer_continuation (str | Unset):
 
@@ -196,7 +197,7 @@ async def asyncio(
     chunk: int,
     *,
     client: AuthenticatedClient,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: CreateChunkUploadCapabilitySecFetchSite | Unset = UNSET,
     arteligo_transfer_continuation: str | Unset = UNSET,
 ) -> CapabilityResponse | ErrorEnvelope | None:
@@ -205,7 +206,7 @@ async def asyncio(
         project (str):
         upload (str):
         chunk (int):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (CreateChunkUploadCapabilitySecFetchSite | Unset):
         arteligo_transfer_continuation (str | Unset):
 

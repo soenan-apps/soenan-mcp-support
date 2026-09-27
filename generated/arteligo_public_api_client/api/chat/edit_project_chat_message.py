@@ -19,11 +19,12 @@ def _get_kwargs(
     message: str,
     *,
     body: EditChatMessageRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: EditProjectChatMessageSecFetchSite | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
-    headers["Origin"] = origin
+    if not isinstance(origin, Unset):
+        headers["Origin"] = origin
 
     if not isinstance(sec_fetch_site, Unset):
         headers["Sec-Fetch-Site"] = str(sec_fetch_site)
@@ -74,14 +75,14 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: EditChatMessageRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: EditProjectChatMessageSecFetchSite | Unset = UNSET,
 ) -> Response[ChatEvent | ErrorEnvelope]:
     """
     Args:
         project (str):
         message (str):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (EditProjectChatMessageSecFetchSite | Unset):
         body (EditChatMessageRequest):
 
@@ -114,14 +115,14 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: EditChatMessageRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: EditProjectChatMessageSecFetchSite | Unset = UNSET,
 ) -> ChatEvent | ErrorEnvelope | None:
     """
     Args:
         project (str):
         message (str):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (EditProjectChatMessageSecFetchSite | Unset):
         body (EditChatMessageRequest):
 
@@ -149,14 +150,14 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: EditChatMessageRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: EditProjectChatMessageSecFetchSite | Unset = UNSET,
 ) -> Response[ChatEvent | ErrorEnvelope]:
     """
     Args:
         project (str):
         message (str):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (EditProjectChatMessageSecFetchSite | Unset):
         body (EditChatMessageRequest):
 
@@ -187,14 +188,14 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: EditChatMessageRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: EditProjectChatMessageSecFetchSite | Unset = UNSET,
 ) -> ChatEvent | ErrorEnvelope | None:
     """
     Args:
         project (str):
         message (str):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (EditProjectChatMessageSecFetchSite | Unset):
         body (EditChatMessageRequest):
 

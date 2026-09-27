@@ -16,11 +16,12 @@ def _get_kwargs(
     project: str,
     membership_id: str,
     *,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: RemoveProjectMemberSecFetchSite | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
-    headers["Origin"] = origin
+    if not isinstance(origin, Unset):
+        headers["Origin"] = origin
 
     if not isinstance(sec_fetch_site, Unset):
         headers["Sec-Fetch-Site"] = str(sec_fetch_site)
@@ -65,7 +66,7 @@ def sync_detailed(
     membership_id: str,
     *,
     client: AuthenticatedClient | Client,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: RemoveProjectMemberSecFetchSite | Unset = UNSET,
 ) -> Response[Any | ErrorEnvelope]:
     """Only the project owner can remove an invitation-origin member. Repeated removal is idempotent.
@@ -74,7 +75,7 @@ def sync_detailed(
     Args:
         project (str):
         membership_id (str):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (RemoveProjectMemberSecFetchSite | Unset):
 
     Raises:
@@ -104,7 +105,7 @@ def sync(
     membership_id: str,
     *,
     client: AuthenticatedClient | Client,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: RemoveProjectMemberSecFetchSite | Unset = UNSET,
 ) -> Any | ErrorEnvelope | None:
     """Only the project owner can remove an invitation-origin member. Repeated removal is idempotent.
@@ -113,7 +114,7 @@ def sync(
     Args:
         project (str):
         membership_id (str):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (RemoveProjectMemberSecFetchSite | Unset):
 
     Raises:
@@ -138,7 +139,7 @@ async def asyncio_detailed(
     membership_id: str,
     *,
     client: AuthenticatedClient | Client,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: RemoveProjectMemberSecFetchSite | Unset = UNSET,
 ) -> Response[Any | ErrorEnvelope]:
     """Only the project owner can remove an invitation-origin member. Repeated removal is idempotent.
@@ -147,7 +148,7 @@ async def asyncio_detailed(
     Args:
         project (str):
         membership_id (str):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (RemoveProjectMemberSecFetchSite | Unset):
 
     Raises:
@@ -175,7 +176,7 @@ async def asyncio(
     membership_id: str,
     *,
     client: AuthenticatedClient | Client,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: RemoveProjectMemberSecFetchSite | Unset = UNSET,
 ) -> Any | ErrorEnvelope | None:
     """Only the project owner can remove an invitation-origin member. Repeated removal is idempotent.
@@ -184,7 +185,7 @@ async def asyncio(
     Args:
         project (str):
         membership_id (str):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (RemoveProjectMemberSecFetchSite | Unset):
 
     Raises:

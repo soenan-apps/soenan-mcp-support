@@ -18,12 +18,13 @@ def _get_kwargs(
     project: str,
     *,
     body: TimelineCommentRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: CreateTimelineCommentSecFetchSite | Unset = UNSET,
     idempotency_key: str,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
-    headers["Origin"] = origin
+    if not isinstance(origin, Unset):
+        headers["Origin"] = origin
 
     if not isinstance(sec_fetch_site, Unset):
         headers["Sec-Fetch-Site"] = str(sec_fetch_site)
@@ -74,14 +75,14 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: TimelineCommentRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: CreateTimelineCommentSecFetchSite | Unset = UNSET,
     idempotency_key: str,
 ) -> Response[CommentEnvelope | ErrorEnvelope]:
     """
     Args:
         project (str):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (CreateTimelineCommentSecFetchSite | Unset):
         idempotency_key (str):
         body (TimelineCommentRequest):
@@ -114,14 +115,14 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: TimelineCommentRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: CreateTimelineCommentSecFetchSite | Unset = UNSET,
     idempotency_key: str,
 ) -> CommentEnvelope | ErrorEnvelope | None:
     """
     Args:
         project (str):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (CreateTimelineCommentSecFetchSite | Unset):
         idempotency_key (str):
         body (TimelineCommentRequest):
@@ -149,14 +150,14 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: TimelineCommentRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: CreateTimelineCommentSecFetchSite | Unset = UNSET,
     idempotency_key: str,
 ) -> Response[CommentEnvelope | ErrorEnvelope]:
     """
     Args:
         project (str):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (CreateTimelineCommentSecFetchSite | Unset):
         idempotency_key (str):
         body (TimelineCommentRequest):
@@ -187,14 +188,14 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: TimelineCommentRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: CreateTimelineCommentSecFetchSite | Unset = UNSET,
     idempotency_key: str,
 ) -> CommentEnvelope | ErrorEnvelope | None:
     """
     Args:
         project (str):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (CreateTimelineCommentSecFetchSite | Unset):
         idempotency_key (str):
         body (TimelineCommentRequest):

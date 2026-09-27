@@ -2,7 +2,7 @@
 
 `soenan-arteligo-support` consumes an authorized MCP `structuredContent` handoff, redeems its one-use file-key claim, and transfers ciphertext directly between the local process and Railway Bucket. Soenan MCP starts every transfer. The SDK does not start an Arteligo product operation and does not call Soenan MCP.
 
-The MCP client uses the single canonical MCP OAuth resource to obtain Account-owned delegation. That bearer authorizes MCP only; the SDK never forwards it to Arteligo. Account owns delegation and product access, while Arteligo owns project, file, key, claim, continuation, and Bucket-capability lifecycle.
+The MCP client obtains an Account-issued JWT for the single canonical MCP OAuth resource. MCP and Arteligo validate that JWT against Account JWKS. The SDK never forwards it to Arteligo. Account owns tokens and current product access; Arteligo owns project, file, key, claim, continuation, and Bucket-capability lifecycle.
 
 ## Requirements
 
@@ -87,7 +87,7 @@ Every handoff uses `protocolVersion` `arteligo.encrypted-transfer.v1` and contai
 
 The handoff never contains a clear data key, wrapped data key, project key, presigned URL, or Bucket header. It carries opaque claim and continuation descriptors only through the direct standard-input or in-process handoff. Claim redemption is the only response that supplies operation-bound clear key material to the local SDK process.
 
-Arteligo keys claim state by the SHA-256 digests of a 16-byte claim ID and a 32-byte claim secret. A claim expires after at most 600 seconds, can be consumed once, and does not mirror the durable wrapped key. Active continuation is bounded to 7,200 seconds. Every continuation control operation makes Arteligo resolve the Account delegation again and recheck current product, project, file, and resource authority.
+Arteligo keys claim state by the SHA-256 digests of a 16-byte claim ID and a 32-byte claim secret. A claim expires after at most 600 seconds, can be consumed once, and does not mirror the durable wrapped key. Active continuation is bounded to 7,200 seconds. Each continuation control operation checks the saved Account principal and current product, project, file, and resource authority; the SDK sends no OAuth bearer.
 
 The parser rejects an unsupported protocol, unknown field, missing field, expired claim, noncanonical integer, malformed URL, origin mismatch, operation mismatch, metadata or manifest binding mismatch before transfer control starts. A preview manifest uses the canonical `audaligo.preview.read.v1` contract and accepts audio (`audio/mp4`, `mp4a.40.2` or `audio/webm`, `opus`) or video (`video/mp4`, H.264 with optional AAC) output tuples. Bitrate is not part of this download descriptor.
 
@@ -108,11 +108,11 @@ The SDK can reacquire a rejected download capability once because it buffers the
 ## Security invariants
 
 - Soenan MCP begins every transfer before the SDK parses a handoff.
-- Account owns delegation and product access. Arteligo owns project, file, key, claim, continuation, and Bucket-capability lifecycle.
+- Account owns JWT issuance and current product access. Arteligo owns project, file, key, claim, continuation, and Bucket-capability lifecycle.
 - The SDK alone redeems the claim, handles clear key material, performs chunk cryptography, and controls Bucket I/O.
 - Plaintext and clear data keys stay in the local process.
 - Arteligo receives the opaque continuation header on control requests. The SDK sends and accepts no bearer credential.
-- Browser file transfer is an independent product-session flow. Arteligo's public file API does not accept an Arteligo OAuth bearer.
+- Browser file transfer uses Arteligo's HttpOnly cookie; native control APIs use an Arteligo-audience Bearer JWT. The SDK uses only the MCP-authorized handoff and continuation, never either credential.
 - File downloads validate project, file, object, epoch, chunk layout, ciphertext length, SHA-256 digest, and AES-GCM authentication.
 - Audio and video preview downloads authenticate the Arteligo preview IDs, sizes, offsets, and final-chunk state with `audaligo:managed:file-preview:chunk-aead:v1` additional data.
 - Uploads detect source size or content changes before commit.

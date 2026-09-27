@@ -5,29 +5,25 @@ import httpx
 
 from ...client import AuthenticatedClient, Client
 from ...models.error_envelope import ErrorEnvelope
-from ...models.logout_product_session_response import LogoutProductSessionResponse
-from ...models.logout_product_session_sec_fetch_site import (
-    LogoutProductSessionSecFetchSite,
-)
-from ...types import UNSET, Response, Unset
+from ...models.invitation_handoff_capture import InvitationHandoffCapture
+from ...models.native_invitation_handoff import NativeInvitationHandoff
+from ...types import Response
 
 
 def _get_kwargs(
     *,
-    origin: str | Unset = UNSET,
-    sec_fetch_site: LogoutProductSessionSecFetchSite | Unset = UNSET,
+    body: InvitationHandoffCapture,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
-    if not isinstance(origin, Unset):
-        headers["Origin"] = origin
-
-    if not isinstance(sec_fetch_site, Unset):
-        headers["Sec-Fetch-Site"] = str(sec_fetch_site)
 
     _kwargs: dict[str, Any] = {
         "method": "post",
-        "url": "/auth/logout",
+        "url": "/api/project-invitations/handoff/native",
     }
+
+    _kwargs["json"] = body.to_dict()
+
+    headers["Content-Type"] = "application/json"
 
     _kwargs["headers"] = headers
     return _kwargs
@@ -35,9 +31,9 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> ErrorEnvelope | LogoutProductSessionResponse:
+) -> ErrorEnvelope | NativeInvitationHandoff:
     if response.status_code == 200:
-        response_200 = LogoutProductSessionResponse.from_dict(response.json())
+        response_200 = NativeInvitationHandoff.from_dict(response.json())
 
         return response_200
 
@@ -48,7 +44,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[ErrorEnvelope | LogoutProductSessionResponse]:
+) -> Response[ErrorEnvelope | NativeInvitationHandoff]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -59,26 +55,25 @@ def _build_response(
 
 def sync_detailed(
     *,
-    client: AuthenticatedClient | Client,
-    origin: str | Unset = UNSET,
-    sec_fetch_site: LogoutProductSessionSecFetchSite | Unset = UNSET,
-) -> Response[ErrorEnvelope | LogoutProductSessionResponse]:
-    """
+    client: AuthenticatedClient,
+    body: InvitationHandoffCapture,
+) -> Response[ErrorEnvelope | NativeInvitationHandoff]:
+    """Bind an invitation proof to the verified native Account subject and session; only the digest is
+    persisted, never the returned binding.
+
     Args:
-        origin (str | Unset):
-        sec_fetch_site (LogoutProductSessionSecFetchSite | Unset):
+        body (InvitationHandoffCapture):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorEnvelope | LogoutProductSessionResponse]
+        Response[ErrorEnvelope | NativeInvitationHandoff]
     """
 
     kwargs = _get_kwargs(
-        origin=origin,
-        sec_fetch_site=sec_fetch_site,
+        body=body,
     )
 
     response = client.get_httpx_client().request(
@@ -90,52 +85,50 @@ def sync_detailed(
 
 def sync(
     *,
-    client: AuthenticatedClient | Client,
-    origin: str | Unset = UNSET,
-    sec_fetch_site: LogoutProductSessionSecFetchSite | Unset = UNSET,
-) -> ErrorEnvelope | LogoutProductSessionResponse | None:
-    """
+    client: AuthenticatedClient,
+    body: InvitationHandoffCapture,
+) -> ErrorEnvelope | NativeInvitationHandoff | None:
+    """Bind an invitation proof to the verified native Account subject and session; only the digest is
+    persisted, never the returned binding.
+
     Args:
-        origin (str | Unset):
-        sec_fetch_site (LogoutProductSessionSecFetchSite | Unset):
+        body (InvitationHandoffCapture):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorEnvelope | LogoutProductSessionResponse
+        ErrorEnvelope | NativeInvitationHandoff
     """
 
     return sync_detailed(
         client=client,
-        origin=origin,
-        sec_fetch_site=sec_fetch_site,
+        body=body,
     ).parsed
 
 
 async def asyncio_detailed(
     *,
-    client: AuthenticatedClient | Client,
-    origin: str | Unset = UNSET,
-    sec_fetch_site: LogoutProductSessionSecFetchSite | Unset = UNSET,
-) -> Response[ErrorEnvelope | LogoutProductSessionResponse]:
-    """
+    client: AuthenticatedClient,
+    body: InvitationHandoffCapture,
+) -> Response[ErrorEnvelope | NativeInvitationHandoff]:
+    """Bind an invitation proof to the verified native Account subject and session; only the digest is
+    persisted, never the returned binding.
+
     Args:
-        origin (str | Unset):
-        sec_fetch_site (LogoutProductSessionSecFetchSite | Unset):
+        body (InvitationHandoffCapture):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorEnvelope | LogoutProductSessionResponse]
+        Response[ErrorEnvelope | NativeInvitationHandoff]
     """
 
     kwargs = _get_kwargs(
-        origin=origin,
-        sec_fetch_site=sec_fetch_site,
+        body=body,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -145,27 +138,26 @@ async def asyncio_detailed(
 
 async def asyncio(
     *,
-    client: AuthenticatedClient | Client,
-    origin: str | Unset = UNSET,
-    sec_fetch_site: LogoutProductSessionSecFetchSite | Unset = UNSET,
-) -> ErrorEnvelope | LogoutProductSessionResponse | None:
-    """
+    client: AuthenticatedClient,
+    body: InvitationHandoffCapture,
+) -> ErrorEnvelope | NativeInvitationHandoff | None:
+    """Bind an invitation proof to the verified native Account subject and session; only the digest is
+    persisted, never the returned binding.
+
     Args:
-        origin (str | Unset):
-        sec_fetch_site (LogoutProductSessionSecFetchSite | Unset):
+        body (InvitationHandoffCapture):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorEnvelope | LogoutProductSessionResponse
+        ErrorEnvelope | NativeInvitationHandoff
     """
 
     return (
         await asyncio_detailed(
             client=client,
-            origin=origin,
-            sec_fetch_site=sec_fetch_site,
+            body=body,
         )
     ).parsed

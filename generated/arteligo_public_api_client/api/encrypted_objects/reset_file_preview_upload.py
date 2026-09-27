@@ -19,12 +19,13 @@ def _get_kwargs(
     file: str,
     *,
     body: ResetPreviewUploadRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: ResetFilePreviewUploadSecFetchSite | Unset = UNSET,
     arteligo_transfer_continuation: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
-    headers["Origin"] = origin
+    if not isinstance(origin, Unset):
+        headers["Origin"] = origin
 
     if not isinstance(sec_fetch_site, Unset):
         headers["Sec-Fetch-Site"] = str(sec_fetch_site)
@@ -78,7 +79,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient,
     body: ResetPreviewUploadRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: ResetFilePreviewUploadSecFetchSite | Unset = UNSET,
     arteligo_transfer_continuation: str | Unset = UNSET,
 ) -> Response[ErrorEnvelope | PreviewUploadSession]:
@@ -86,7 +87,7 @@ def sync_detailed(
     Args:
         project (str):
         file (str):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (ResetFilePreviewUploadSecFetchSite | Unset):
         arteligo_transfer_continuation (str | Unset):
         body (ResetPreviewUploadRequest):
@@ -121,7 +122,7 @@ def sync(
     *,
     client: AuthenticatedClient,
     body: ResetPreviewUploadRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: ResetFilePreviewUploadSecFetchSite | Unset = UNSET,
     arteligo_transfer_continuation: str | Unset = UNSET,
 ) -> ErrorEnvelope | PreviewUploadSession | None:
@@ -129,7 +130,7 @@ def sync(
     Args:
         project (str):
         file (str):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (ResetFilePreviewUploadSecFetchSite | Unset):
         arteligo_transfer_continuation (str | Unset):
         body (ResetPreviewUploadRequest):
@@ -159,7 +160,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient,
     body: ResetPreviewUploadRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: ResetFilePreviewUploadSecFetchSite | Unset = UNSET,
     arteligo_transfer_continuation: str | Unset = UNSET,
 ) -> Response[ErrorEnvelope | PreviewUploadSession]:
@@ -167,7 +168,7 @@ async def asyncio_detailed(
     Args:
         project (str):
         file (str):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (ResetFilePreviewUploadSecFetchSite | Unset):
         arteligo_transfer_continuation (str | Unset):
         body (ResetPreviewUploadRequest):
@@ -200,7 +201,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient,
     body: ResetPreviewUploadRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: ResetFilePreviewUploadSecFetchSite | Unset = UNSET,
     arteligo_transfer_continuation: str | Unset = UNSET,
 ) -> ErrorEnvelope | PreviewUploadSession | None:
@@ -208,7 +209,7 @@ async def asyncio(
     Args:
         project (str):
         file (str):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (ResetFilePreviewUploadSecFetchSite | Unset):
         arteligo_transfer_continuation (str | Unset):
         body (ResetPreviewUploadRequest):

@@ -7,12 +7,17 @@ import httpx
 from ...client import AuthenticatedClient, Client
 from ...models.error_envelope import ErrorEnvelope
 from ...models.invitation_status import InvitationStatus
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     invitation: str,
+    *,
+    x_arteligo_invitation_handoff: str | Unset = UNSET,
 ) -> dict[str, Any]:
+    headers: dict[str, Any] = {}
+    if not isinstance(x_arteligo_invitation_handoff, Unset):
+        headers["X-Arteligo-Invitation-Handoff"] = x_arteligo_invitation_handoff
 
     _kwargs: dict[str, Any] = {
         "method": "get",
@@ -21,6 +26,7 @@ def _get_kwargs(
         ),
     }
 
+    _kwargs["headers"] = headers
     return _kwargs
 
 
@@ -51,11 +57,13 @@ def _build_response(
 def sync_detailed(
     invitation: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
+    x_arteligo_invitation_handoff: str | Unset = UNSET,
 ) -> Response[ErrorEnvelope | InvitationStatus]:
     """
     Args:
         invitation (str):
+        x_arteligo_invitation_handoff (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -67,6 +75,7 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         invitation=invitation,
+        x_arteligo_invitation_handoff=x_arteligo_invitation_handoff,
     )
 
     response = client.get_httpx_client().request(
@@ -79,11 +88,13 @@ def sync_detailed(
 def sync(
     invitation: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
+    x_arteligo_invitation_handoff: str | Unset = UNSET,
 ) -> ErrorEnvelope | InvitationStatus | None:
     """
     Args:
         invitation (str):
+        x_arteligo_invitation_handoff (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -96,17 +107,20 @@ def sync(
     return sync_detailed(
         invitation=invitation,
         client=client,
+        x_arteligo_invitation_handoff=x_arteligo_invitation_handoff,
     ).parsed
 
 
 async def asyncio_detailed(
     invitation: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
+    x_arteligo_invitation_handoff: str | Unset = UNSET,
 ) -> Response[ErrorEnvelope | InvitationStatus]:
     """
     Args:
         invitation (str):
+        x_arteligo_invitation_handoff (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -118,6 +132,7 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         invitation=invitation,
+        x_arteligo_invitation_handoff=x_arteligo_invitation_handoff,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -128,11 +143,13 @@ async def asyncio_detailed(
 async def asyncio(
     invitation: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
+    x_arteligo_invitation_handoff: str | Unset = UNSET,
 ) -> ErrorEnvelope | InvitationStatus | None:
     """
     Args:
         invitation (str):
+        x_arteligo_invitation_handoff (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -146,5 +163,6 @@ async def asyncio(
         await asyncio_detailed(
             invitation=invitation,
             client=client,
+            x_arteligo_invitation_handoff=x_arteligo_invitation_handoff,
         )
     ).parsed

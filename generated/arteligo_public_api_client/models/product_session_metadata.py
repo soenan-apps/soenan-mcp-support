@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime
 from collections.abc import Mapping
 from typing import Any, TypeVar, cast
+from uuid import UUID
 
 from attrs import define as _attrs_define
 from dateutil.parser import isoparse
@@ -21,6 +22,7 @@ class ProductSessionMetadata:
     """
     Attributes:
         id (str):
+        access_token_id (UUID):
         issued_at (datetime.datetime):
         access_expires_at (datetime.datetime):
         refreshable (bool):
@@ -31,6 +33,7 @@ class ProductSessionMetadata:
     """
 
     id: str
+    access_token_id: UUID
     issued_at: datetime.datetime
     access_expires_at: datetime.datetime
     refreshable: bool
@@ -41,6 +44,8 @@ class ProductSessionMetadata:
 
     def to_dict(self) -> dict[str, Any]:
         id = self.id
+
+        access_token_id = str(self.access_token_id)
 
         issued_at = self.issued_at.isoformat()
 
@@ -73,6 +78,7 @@ class ProductSessionMetadata:
         field_dict.update(
             {
                 "id": id,
+                "accessTokenId": access_token_id,
                 "issuedAt": issued_at,
                 "accessExpiresAt": access_expires_at,
                 "refreshable": refreshable,
@@ -91,6 +97,8 @@ class ProductSessionMetadata:
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
         id = d.pop("id")
+
+        access_token_id = UUID(d.pop("accessTokenId"))
 
         issued_at = isoparse(d.pop("issuedAt"))
 
@@ -142,6 +150,7 @@ class ProductSessionMetadata:
 
         product_session_metadata = cls(
             id=id,
+            access_token_id=access_token_id,
             issued_at=issued_at,
             access_expires_at=access_expires_at,
             refreshable=refreshable,

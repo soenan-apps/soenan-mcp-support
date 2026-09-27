@@ -19,12 +19,13 @@ def _get_kwargs(
     invitation: str,
     *,
     body: RegenerateInvitationRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: RegenerateProjectInvitationSecFetchSite | Unset = UNSET,
     idempotency_key: str,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
-    headers["Origin"] = origin
+    if not isinstance(origin, Unset):
+        headers["Origin"] = origin
 
     if not isinstance(sec_fetch_site, Unset):
         headers["Sec-Fetch-Site"] = str(sec_fetch_site)
@@ -77,7 +78,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: RegenerateInvitationRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: RegenerateProjectInvitationSecFetchSite | Unset = UNSET,
     idempotency_key: str,
 ) -> Response[ErrorEnvelope | InvitationCreated]:
@@ -85,7 +86,7 @@ def sync_detailed(
     Args:
         project (str):
         invitation (str):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (RegenerateProjectInvitationSecFetchSite | Unset):
         idempotency_key (str):
         body (RegenerateInvitationRequest):
@@ -120,7 +121,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: RegenerateInvitationRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: RegenerateProjectInvitationSecFetchSite | Unset = UNSET,
     idempotency_key: str,
 ) -> ErrorEnvelope | InvitationCreated | None:
@@ -128,7 +129,7 @@ def sync(
     Args:
         project (str):
         invitation (str):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (RegenerateProjectInvitationSecFetchSite | Unset):
         idempotency_key (str):
         body (RegenerateInvitationRequest):
@@ -158,7 +159,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: RegenerateInvitationRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: RegenerateProjectInvitationSecFetchSite | Unset = UNSET,
     idempotency_key: str,
 ) -> Response[ErrorEnvelope | InvitationCreated]:
@@ -166,7 +167,7 @@ async def asyncio_detailed(
     Args:
         project (str):
         invitation (str):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (RegenerateProjectInvitationSecFetchSite | Unset):
         idempotency_key (str):
         body (RegenerateInvitationRequest):
@@ -199,7 +200,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: RegenerateInvitationRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: RegenerateProjectInvitationSecFetchSite | Unset = UNSET,
     idempotency_key: str,
 ) -> ErrorEnvelope | InvitationCreated | None:
@@ -207,7 +208,7 @@ async def asyncio(
     Args:
         project (str):
         invitation (str):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (RegenerateProjectInvitationSecFetchSite | Unset):
         idempotency_key (str):
         body (RegenerateInvitationRequest):

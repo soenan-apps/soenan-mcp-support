@@ -14,11 +14,12 @@ from ...types import UNSET, Response, Unset
 def _get_kwargs(
     project: str,
     *,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: ArchiveProjectSecFetchSite | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
-    headers["Origin"] = origin
+    if not isinstance(origin, Unset):
+        headers["Origin"] = origin
 
     if not isinstance(sec_fetch_site, Unset):
         headers["Sec-Fetch-Site"] = str(sec_fetch_site)
@@ -62,13 +63,13 @@ def sync_detailed(
     project: str,
     *,
     client: AuthenticatedClient | Client,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: ArchiveProjectSecFetchSite | Unset = UNSET,
 ) -> Response[ErrorEnvelope | ProjectEnvelope]:
     """
     Args:
         project (str):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (ArchiveProjectSecFetchSite | Unset):
 
     Raises:
@@ -96,13 +97,13 @@ def sync(
     project: str,
     *,
     client: AuthenticatedClient | Client,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: ArchiveProjectSecFetchSite | Unset = UNSET,
 ) -> ErrorEnvelope | ProjectEnvelope | None:
     """
     Args:
         project (str):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (ArchiveProjectSecFetchSite | Unset):
 
     Raises:
@@ -125,13 +126,13 @@ async def asyncio_detailed(
     project: str,
     *,
     client: AuthenticatedClient | Client,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: ArchiveProjectSecFetchSite | Unset = UNSET,
 ) -> Response[ErrorEnvelope | ProjectEnvelope]:
     """
     Args:
         project (str):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (ArchiveProjectSecFetchSite | Unset):
 
     Raises:
@@ -157,13 +158,13 @@ async def asyncio(
     project: str,
     *,
     client: AuthenticatedClient | Client,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: ArchiveProjectSecFetchSite | Unset = UNSET,
 ) -> ErrorEnvelope | ProjectEnvelope | None:
     """
     Args:
         project (str):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (ArchiveProjectSecFetchSite | Unset):
 
     Raises:

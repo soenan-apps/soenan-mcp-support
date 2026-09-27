@@ -14,11 +14,12 @@ from ...types import UNSET, Response, Unset
 
 def _get_kwargs(
     *,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: RefreshProductSessionSecFetchSite | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
-    headers["Origin"] = origin
+    if not isinstance(origin, Unset):
+        headers["Origin"] = origin
 
     if not isinstance(sec_fetch_site, Unset):
         headers["Sec-Fetch-Site"] = str(sec_fetch_site)
@@ -59,12 +60,12 @@ def _build_response(
 def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: RefreshProductSessionSecFetchSite | Unset = UNSET,
 ) -> Response[ErrorEnvelope | RefreshSessionResponse]:
     """
     Args:
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (RefreshProductSessionSecFetchSite | Unset):
 
     Raises:
@@ -90,12 +91,12 @@ def sync_detailed(
 def sync(
     *,
     client: AuthenticatedClient | Client,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: RefreshProductSessionSecFetchSite | Unset = UNSET,
 ) -> ErrorEnvelope | RefreshSessionResponse | None:
     """
     Args:
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (RefreshProductSessionSecFetchSite | Unset):
 
     Raises:
@@ -116,12 +117,12 @@ def sync(
 async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: RefreshProductSessionSecFetchSite | Unset = UNSET,
 ) -> Response[ErrorEnvelope | RefreshSessionResponse]:
     """
     Args:
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (RefreshProductSessionSecFetchSite | Unset):
 
     Raises:
@@ -145,12 +146,12 @@ async def asyncio_detailed(
 async def asyncio(
     *,
     client: AuthenticatedClient | Client,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: RefreshProductSessionSecFetchSite | Unset = UNSET,
 ) -> ErrorEnvelope | RefreshSessionResponse | None:
     """
     Args:
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (RefreshProductSessionSecFetchSite | Unset):
 
     Raises:

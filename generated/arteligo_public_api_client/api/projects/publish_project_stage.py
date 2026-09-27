@@ -19,12 +19,13 @@ def _get_kwargs(
     stage: str,
     *,
     body: PublishProjectStageRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: PublishProjectStageSecFetchSite | Unset = UNSET,
     idempotency_key: str,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
-    headers["Origin"] = origin
+    if not isinstance(origin, Unset):
+        headers["Origin"] = origin
 
     if not isinstance(sec_fetch_site, Unset):
         headers["Sec-Fetch-Site"] = str(sec_fetch_site)
@@ -77,7 +78,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient,
     body: PublishProjectStageRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: PublishProjectStageSecFetchSite | Unset = UNSET,
     idempotency_key: str,
 ) -> Response[ErrorEnvelope | ProjectStageResponse]:
@@ -85,7 +86,7 @@ def sync_detailed(
     Args:
         project (str):
         stage (str):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (PublishProjectStageSecFetchSite | Unset):
         idempotency_key (str):
         body (PublishProjectStageRequest):
@@ -120,7 +121,7 @@ def sync(
     *,
     client: AuthenticatedClient,
     body: PublishProjectStageRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: PublishProjectStageSecFetchSite | Unset = UNSET,
     idempotency_key: str,
 ) -> ErrorEnvelope | ProjectStageResponse | None:
@@ -128,7 +129,7 @@ def sync(
     Args:
         project (str):
         stage (str):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (PublishProjectStageSecFetchSite | Unset):
         idempotency_key (str):
         body (PublishProjectStageRequest):
@@ -158,7 +159,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient,
     body: PublishProjectStageRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: PublishProjectStageSecFetchSite | Unset = UNSET,
     idempotency_key: str,
 ) -> Response[ErrorEnvelope | ProjectStageResponse]:
@@ -166,7 +167,7 @@ async def asyncio_detailed(
     Args:
         project (str):
         stage (str):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (PublishProjectStageSecFetchSite | Unset):
         idempotency_key (str):
         body (PublishProjectStageRequest):
@@ -199,7 +200,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient,
     body: PublishProjectStageRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: PublishProjectStageSecFetchSite | Unset = UNSET,
     idempotency_key: str,
 ) -> ErrorEnvelope | ProjectStageResponse | None:
@@ -207,7 +208,7 @@ async def asyncio(
     Args:
         project (str):
         stage (str):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (PublishProjectStageSecFetchSite | Unset):
         idempotency_key (str):
         body (PublishProjectStageRequest):

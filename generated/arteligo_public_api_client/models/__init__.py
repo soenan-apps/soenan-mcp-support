@@ -148,12 +148,14 @@ from .invitation_status_list import InvitationStatusList
 from .invitation_summary import InvitationSummary
 from .invitation_summary_access_role import InvitationSummaryAccessRole
 from .invitation_summary_state import InvitationSummaryState
+from .logout_product_session_response import LogoutProductSessionResponse
 from .logout_product_session_sec_fetch_site import LogoutProductSessionSecFetchSite
 from .manifest_chunk import ManifestChunk
 from .manifest_object import ManifestObject
 from .member_actor import MemberActor
 from .member_actor_kind import MemberActorKind
 from .member_identity import MemberIdentity
+from .native_invitation_handoff import NativeInvitationHandoff
 from .object_state_response import ObjectStateResponse
 from .ok_response import OKResponse
 from .preview_init_segment import PreviewInitSegment
@@ -342,12 +344,6 @@ from .stage_project_reference import StageProjectReference
 from .stage_project_reference_kind import StageProjectReferenceKind
 from .stage_review_anchor import StageReviewAnchor
 from .stage_review_anchor_kind import StageReviewAnchorKind
-from .switch_product_session_organization_request import (
-    SwitchProductSessionOrganizationRequest,
-)
-from .switch_product_session_organization_sec_fetch_site import (
-    SwitchProductSessionOrganizationSecFetchSite,
-)
 from .terms_acceptance_request import TermsAcceptanceRequest
 from .terms_acceptance_required_product_session import (
     TermsAcceptanceRequiredProductSession,
@@ -496,12 +492,14 @@ __all__ = (
     "InvitationSummary",
     "InvitationSummaryAccessRole",
     "InvitationSummaryState",
+    "LogoutProductSessionResponse",
     "LogoutProductSessionSecFetchSite",
     "ManifestChunk",
     "ManifestObject",
     "MemberActor",
     "MemberActorKind",
     "MemberIdentity",
+    "NativeInvitationHandoff",
     "OKResponse",
     "ObjectStateResponse",
     "PreviewInitSegment",
@@ -652,8 +650,6 @@ __all__ = (
     "StageProjectReferenceKind",
     "StageReviewAnchor",
     "StageReviewAnchorKind",
-    "SwitchProductSessionOrganizationRequest",
-    "SwitchProductSessionOrganizationSecFetchSite",
     "TermsAcceptanceRequest",
     "TermsAcceptanceRequiredProductSession",
     "TermsAcceptanceRequiredProductSessionKind",

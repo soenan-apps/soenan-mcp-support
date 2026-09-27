@@ -17,12 +17,13 @@ def _get_kwargs(
     comment: str,
     *,
     body: CommentReplyRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: CreateCommentReplySecFetchSite | Unset = UNSET,
     idempotency_key: str,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
-    headers["Origin"] = origin
+    if not isinstance(origin, Unset):
+        headers["Origin"] = origin
 
     if not isinstance(sec_fetch_site, Unset):
         headers["Sec-Fetch-Site"] = str(sec_fetch_site)
@@ -75,7 +76,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: CommentReplyRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: CreateCommentReplySecFetchSite | Unset = UNSET,
     idempotency_key: str,
 ) -> Response[ErrorEnvelope | ReplyEnvelope]:
@@ -83,7 +84,7 @@ def sync_detailed(
     Args:
         project (str):
         comment (str):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (CreateCommentReplySecFetchSite | Unset):
         idempotency_key (str):
         body (CommentReplyRequest):
@@ -118,7 +119,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: CommentReplyRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: CreateCommentReplySecFetchSite | Unset = UNSET,
     idempotency_key: str,
 ) -> ErrorEnvelope | ReplyEnvelope | None:
@@ -126,7 +127,7 @@ def sync(
     Args:
         project (str):
         comment (str):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (CreateCommentReplySecFetchSite | Unset):
         idempotency_key (str):
         body (CommentReplyRequest):
@@ -156,7 +157,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: CommentReplyRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: CreateCommentReplySecFetchSite | Unset = UNSET,
     idempotency_key: str,
 ) -> Response[ErrorEnvelope | ReplyEnvelope]:
@@ -164,7 +165,7 @@ async def asyncio_detailed(
     Args:
         project (str):
         comment (str):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (CreateCommentReplySecFetchSite | Unset):
         idempotency_key (str):
         body (CommentReplyRequest):
@@ -197,7 +198,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: CommentReplyRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: CreateCommentReplySecFetchSite | Unset = UNSET,
     idempotency_key: str,
 ) -> ErrorEnvelope | ReplyEnvelope | None:
@@ -205,7 +206,7 @@ async def asyncio(
     Args:
         project (str):
         comment (str):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (CreateCommentReplySecFetchSite | Unset):
         idempotency_key (str):
         body (CommentReplyRequest):

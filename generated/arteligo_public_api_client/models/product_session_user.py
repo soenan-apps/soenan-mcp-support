@@ -6,6 +6,8 @@ from typing import Any, TypeVar
 from attrs import define as _attrs_define
 from typing_extensions import Self
 
+from ..types import UNSET, Unset
+
 T = TypeVar("T", bound="ProductSessionUser")
 
 
@@ -14,11 +16,11 @@ class ProductSessionUser:
     """
     Attributes:
         id (str):
-        display_name (str):
+        display_name (str | Unset):
     """
 
     id: str
-    display_name: str
+    display_name: str | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         id = self.id
@@ -30,9 +32,10 @@ class ProductSessionUser:
         field_dict.update(
             {
                 "id": id,
-                "displayName": display_name,
             }
         )
+        if display_name is not UNSET:
+            field_dict["displayName"] = display_name
 
         return field_dict
 
@@ -41,7 +44,7 @@ class ProductSessionUser:
         d = dict(src_dict)
         id = d.pop("id")
 
-        display_name = d.pop("displayName")
+        display_name = d.pop("displayName", UNSET)
 
         product_session_user = cls(
             id=id,

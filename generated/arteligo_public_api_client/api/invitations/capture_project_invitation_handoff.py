@@ -15,11 +15,12 @@ from ...types import UNSET, Response, Unset
 def _get_kwargs(
     *,
     body: InvitationHandoffCapture,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: CaptureProjectInvitationHandoffSecFetchSite | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
-    headers["Origin"] = origin
+    if not isinstance(origin, Unset):
+        headers["Origin"] = origin
 
     if not isinstance(sec_fetch_site, Unset):
         headers["Sec-Fetch-Site"] = str(sec_fetch_site)
@@ -64,7 +65,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: InvitationHandoffCapture,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: CaptureProjectInvitationHandoffSecFetchSite | Unset = UNSET,
 ) -> Response[Any | ErrorEnvelope]:
     """Browser prebootstrap sends the share-link fragment before loading Flutter. WWW verifies the active
@@ -72,7 +73,7 @@ def sync_detailed(
     30-minute HttpOnly SameSite=Lax host-only binding across the full Account redirect.
 
     Args:
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (CaptureProjectInvitationHandoffSecFetchSite | Unset):
         body (InvitationHandoffCapture):
 
@@ -101,7 +102,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: InvitationHandoffCapture,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: CaptureProjectInvitationHandoffSecFetchSite | Unset = UNSET,
 ) -> Any | ErrorEnvelope | None:
     """Browser prebootstrap sends the share-link fragment before loading Flutter. WWW verifies the active
@@ -109,7 +110,7 @@ def sync(
     30-minute HttpOnly SameSite=Lax host-only binding across the full Account redirect.
 
     Args:
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (CaptureProjectInvitationHandoffSecFetchSite | Unset):
         body (InvitationHandoffCapture):
 
@@ -133,7 +134,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: InvitationHandoffCapture,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: CaptureProjectInvitationHandoffSecFetchSite | Unset = UNSET,
 ) -> Response[Any | ErrorEnvelope]:
     """Browser prebootstrap sends the share-link fragment before loading Flutter. WWW verifies the active
@@ -141,7 +142,7 @@ async def asyncio_detailed(
     30-minute HttpOnly SameSite=Lax host-only binding across the full Account redirect.
 
     Args:
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (CaptureProjectInvitationHandoffSecFetchSite | Unset):
         body (InvitationHandoffCapture):
 
@@ -168,7 +169,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: InvitationHandoffCapture,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: CaptureProjectInvitationHandoffSecFetchSite | Unset = UNSET,
 ) -> Any | ErrorEnvelope | None:
     """Browser prebootstrap sends the share-link fragment before loading Flutter. WWW verifies the active
@@ -176,7 +177,7 @@ async def asyncio(
     30-minute HttpOnly SameSite=Lax host-only binding across the full Account redirect.
 
     Args:
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (CaptureProjectInvitationHandoffSecFetchSite | Unset):
         body (InvitationHandoffCapture):
 

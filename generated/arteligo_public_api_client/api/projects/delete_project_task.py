@@ -16,12 +16,13 @@ def _get_kwargs(
     task: str,
     *,
     expected_revision: int,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: DeleteProjectTaskSecFetchSite | Unset = UNSET,
     idempotency_key: str,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
-    headers["Origin"] = origin
+    if not isinstance(origin, Unset):
+        headers["Origin"] = origin
 
     if not isinstance(sec_fetch_site, Unset):
         headers["Sec-Fetch-Site"] = str(sec_fetch_site)
@@ -77,7 +78,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient,
     expected_revision: int,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: DeleteProjectTaskSecFetchSite | Unset = UNSET,
     idempotency_key: str,
 ) -> Response[ErrorEnvelope | ProjectTaskDeletionResponse]:
@@ -86,7 +87,7 @@ def sync_detailed(
         project (str):
         task (str):
         expected_revision (int):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (DeleteProjectTaskSecFetchSite | Unset):
         idempotency_key (str):
 
@@ -120,7 +121,7 @@ def sync(
     *,
     client: AuthenticatedClient,
     expected_revision: int,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: DeleteProjectTaskSecFetchSite | Unset = UNSET,
     idempotency_key: str,
 ) -> ErrorEnvelope | ProjectTaskDeletionResponse | None:
@@ -129,7 +130,7 @@ def sync(
         project (str):
         task (str):
         expected_revision (int):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (DeleteProjectTaskSecFetchSite | Unset):
         idempotency_key (str):
 
@@ -158,7 +159,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient,
     expected_revision: int,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: DeleteProjectTaskSecFetchSite | Unset = UNSET,
     idempotency_key: str,
 ) -> Response[ErrorEnvelope | ProjectTaskDeletionResponse]:
@@ -167,7 +168,7 @@ async def asyncio_detailed(
         project (str):
         task (str):
         expected_revision (int):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (DeleteProjectTaskSecFetchSite | Unset):
         idempotency_key (str):
 
@@ -199,7 +200,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient,
     expected_revision: int,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: DeleteProjectTaskSecFetchSite | Unset = UNSET,
     idempotency_key: str,
 ) -> ErrorEnvelope | ProjectTaskDeletionResponse | None:
@@ -208,7 +209,7 @@ async def asyncio(
         project (str):
         task (str):
         expected_revision (int):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (DeleteProjectTaskSecFetchSite | Unset):
         idempotency_key (str):
 

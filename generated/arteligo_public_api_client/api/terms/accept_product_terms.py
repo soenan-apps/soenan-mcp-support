@@ -18,11 +18,12 @@ from ...types import UNSET, Response, Unset
 def _get_kwargs(
     *,
     body: TermsAcceptanceRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: AcceptProductTermsSecFetchSite | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
-    headers["Origin"] = origin
+    if not isinstance(origin, Unset):
+        headers["Origin"] = origin
 
     if not isinstance(sec_fetch_site, Unset):
         headers["Sec-Fetch-Site"] = str(sec_fetch_site)
@@ -112,9 +113,9 @@ def _build_response(
 
 def sync_detailed(
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
     body: TermsAcceptanceRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: AcceptProductTermsSecFetchSite | Unset = UNSET,
 ) -> Response[
     AuthenticatedProductSession
@@ -124,7 +125,7 @@ def sync_detailed(
 ]:
     """
     Args:
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (AcceptProductTermsSecFetchSite | Unset):
         body (TermsAcceptanceRequest):
 
@@ -151,9 +152,9 @@ def sync_detailed(
 
 def sync(
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
     body: TermsAcceptanceRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: AcceptProductTermsSecFetchSite | Unset = UNSET,
 ) -> (
     AuthenticatedProductSession
@@ -164,7 +165,7 @@ def sync(
 ):
     """
     Args:
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (AcceptProductTermsSecFetchSite | Unset):
         body (TermsAcceptanceRequest):
 
@@ -186,9 +187,9 @@ def sync(
 
 async def asyncio_detailed(
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
     body: TermsAcceptanceRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: AcceptProductTermsSecFetchSite | Unset = UNSET,
 ) -> Response[
     AuthenticatedProductSession
@@ -198,7 +199,7 @@ async def asyncio_detailed(
 ]:
     """
     Args:
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (AcceptProductTermsSecFetchSite | Unset):
         body (TermsAcceptanceRequest):
 
@@ -223,9 +224,9 @@ async def asyncio_detailed(
 
 async def asyncio(
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
     body: TermsAcceptanceRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: AcceptProductTermsSecFetchSite | Unset = UNSET,
 ) -> (
     AuthenticatedProductSession
@@ -236,7 +237,7 @@ async def asyncio(
 ):
     """
     Args:
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (AcceptProductTermsSecFetchSite | Unset):
         body (TermsAcceptanceRequest):
 
