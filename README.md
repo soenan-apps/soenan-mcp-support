@@ -15,7 +15,7 @@ uv venv soenan-mcp-support/.venv
 uv pip install --python soenan-mcp-support/.venv/bin/python ./arteligo/native/e2ee ./soenan-mcp-support
 ```
 
-`arteligo-e2ee-native` のビルドは、固定した `Cargo.lock` で Rust ライブラリーを作り、実行環境用の wheel に同梱します。wheel は OS と CPU ごとに作ります。この変更による package 公開やデプロイはありません。
+`arteligo-e2ee-native` のビルドは、固定した `Cargo.lock` で Rust ライブラリーを作り、実行環境用の wheel に同梱します。wheel は OS と CPU ごとに作ります。
 
 ## 端末の認証と承認
 
@@ -34,7 +34,7 @@ arteligo --account-origin ACCOUNT_ORIGIN --arteligo-origin ARTELIGO_ORIGIN statu
 
 既存端末を使えない場合は `recover` を実行し、端末上で復旧コードを入力します。復旧コードは server に送らず、ローカルで復旧鍵を開き、新しい端末用の独立した鍵を生成します。復旧鍵の秘密部分は通常の端末鍵として保存しません。
 
-復旧コードを置き換える場合は、承認済み端末で `replace-recovery` を実行します。新しいコードの保存確認後、既存端末の公開鍵を新しい復旧鍵で証明し、organization と project の現行鍵を更新します。旧コードによる復旧はできなくなります。新しいコードから復旧した端末は、過去の project 鍵と、失効済み端末が署名した履歴も検証できます。
+復旧コードを置き換える場合は、承認済み端末で `replace-recovery` を実行します。新しいコードの保存確認後、既存端末の公開鍵を新しい復旧鍵で証明し、organization と project の現行鍵を更新します。交換前のコードは失効します。新しいコードから復旧した端末は、過去の project 鍵と、失効済み端末が署名した履歴も検証できます。
 
 他の利用者の端末を直接確認したときは、その公開鍵への信頼を `peer_trust` の署名付き記録として保存します。復旧後は自分の承認済み端末の証明からこの記録を検証するため、server が返した未知の公開鍵を自動的に信頼しません。公開証明には暗号化済みの復旧 bundle を含めません。
 
@@ -99,4 +99,4 @@ uvx --from openapi-python-client==0.28.0 --with ruff==0.16.9 openapi-python-clie
 .venv/bin/python -m pytest -q
 ```
 
-検証では、共通 Rust core の既知値、独立端末への承認、双方向の公開鍵確認、復旧コード、公開鍵の差し替え、古い鍵世代の復旧、署名と暗号文の改ざん、実際の loopback Bucket 転送、保存先の原子的な公開を確認します。テストは実際の Keychain や Account の認証情報を使いません。
+検証では、共通 Rust core の既知値、独立端末への承認、双方向の公開鍵確認、復旧コード、公開鍵の差し替え、過去世代の鍵の復旧、署名と暗号文の改ざん、実際の loopback Bucket 転送、保存先の原子的な公開を確認します。テストは実際の Keychain や Account の認証情報を使いません。
