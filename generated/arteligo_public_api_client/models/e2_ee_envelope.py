@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from typing_extensions import Self
@@ -27,6 +27,9 @@ class E2EeEnvelope:
         sender_device_id (str):
         encapsulated_key (str):
         ciphertext (str):
+        organization_epoch (int | None | Unset): Organization key epoch bound into the signed command and HPKE context.
+            Required for new organization recipients and forbidden for other recipients. Legacy stored envelopes may omit
+            this field and retain their original authenticated context.
         signed_command (E2EeSignedCommand | Unset):
     """
 
@@ -37,6 +40,7 @@ class E2EeEnvelope:
     sender_device_id: str
     encapsulated_key: str
     ciphertext: str
+    organization_epoch: int | None | Unset = UNSET
     signed_command: E2EeSignedCommand | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
@@ -53,6 +57,12 @@ class E2EeEnvelope:
         encapsulated_key = self.encapsulated_key
 
         ciphertext = self.ciphertext
+
+        organization_epoch: int | None | Unset
+        if isinstance(self.organization_epoch, Unset):
+            organization_epoch = UNSET
+        else:
+            organization_epoch = self.organization_epoch
 
         signed_command: dict[str, Any] | Unset = UNSET
         if not isinstance(self.signed_command, Unset):
@@ -71,6 +81,8 @@ class E2EeEnvelope:
                 "ciphertext": ciphertext,
             }
         )
+        if organization_epoch is not UNSET:
+            field_dict["organization_epoch"] = organization_epoch
         if signed_command is not UNSET:
             field_dict["signed_command"] = signed_command
 
@@ -95,6 +107,17 @@ class E2EeEnvelope:
 
         ciphertext = d.pop("ciphertext")
 
+        def _parse_organization_epoch(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        organization_epoch = _parse_organization_epoch(
+            d.pop("organization_epoch", UNSET)
+        )
+
         _signed_command = d.pop("signed_command", UNSET)
         signed_command: E2EeSignedCommand | Unset
         if isinstance(_signed_command, Unset):
@@ -110,6 +133,7 @@ class E2EeEnvelope:
             sender_device_id=sender_device_id,
             encapsulated_key=encapsulated_key,
             ciphertext=ciphertext,
+            organization_epoch=organization_epoch,
             signed_command=signed_command,
         )
 

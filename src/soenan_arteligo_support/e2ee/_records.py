@@ -301,6 +301,7 @@ class EncryptedRecords:
                             recipient=owner_org,
                             kind="organization",
                             public_key=org_public,
+                            organization_epoch=organization["key_epoch"],
                         )
                     )
                 finally:

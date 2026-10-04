@@ -1,16 +1,16 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from hashlib import sha256
 import mimetypes
 import os
-from pathlib import Path
 import secrets
 import struct
 import tempfile
 import time
-from typing import Any
 import uuid
+from datetime import datetime, timezone
+from hashlib import sha256
+from pathlib import Path
+from typing import Any
 
 from ..e2ee._crypto import E2eeError, decode, encode, wipe
 from ..e2ee._records import EncryptedRecords
@@ -21,8 +21,8 @@ from ._http import (
     DEFAULT_TRANSPORT,
     TransferTimeouts,
     TransferTransport,
-    put_ciphertext,
     get_ciphertext,
+    put_ciphertext,
 )
 
 
@@ -130,6 +130,20 @@ def upload_file(
     pending_id = "upl_" + identifier
     current = snapshot(session, project_id)
     pending = current.get(pending_id)
+    completed = None
+    if pending is not None and pending["deleted"]:
+        matches = [
+            item
+            for item in current.values()
+            if item["kind"] == "file"
+            and not item["deleted"]
+            and item["value"].get("uploadId") == identifier
+            and item["value"].get("sourceState") == "ready"
+            and "file" in item["value"]
+        ]
+        if len(matches) != 1:
+            raise E2eeError("upload_not_found")
+        completed = matches[0]
     data_key = bytearray()
     project_key = session.scope_key(project_id, epoch)
     try:
@@ -182,9 +196,9 @@ def upload_file(
                     ],
                 )[0]
             else:
-                if pending["deleted"] or pending["value"].get("uploadId") != identifier:
+                private = (completed or pending)["value"]
+                if private.get("uploadId") != identifier:
                     raise E2eeError("upload_not_found")
-                private = pending["value"]
                 manifest = private["source"]
                 object_value = manifest["object"]
                 if (
@@ -225,47 +239,78 @@ def upload_file(
                     parsed.chunks,
                 )
                 file_id = plan.file_id
-            session.command(
-                "e2eeBeginObject",
-                "object_begin",
-                {
-                    "scope_id": project_id,
-                    "object_id": identifier,
-                    "key_epoch": epoch,
-                    "ciphertext_size": sum(
-                        chunk.ciphertext_size for chunk in plan.chunks
-                    ),
-                    "chunks": [
-                        {
-                            "index": chunk.index,
-                            "ciphertext_size": chunk.ciphertext_size,
-                            "checksum_sha256": encode(chunk.ciphertext_sha256),
-                        }
-                        for chunk in plan.chunks
-                    ],
-                },
-                scope_id=project_id,
-            )
+                if completed is not None and completed["record_id"] != file_id:
+                    raise E2eeError("invalid_object_context")
+            if completed is not None:
+                descriptor = session.api.call(
+                    "e2eeGetObject", scope_id=project_id, object_id=identifier
+                )
+            else:
+                descriptor = session.command(
+                    "e2eeBeginObject",
+                    "object_begin",
+                    {
+                        "scope_id": project_id,
+                        "object_id": identifier,
+                        "key_epoch": epoch,
+                        "ciphertext_size": sum(
+                            chunk.ciphertext_size for chunk in plan.chunks
+                        ),
+                        "chunks": [
+                            {
+                                "index": chunk.index,
+                                "ciphertext_size": chunk.ciphertext_size,
+                                "checksum_sha256": encode(chunk.ciphertext_sha256),
+                            }
+                            for chunk in plan.chunks
+                        ],
+                    },
+                    scope_id=project_id,
+                )
+            state = descriptor.get("state")
+            if state not in {"uploading", "ready"} or (
+                completed is not None and state != "ready"
+            ):
+                raise E2eeError("object_not_ready")
             for chunk in plan.chunks:
                 clear = bytearray(stream.read(chunk.plaintext_size))
                 try:
                     ciphertext = plan.seal_chunk(clear, chunk.index)
                     if sha256(ciphertext).digest() != chunk.ciphertext_sha256:
                         raise E2eeError("source_changed")
-                    capability = _object(
-                        session, project_id, identifier, "put", chunk.index
-                    )
-                    url, headers = _capability(capability, "PUT", len(ciphertext))
-                    put_ciphertext(
-                        url, headers, ciphertext, timeouts=timeouts, transport=transport
-                    )
+                    if state == "uploading":
+                        capability = _object(
+                            session, project_id, identifier, "put", chunk.index
+                        )
+                        url, headers = _capability(capability, "PUT", len(ciphertext))
+                        put_ciphertext(
+                            url,
+                            headers,
+                            ciphertext,
+                            timeouts=timeouts,
+                            transport=transport,
+                        )
                 finally:
                     wipe(clear)
             if stream.read(1):
                 raise E2eeError("source_changed")
-        _object(session, project_id, identifier, "finalize")
+        result = {"project_id": project_id, "file_id": file_id, "object_id": identifier}
+        if completed is not None:
+            return result
+        if state == "uploading":
+            _object(session, project_id, identifier, "finalize")
         current = snapshot(session, project_id)
         pending = current[pending_id]
+        if pending["deleted"]:
+            committed = current.get(file_id)
+            if (
+                committed is not None
+                and not committed["deleted"]
+                and committed["value"].get("uploadId") == identifier
+                and committed["value"].get("sourceState") == "ready"
+            ):
+                return result
+            raise E2eeError("upload_not_found")
         epoch = _epoch(session, project_id)
         now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         entry_id = "ent_" + file_id
@@ -344,7 +389,7 @@ def upload_file(
                 }
             )
         records.write(project_id, key_epoch=epoch, records=writes)
-        return {"project_id": project_id, "file_id": file_id, "object_id": identifier}
+        return result
     except (OSError, KeyError, ValueError):
         raise E2eeError("transfer_failed") from None
     finally:

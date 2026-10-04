@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
 import hashlib
 import json
 import secrets
+from collections.abc import Mapping
 from typing import Any
 
 from ._api import E2eeAPI
@@ -30,6 +30,7 @@ class DeviceSession:
         self._device: dict[str, Any] | None = None
         self._devices: dict[str, dict[str, Any]] = {}
         self._scope_keys: dict[tuple[str, int], bytearray] = {}
+        self._restoring_recovery: tuple[str, bytearray] | None = None
         self.recovery: dict[str, Any] | None = None
         self.state = "needs_setup"
 
@@ -110,6 +111,8 @@ class DeviceSession:
                 self._clear_keys()
                 return self.state
             self.state = "approved"
+        if self._device.get("recovery_restore") is not None and self.state != "revoked":
+            self.state = "recovery_pending"
         return self.state
 
     def require_approved(self) -> None:
@@ -355,17 +358,27 @@ class DeviceSession:
         self.reconcile_keys()
 
     def reconcile_keys(self) -> None:
-        for scope in self.scopes():
-            if scope.get("lifecycle") == "rekey_required" and scope.get("role") in {
-                "owner",
-                "editor",
-                "admin",
-            }:
+        for _ in range(3):
+            pending = [
+                scope
+                for scope in self.scopes()
+                if scope.get("lifecycle") == "rekey_required"
+                and scope.get("role") in {"owner", "editor", "admin"}
+            ]
+            if not pending:
+                return
+            for scope in pending:
                 try:
                     self.rotate_scope(scope)
                 except E2eeError as error:
                     if error.code != "revision_conflict":
                         raise
+        if any(
+            scope.get("lifecycle") == "rekey_required"
+            and scope.get("role") in {"owner", "editor", "admin"}
+            for scope in self.scopes()
+        ):
+            raise E2eeError("rekey_required")
 
     def rotate_scope(self, scope: dict[str, Any]) -> None:
         self.require_approved()
@@ -447,6 +460,7 @@ class DeviceSession:
                             recipient=organization,
                             kind="organization",
                             public_key=public["encryption_public_key"],
+                            organization_epoch=audience["organization_epoch"],
                         )
                     )
                 finally:
@@ -603,19 +617,46 @@ class DeviceSession:
             )
             if any(derived[field] != recovery[field] for field in derived):
                 raise E2eeError("recovery_key_changed")
-            self.trust.pin_recovery(self.subject, recovery)
-            self._device = self._new_device()
-            self._persist()
-            self.command(
-                "e2eeRestoreRecovery",
-                "recovery_restore",
-                {
-                    "recovery_id": recovery["recovery_id"],
-                    "device": self.public,
-                    "challenge": secrets.token_urlsafe(32),
-                },
-                secret_key=keys["signing_secret_key"],
+            self._restoring_recovery = (
+                recovery["recovery_id"],
+                decode(keys["encryption_secret_key"]),
             )
+            self.trust.pin_recovery(self.subject, recovery)
+            pending = self._device.get("recovery_restore") if self._device else None
+            if (
+                pending is None
+                or pending.get("recovery_id") != recovery["recovery_id"]
+                or pending.get("generation") != recovery["generation"]
+                or self.state == "revoked"
+            ):
+                self._clear_keys()
+                self._device = self._new_device()
+                pending = {
+                    "recovery_id": recovery["recovery_id"],
+                    "generation": recovery["generation"],
+                    "challenge": secrets.token_urlsafe(32),
+                }
+                self._device["recovery_restore"] = pending
+                self._persist()
+            self.state = "recovery_pending"
+            devices = self.api.call("e2eeListDevices")["devices"]
+            registered = next(
+                (device for device in devices if device["device_id"] == self.device_id),
+                None,
+            )
+            if registered is None or registered["state"] != "approved":
+                self.command(
+                    "e2eeRestoreRecovery",
+                    "recovery_restore",
+                    {
+                        "recovery_id": recovery["recovery_id"],
+                        "device": self.public,
+                        "challenge": pending["challenge"],
+                    },
+                    secret_key=keys["signing_secret_key"],
+                )
+            elif public_device(registered) != self.public:
+                raise E2eeError("device_key_changed")
             self.trust.pin_device(self.public)
             self._devices[self.device_id] = self.public
             self._devices.update(
@@ -627,13 +668,23 @@ class DeviceSession:
             self.state = "approved"
             for scope in self.scopes():
                 identifier, epoch = scope["project_id"], scope["key_epoch"]
-                key = self._read_key(
-                    identifier,
-                    epoch,
-                    recipient=recovery["recovery_id"],
-                    kind="recovery",
-                    secret_key=keys["encryption_secret_key"],
-                )
+                if epoch == 0 and scope.get("lifecycle") == "uninitialized":
+                    continue
+                try:
+                    key = self._read_key(
+                        identifier,
+                        epoch,
+                        recipient=recovery["recovery_id"],
+                        kind="recovery",
+                        secret_key=keys["encryption_secret_key"],
+                    )
+                except E2eeError as error:
+                    if (
+                        error.code != "key_redistribution_required"
+                        or scope.get("participation_policy") != "organization"
+                    ):
+                        raise
+                    key = self.scope_key(identifier, epoch)
                 try:
                     self._remember(identifier, epoch, key)
                     envelope = self.wrap_key(
@@ -656,7 +707,15 @@ class DeviceSession:
                     )
                 finally:
                     wipe(key)
+            self.reconcile_keys()
+            self._device.pop("recovery_restore")
+            self._persist()
         finally:
+            if self._restoring_recovery is not None:
+                wipe(self._restoring_recovery[1])
+                self._restoring_recovery = None
+            if self._device is not None and self._device.get("recovery_restore"):
+                self.state = "recovery_pending"
             wipe(context)
             wipe(plaintext)
             keys.clear()
@@ -670,6 +729,7 @@ class DeviceSession:
         recipient: str,
         kind: str,
         public_key: str,
+        organization_epoch: int | None = None,
     ) -> dict[str, Any]:
         self.require_approved()
         fields = {
@@ -679,6 +739,15 @@ class DeviceSession:
             "recipient_id": recipient,
             "recipient_kind": kind,
         }
+        if kind == "organization":
+            if (
+                type(organization_epoch) is not int
+                or not 1 <= organization_epoch <= 2**63 - 1
+            ):
+                raise E2eeError("invalid_envelope")
+            fields["organization_epoch"] = organization_epoch
+        elif organization_epoch is not None:
+            raise E2eeError("invalid_envelope")
         context = self.crypto.canonical(
             {"v": 1, "domain": "arteligo.scope-key", **fields}
         )
@@ -714,7 +783,14 @@ class DeviceSession:
         return self.trust.verify_device(lookup(identifier), lookup)
 
     def _read_key(
-        self, scope: str, epoch: int, *, recipient: str, kind: str, secret_key: str
+        self,
+        scope: str,
+        epoch: int,
+        *,
+        recipient: str,
+        kind: str,
+        secret_key: str | None = None,
+        organization_epoch: int | None = None,
     ) -> bytearray:
         values = self.api.call(
             "e2eeGetEnvelopes",
@@ -723,54 +799,181 @@ class DeviceSession:
             recipient_id=recipient,
             recipient_kind=kind,
         )["envelopes"]
-        if not values:
-            raise E2eeError("key_redistribution_required")
+        if len(values) > 1024:
+            raise E2eeError("limit_exceeded")
         for envelope in values:
-            if any(
-                envelope.get(field) != value
-                for field, value in {
-                    "scope_id": scope,
-                    "key_epoch": epoch,
-                    "recipient_id": recipient,
-                    "recipient_kind": kind,
-                }.items()
+            organization_key = bytearray()
+            if kind == "organization":
+                bound_epoch = envelope.get("organization_epoch")
+                if bound_epoch is None:
+                    return self._read_legacy_organization_envelope(
+                        scope,
+                        epoch,
+                        envelope,
+                        organization=recipient,
+                        current_epoch=organization_epoch,
+                    )
+                if type(bound_epoch) is not int or not 1 <= bound_epoch <= 2**63 - 1:
+                    raise E2eeError("invalid_envelope")
+                try:
+                    organization_key = self.scope_key(recipient, bound_epoch)
+                except E2eeError as error:
+                    if error.code == "key_redistribution_required":
+                        continue
+                    raise
+                secret_key = encode(organization_key)
+            try:
+                return self._open_key_envelope(
+                    scope,
+                    epoch,
+                    envelope,
+                    recipient=recipient,
+                    kind=kind,
+                    secret_key=secret_key,
+                )
+            finally:
+                wipe(organization_key)
+        raise E2eeError("key_redistribution_required")
+
+    def _open_key_envelope(
+        self,
+        scope: str,
+        epoch: int,
+        envelope: dict[str, Any],
+        *,
+        recipient: str,
+        kind: str,
+        secret_key: str | None,
+    ) -> bytearray:
+        fields = {
+            "scope_id": scope,
+            "key_epoch": epoch,
+            "recipient_id": recipient,
+            "recipient_kind": kind,
+        }
+        if any(envelope.get(field) != value for field, value in fields.items()):
+            raise E2eeError("invalid_envelope")
+        organization_epoch = envelope.get("organization_epoch")
+        if organization_epoch is not None:
+            if (
+                kind != "organization"
+                or type(organization_epoch) is not int
+                or not 1 <= organization_epoch <= 2**63 - 1
             ):
                 raise E2eeError("invalid_envelope")
-            sender = self.device(scope, envelope["sender_device_id"])
-            context = self.crypto.canonical(
+            fields["organization_epoch"] = organization_epoch
+        sender = self.device(scope, envelope["sender_device_id"])
+        context = self.crypto.canonical(
+            {
+                "v": 1,
+                "domain": "arteligo.scope-key",
+                **fields,
+                "sender_device_id": sender["device_id"],
+            }
+        )
+        try:
+            opened = self.crypto.execute(
                 {
-                    "v": 1,
-                    "domain": "arteligo.scope-key",
-                    "scope_id": scope,
-                    "key_epoch": epoch,
-                    "sender_device_id": sender["device_id"],
-                    "recipient_id": recipient,
-                    "recipient_kind": kind,
+                    "op": "hpke_auth_open",
+                    "recipient_secret_key": secret_key,
+                    "sender_public_key": sender["encryption_public_key"],
+                    "info": encode(context),
+                    "aad": encode(context),
+                    "envelope": {
+                        "v": 1,
+                        "suite": "HPKE-Auth-X25519-HKDF-SHA256-AES256GCM",
+                        "enc": envelope["encapsulated_key"],
+                        "ciphertext": envelope["ciphertext"],
+                    },
                 }
             )
-            try:
-                opened = self.crypto.execute(
-                    {
-                        "op": "hpke_auth_open",
-                        "recipient_secret_key": secret_key,
-                        "sender_public_key": sender["encryption_public_key"],
-                        "info": encode(context),
-                        "aad": encode(context),
-                        "envelope": {
-                            "v": 1,
-                            "suite": "HPKE-Auth-X25519-HKDF-SHA256-AES256GCM",
-                            "enc": envelope["encapsulated_key"],
-                            "ciphertext": envelope["ciphertext"],
-                        },
-                    }
+            key = decode(opened["plaintext"])
+            if len(key) != 32:
+                wipe(key)
+                raise E2eeError("invalid_envelope")
+            return key
+        finally:
+            wipe(context)
+
+    def _read_legacy_organization_envelope(
+        self,
+        scope: str,
+        epoch: int,
+        envelope: dict[str, Any],
+        *,
+        organization: str,
+        current_epoch: int | None,
+    ) -> bytearray:
+        if type(current_epoch) is not int or not 1 <= current_epoch <= 2**63 - 1:
+            raise E2eeError("invalid_envelope")
+
+        def open_project_key(key: bytearray) -> bytearray:
+            return self._open_key_envelope(
+                scope,
+                epoch,
+                envelope,
+                recipient=organization,
+                kind="organization",
+                secret_key=encode(key),
+            )
+
+        current_key = bytearray()
+        try:
+            current_key = self.scope_key(organization, current_epoch)
+            return open_project_key(current_key)
+        except E2eeError as error:
+            if error.code not in {
+                "authentication_failed",
+                "key_redistribution_required",
+            }:
+                raise
+        finally:
+            wipe(current_key)
+
+        recipients = [(self.device_id, "device", self._device["encryption_secret_key"])]
+        if self._restoring_recovery is not None:
+            recipients.append(
+                (
+                    self._restoring_recovery[0],
+                    "recovery",
+                    encode(self._restoring_recovery[1]),
                 )
-                key = decode(opened["plaintext"])
-                if len(key) != 32:
+            )
+        for recipient, kind, secret_key in recipients:
+            history = self.api.call(
+                "e2eeGetEnvelopes",
+                scope_id=organization,
+                recipient_id=recipient,
+                recipient_kind=kind,
+            )["envelopes"]
+            if len(history) > 1024:
+                raise E2eeError("limit_exceeded")
+            if any(
+                type(item.get("key_epoch")) is not int
+                or not 1 <= item["key_epoch"] <= 2**63 - 1
+                for item in history
+            ):
+                raise E2eeError("invalid_envelope")
+            for item in sorted(
+                history, key=lambda value: value["key_epoch"], reverse=True
+            ):
+                if item["key_epoch"] >= current_epoch:
+                    continue
+                key = self._open_key_envelope(
+                    organization,
+                    item["key_epoch"],
+                    item,
+                    recipient=recipient,
+                    kind=kind,
+                    secret_key=secret_key,
+                )
+                try:
+                    return open_project_key(key)
+                except E2eeError as error:
+                    if error.code != "authentication_failed":
+                        raise
+                finally:
                     wipe(key)
-                    raise E2eeError("invalid_envelope")
-                return key
-            finally:
-                wipe(context)
         raise E2eeError("key_redistribution_required")
 
     def scope_key(self, scope: str, epoch: int) -> bytearray:
@@ -796,6 +999,8 @@ class DeviceSession:
                 raise E2eeError("key_redistribution_required") from None
             current = metadata["key_epoch"]
             if epoch < current:
+                if metadata.get("owner_org") == scope:
+                    raise E2eeError("key_redistribution_required") from None
                 key = self._previous_key(scope, epoch, current)
             elif metadata.get(
                 "participation_policy"
@@ -811,17 +1016,13 @@ class DeviceSession:
                 )
                 if organization is None:
                     raise E2eeError("organization_approval_required") from None
-                org_key = self.scope_key(org_id, organization["key_epoch"])
-                try:
-                    key = self._read_key(
-                        scope,
-                        epoch,
-                        recipient=org_id,
-                        kind="organization",
-                        secret_key=encode(org_key),
-                    )
-                finally:
-                    wipe(org_key)
+                key = self._read_key(
+                    scope,
+                    epoch,
+                    recipient=org_id,
+                    kind="organization",
+                    organization_epoch=organization["key_epoch"],
+                )
             else:
                 raise
         self._remember(scope, epoch, key)

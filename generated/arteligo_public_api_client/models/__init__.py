@@ -69,6 +69,7 @@ from .e2_ee_recovery_bundle import E2EeRecoveryBundle
 from .e2_ee_recovery_public import E2EeRecoveryPublic
 from .e2_ee_recovery_restore import E2EeRecoveryRestore
 from .e2_ee_recovery_root import E2EeRecoveryRoot
+from .e2_ee_recovery_roots import E2EeRecoveryRoots
 from .e2_ee_recovery_statement import E2EeRecoveryStatement
 from .e2_ee_remove_member_sec_fetch_site import E2EeRemoveMemberSecFetchSite
 from .e2_ee_request_invitation_sec_fetch_site import E2EeRequestInvitationSecFetchSite
@@ -174,6 +175,7 @@ __all__ = (
     "E2EeRecoveryPublic",
     "E2EeRecoveryRestore",
     "E2EeRecoveryRoot",
+    "E2EeRecoveryRoots",
     "E2EeRecoveryStatement",
     "E2EeRemoveMemberSecFetchSite",
     "E2EeRequestInvitationSecFetchSite",
