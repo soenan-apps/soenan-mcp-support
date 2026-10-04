@@ -73,7 +73,9 @@ def sync_detailed(
     origin: str | Unset = UNSET,
     sec_fetch_site: E2EeWriteRecordsSecFetchSite | Unset = UNSET,
 ) -> Response[E2EeRecordPage | ErrorEnvelope]:
-    """
+    """Atomically writes encrypted business records in a project scope. Organization scopes distribute keys
+    and do not accept business-record writes.
+
     Args:
         scope_id (str):
         origin (str | Unset):
@@ -110,7 +112,9 @@ def sync(
     origin: str | Unset = UNSET,
     sec_fetch_site: E2EeWriteRecordsSecFetchSite | Unset = UNSET,
 ) -> E2EeRecordPage | ErrorEnvelope | None:
-    """
+    """Atomically writes encrypted business records in a project scope. Organization scopes distribute keys
+    and do not accept business-record writes.
+
     Args:
         scope_id (str):
         origin (str | Unset):
@@ -142,7 +146,9 @@ async def asyncio_detailed(
     origin: str | Unset = UNSET,
     sec_fetch_site: E2EeWriteRecordsSecFetchSite | Unset = UNSET,
 ) -> Response[E2EeRecordPage | ErrorEnvelope]:
-    """
+    """Atomically writes encrypted business records in a project scope. Organization scopes distribute keys
+    and do not accept business-record writes.
+
     Args:
         scope_id (str):
         origin (str | Unset):
@@ -177,7 +183,9 @@ async def asyncio(
     origin: str | Unset = UNSET,
     sec_fetch_site: E2EeWriteRecordsSecFetchSite | Unset = UNSET,
 ) -> E2EeRecordPage | ErrorEnvelope | None:
-    """
+    """Atomically writes encrypted business records in a project scope. Organization scopes distribute keys
+    and do not accept business-record writes.
+
     Args:
         scope_id (str):
         origin (str | Unset):

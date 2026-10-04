@@ -3,8 +3,8 @@ from __future__ import annotations
 import argparse
 import getpass
 import json
-from pathlib import Path
 import sys
+from pathlib import Path
 
 from ._client import open_session
 from ._crypto import E2eeError
@@ -84,10 +84,27 @@ def main() -> int:
             return 0
         session = connect()
         if args.command == "status":
-            print(json.dumps({"state": session.state, "device_id": session.device_id}))
+            print(
+                json.dumps(
+                    {
+                        "state": session.state,
+                        "device_id": session.device_id,
+                        "recovery_replacement_pending": session.recovery_replacement_pending,
+                    }
+                )
+            )
         elif args.command in {"setup", "replace-recovery"}:
             if not sys.stdin.isatty() or not sys.stdout.isatty():
                 raise E2eeError("interactive_terminal_required")
+            if (
+                args.command == "replace-recovery"
+                and session.recovery_replacement_pending
+            ):
+                session.resume_recovery_replacement(
+                    getpass.getpass("交換処理中の復旧コード: ").strip()
+                )
+                print("復旧コードの交換を完了しました。")
+                return 0
             draft = (
                 session.prepare_setup()
                 if args.command == "setup"

@@ -36,7 +36,11 @@ arteligo --account-origin ACCOUNT_ORIGIN --arteligo-origin ARTELIGO_ORIGIN statu
 
 `recover` は、復旧した鍵を新しい端末へ保存し、管理権限がある organization と project の鍵を更新してから完了します。途中で失敗すると `status` は `recovery_pending` を返します。同じ profile で `recover` を再実行し、復旧コードを入力すると、同じ新端末から再開します。復旧コードや復旧鍵の秘密部分を再開情報へ保存することはありません。閲覧者として参加している scope の鍵更新は、その scope の管理権限がある参加者が行います。
 
-復旧コードを置き換える場合は、承認済み端末で `replace-recovery` を実行します。新しいコードの保存確認後、既存端末の公開鍵を新しい復旧鍵で証明し、organization と project の現行鍵を更新します。交換前のコードは失効します。新しいコードから復旧した端末は、過去の project 鍵と、失効済み端末が署名した履歴も検証できます。
+復旧コードを置き換える場合は、承認済み端末で `replace-recovery` を実行します。新しいコードの保存確認後、読み取れる organization と project の現行鍵を新しい復旧鍵で包み、復旧情報の交換と同時に保存します。閲覧者として参加している project とアーカイブ済みの project も含めます。続けて、管理権限がある scope の鍵を更新します。交換前のコードは失効します。新しいコードから復旧した端末は、過去の project 鍵と、失効済み端末が署名した履歴も検証できます。
+
+交換の途中で失敗すると、`status` の `recovery_replacement_pending` が `true` になります。同じ profile で `replace-recovery` を再実行し、保存した新しいコードを入力すると、同じ復旧情報の交換を再開します。OS の保護領域に残すのは公開情報、暗号化した復旧 bundle、公開署名だけです。復旧コードや復旧鍵の秘密部分は保存しません。
+
+中断中に別の承認済み端末が復旧コードを交換していた場合は、最新の復旧情報の署名を確認して中断情報を解消し、`recovery_replacement_superseded` を返します。入力した古いコードの交換完了とは表示しません。必要なら `replace-recovery` を再実行し、最新の復旧情報から新しいコードを発行します。
 
 他の利用者の端末を直接確認したときは、その公開鍵への信頼を `peer_trust` の署名付き記録として保存します。復旧後は自分の承認済み端末の証明からこの記録を検証するため、server が返した未知の公開鍵を自動的に信頼しません。公開証明には暗号化済みの復旧 bundle を含めません。
 
@@ -88,7 +92,7 @@ DEK はアップロードごとに端末で生成します。ProjectKey で包�
 
 アップロード途中の情報は暗号化した `upl_` record に保存します。失敗後は `upload_id` と同じローカルファイルを明示して再開できます。内容が変わったファイルは checksum の照合で拒否します。object が `ready` なら転送を繰り返さず、元ファイルと directory record の保存から再開します。この二つは同じ revision batch で保存します。保存の完了応答を失った場合も、再実行で同じ file ID を返し、一覧の項目を増やしません。directory の更新と競合した場合は、同じ `upload_id` で再実行します。ダウンロードは全 chunk の checksum と AES-GCM 認証を終えてから、新しい保存先へファイルを公開します。既存ファイルを上書きしません。
 
-`upload_wav_preview` と local MCP の `arteligo_upload_wav_preview` は、元ファイルの暗号文 checksum と手元の WAV が一致することを確認し、ローカルの FFmpeg / FFprobe で Opus に変換します。プレビュー専用の DEK を生成し、暗号文だけを別 object として送信します。再生情報、音量解析、包んだ DEK は暗号化した file record に保存するため、Flutter でも同じプレビューを再生できます。作成済みのプレビューは再利用します。変換の失敗は元ファイルの保存を取り消さず、同じ file ID で明示的に再試行できます。
+`upload_wav_preview` と local MCP の `arteligo_upload_wav_preview` は、元ファイルの暗号文 checksum と手元の WAV が一致することを確認し、ローカルの FFmpeg / FFprobe で Opus に変換します。プレビュー専用の DEK を生成し、送信前に object ID、manifest、包んだ DEK を暗号化した file record に保存します。再生情報と音量解析も同じ record に保存するため、Flutter でも同じプレビューを再生できます。転送や保存の応答を失った場合は、同じ file ID と WAV を指定して再開します。object が `ready` なら変換と転送を繰り返さず、record の保存を完了します。転送途中の再開では変換後の checksum を照合し、同じ鍵と nonce で異なる内容を送ることを防ぎます。変換の失敗は元ファイルの保存を取り消しません。
 
 転送上限は 1,024 chunks、chunk あたり最大 8 MiB の平文、object あたり最大 8 GiB の暗号文です。各 Bucket 要求には接続、読み取り、要求全体の期限があります。プレビューの変換と解析にも期限を設けます。暗号処理中のメモリは chunk 単位に限定し、使用後の可変バッファーは上書きします。Python の文字列や GC 内の複製まで消去できるとは保証しません。
 

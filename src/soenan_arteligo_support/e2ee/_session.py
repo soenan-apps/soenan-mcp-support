@@ -276,6 +276,8 @@ class DeviceSession:
 
     def prepare_recovery_replacement(self) -> dict[str, Any]:
         self.require_approved()
+        if self.recovery_replacement_pending:
+            raise E2eeError("recovery_replacement_pending")
         if self.recovery is None:
             raise E2eeError("recovery_missing")
         keys = self.crypto.keypair()
@@ -307,55 +309,185 @@ class DeviceSession:
                 "encryption_public_key": keys["encryption_public_key"],
                 "signing_public_key": keys["signing_public_key"],
             }
-            devices = self.api.call("e2eeListDevices")["devices"]
-            self._devices.update({device["device_id"]: device for device in devices})
-            roots = []
-            for device in devices:
-                if device["state"] not in {"approved", "revoked"}:
-                    continue
-                if device["account_subject"] != self.subject:
-                    raise E2eeError("account_mismatch")
-                checked = self.trust.verify_device(
-                    device, lambda value: self._devices[value]
-                )
-                message = bytearray(
-                    b"arteligo-e2ee-device-root-v1\n"
-                ) + self.crypto.canonical(checked)
-                try:
-                    signature = self.crypto.execute(
-                        {
-                            "op": "sign_bytes",
-                            "secret_key": keys["signing_secret_key"],
-                            "bytes": encode(message),
-                        }
-                    )["signature"]
-                finally:
-                    wipe(message)
-                roots.append({"public_device": checked, "root_signature": signature})
             return {
                 "code": code,
-                "recovery": {
-                    **public,
-                    "encrypted_bundle": encode(
-                        json.dumps(sealed, separators=(",", ":")).encode()
-                    ),
-                    "public_command": self.sign(
-                        "recovery_public", {**public, "account_subject": self.subject}
-                    ),
-                    "device_roots": roots,
-                },
+                "recovery": self._recovery_replacement_body(
+                    {
+                        **public,
+                        "encrypted_bundle": encode(
+                            json.dumps(sealed, separators=(",", ":")).encode()
+                        ),
+                        "public_command": self.sign(
+                            "recovery_public",
+                            {**public, "account_subject": self.subject},
+                        ),
+                    },
+                    keys,
+                ),
             }
         finally:
             keys.clear()
             wipe(context)
             wipe(plaintext)
 
+    @property
+    def recovery_replacement_pending(self) -> bool:
+        return (
+            self._device is not None
+            and self._device.get("recovery_replacement") is not None
+        )
+
+    def _recovery_replacement_body(
+        self, recovery: dict[str, Any], keys: dict[str, str]
+    ) -> dict[str, Any]:
+        devices = self.api.call("e2eeListDevices")["devices"]
+        self._devices.update({device["device_id"]: device for device in devices})
+        roots = []
+        for device in devices:
+            previously_approved = device["state"] == "revoked" and any(
+                isinstance(certificate, Mapping)
+                and certificate.get("operation")
+                in {"bootstrap", "device_approve", "recovery_restore"}
+                for certificate in device.get("certificates", [])
+            )
+            if device["state"] != "approved" and not previously_approved:
+                continue
+            if device["account_subject"] != self.subject:
+                raise E2eeError("account_mismatch")
+            checked = self.trust.verify_device(
+                device, lambda value: self._devices[value]
+            )
+            message = bytearray(
+                b"arteligo-e2ee-device-root-v1\n"
+            ) + self.crypto.canonical(checked)
+            try:
+                signature = self.crypto.execute(
+                    {
+                        "op": "sign_bytes",
+                        "secret_key": keys["signing_secret_key"],
+                        "bytes": encode(message),
+                    }
+                )["signature"]
+            finally:
+                wipe(message)
+            roots.append({"public_device": checked, "root_signature": signature})
+        envelopes = []
+        for scope in self.scopes():
+            epoch = scope["key_epoch"]
+            if epoch == 0 and scope.get("lifecycle") == "uninitialized":
+                continue
+            key = self.scope_key(scope["project_id"], epoch)
+            try:
+                envelopes.append(
+                    self.wrap_key(
+                        scope["project_id"],
+                        epoch,
+                        key,
+                        recipient=recovery["recovery_id"],
+                        kind="recovery",
+                        public_key=recovery["encryption_public_key"],
+                    )
+                )
+            finally:
+                wipe(key)
+        return {**recovery, "device_roots": roots, "envelopes": envelopes}
+
+    def resume_recovery_replacement(self, code: str) -> None:
+        self.require_approved()
+        if not self.recovery_replacement_pending:
+            raise E2eeError("recovery_replacement_not_pending")
+        recovery = self._device["recovery_replacement"]
+        self._check_recovery_replacement_current(
+            recovery, self.api.call("e2eeGetRecovery")
+        )
+        context = self.crypto.canonical(
+            {
+                "v": 1,
+                "domain": "arteligo.recovery",
+                "account_subject": self.subject,
+                "recovery_id": recovery["recovery_id"],
+                "generation": recovery["generation"],
+            }
+        )
+        plaintext = bytearray()
+        keys: dict[str, str] = {}
+        try:
+            opened = self.crypto.execute(
+                {
+                    "op": "recovery_open",
+                    "code": code,
+                    "envelope": json.loads(decode(recovery["encrypted_bundle"])),
+                    "aad": encode(context),
+                }
+            )
+            plaintext = decode(opened["plaintext"])
+            keys = json.loads(plaintext)
+            derived = self.crypto.execute(
+                {
+                    "op": "public_keys",
+                    "encryption_secret_key": keys["encryption_secret_key"],
+                    "signing_secret_key": keys["signing_secret_key"],
+                }
+            )
+            if any(derived[field] != recovery[field] for field in derived):
+                raise E2eeError("recovery_key_changed")
+            self.replace_recovery(
+                {"recovery": self._recovery_replacement_body(recovery, keys)}
+            )
+        finally:
+            keys.clear()
+            wipe(plaintext)
+            wipe(context)
+
+    def _check_recovery_replacement_current(
+        self, requested: dict[str, Any], current: dict[str, Any]
+    ) -> None:
+        if (
+            current["generation"] < requested["generation"]
+            or current["recovery_id"] == requested["recovery_id"]
+        ):
+            return
+        devices = self.api.call("e2eeListDevices")["devices"]
+        self._devices.update({device["device_id"]: device for device in devices})
+        verified = self.trust.verify_recovery(
+            self.subject, current, lambda identifier: self._devices[identifier]
+        )
+        self.recovery = verified
+        self._device.pop("recovery_replacement", None)
+        self._persist()
+        raise E2eeError("recovery_replacement_superseded")
+
     def replace_recovery(self, draft: dict[str, Any]) -> None:
         self.require_approved()
-        self.command("e2eeRotateRecovery", "recovery_rotate", draft["recovery"])
-        self.recovery = draft["recovery"]
+        requested = draft["recovery"]
+        identity = (
+            "recovery_id",
+            "generation",
+            "encryption_public_key",
+            "signing_public_key",
+            "encrypted_bundle",
+        )
+        pending = self._device.get("recovery_replacement")
+        if pending is not None and any(
+            pending[field] != requested[field] for field in identity
+        ):
+            raise E2eeError("recovery_replacement_pending")
+        self._device["recovery_replacement"] = {
+            **{field: requested[field] for field in identity},
+            "public_command": requested["public_command"],
+        }
+        self._persist()
+        current = self.api.call("e2eeGetRecovery")
+        self._check_recovery_replacement_current(requested, current)
+        if any(current[field] != requested[field] for field in identity):
+            if current["generation"] + 1 != requested["generation"]:
+                raise E2eeError("revision_conflict")
+            self.command("e2eeRotateRecovery", "recovery_rotate", requested)
+        self.recovery = requested
         self.trust.pin_recovery(self.subject, self.recovery)
         self.reconcile_keys()
+        self._device.pop("recovery_replacement")
+        self._persist()
 
     def reconcile_keys(self) -> None:
         for _ in range(3):
@@ -479,6 +611,8 @@ class DeviceSession:
         public_device(pairing)
         envelopes = []
         for scope in self.scopes():
+            if scope["key_epoch"] == 0 and scope.get("lifecycle") == "uninitialized":
+                continue
             key = self.scope_key(scope["project_id"], scope["key_epoch"])
             try:
                 envelopes.append(

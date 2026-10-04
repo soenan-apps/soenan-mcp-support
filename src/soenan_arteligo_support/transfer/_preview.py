@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+import secrets
+import uuid
 from hashlib import sha256
 from pathlib import Path
-import secrets
 from typing import Any
-import uuid
 
 from ..e2ee._crypto import E2eeError, decode, encode, wipe
 from ..e2ee._records import EncryptedRecords
@@ -42,12 +42,7 @@ def upload_wav_preview(
     if record is None or record["deleted"] or record["kind"] != "file":
         raise E2eeError("not_found")
     value = record["value"]
-    if value.get("preview", {}).get("state") == "ready":
-        return {
-            "file_id": file_id,
-            "preview_id": value["preview"]["previewId"],
-            "state": "ready",
-        }
+    pending = value.get("preview")
     source_manifest = value["source"]
     source_object = source_manifest["object"]
     wrapped_source = source_manifest["encryption"]["wrapped_data_key"]
@@ -99,11 +94,42 @@ def upload_wav_preview(
             if stream.read(1):
                 raise E2eeError("source_changed")
             stream.seek(0)
-            with prepare_opus_preview(
-                stream, source_size=parsed.plaintext_size, timeout=timeouts.total
-            ) as encoded:
-                if encoded.source_sha256 != digest.digest():
+            if pending is not None:
+                if pending.get("sourceObjectId") != source_object["object_id"]:
                     raise E2eeError("source_changed")
+                if pending.get("state") == "ready":
+                    return {
+                        "file_id": file_id,
+                        "preview_id": pending["previewId"],
+                        "state": "ready",
+                    }
+                if pending.get("state") not in {"reserved", "waiting"}:
+                    raise E2eeError("invalid_preview_state")
+                epoch = pending["epoch"]
+                identifier = pending["previewId"]
+                nonce_base = bytes(decode(pending["nonceBaseB64u"]))
+                project_key = session.scope_key(project_id, epoch)
+                wrapped = {
+                    "nonce": pending["wrappedDataKey"]["nonceB64u"],
+                    "ciphertext": pending["wrappedDataKey"]["ciphertextB64u"],
+                }
+                data_key = session.crypto.open(
+                    project_key, wrapped, key_aad(project_id, epoch, identifier, 2)
+                )
+                if pending["state"] == "waiting":
+                    try:
+                        descriptor = session.api.call(
+                            "e2eeGetObject", scope_id=project_id, object_id=identifier
+                        )
+                    except E2eeError as error:
+                        if error.code != "not_found":
+                            raise
+                    else:
+                        if descriptor.get("state") == "ready":
+                            return _publish_preview(
+                                session, project_id, file_id, pending
+                            )
+            else:
                 epoch = _epoch(session, project_id)
                 project_key = session.scope_key(project_id, epoch)
                 data_key = session.crypto.key()
@@ -112,6 +138,11 @@ def upload_wav_preview(
                 wrapped = session.crypto.seal(
                     project_key, data_key, key_aad(project_id, epoch, identifier, 2)
                 )
+            with prepare_opus_preview(
+                stream, source_size=parsed.plaintext_size, timeout=timeouts.total
+            ) as encoded:
+                if encoded.source_sha256 != digest.digest():
+                    raise E2eeError("source_changed")
                 with encoded.path.open("rb") as preview_stream:
                     plan = build_preview_encryption_plan(
                         preview_stream,
@@ -168,7 +199,47 @@ def upload_wav_preview(
                             for c in plan.chunks
                         ],
                     }
-                    session.command(
+                    preview = {
+                        "previewId": identifier,
+                        "sourceObjectId": source_object["object_id"],
+                        "processingId": identifier,
+                        "jobId": identifier,
+                        "epoch": epoch,
+                        "nonceBaseB64u": encode(nonce_base),
+                        "wrappedDataKey": {
+                            "nonceB64u": wrapped["nonce"],
+                            "ciphertextB64u": wrapped["ciphertext"],
+                        },
+                        "manifest": manifest,
+                        "media": {
+                            **media,
+                            "width": None,
+                            "height": None,
+                            "frameRate": None,
+                            "hasAudio": True,
+                            "initSegment": None,
+                            "playbackLoudness": _playback_loudness(loudness),
+                        },
+                        "state": "waiting",
+                    }
+                    if pending is not None and pending["state"] == "waiting":
+                        if pending["manifest"] != manifest:
+                            raise E2eeError("preview_encoding_changed")
+                        preview = pending
+                    else:
+                        records.write(
+                            project_id,
+                            key_epoch=_epoch(session, project_id),
+                            records=[
+                                {
+                                    "record_id": file_id,
+                                    "kind": "file",
+                                    "expected_revision": record["revision"],
+                                    "value": {**value, "preview": preview},
+                                }
+                            ],
+                        )
+                    descriptor = session.command(
                         "e2eeBeginObject",
                         "object_begin",
                         {
@@ -187,10 +258,17 @@ def upload_wav_preview(
                         },
                         scope_id=project_id,
                     )
+                    state = descriptor.get("state")
+                    if state not in {"uploading", "ready"}:
+                        raise E2eeError("object_not_ready")
                     for chunk in plan.chunks:
                         clear = bytearray(preview_stream.read(chunk.plaintext_size))
                         try:
                             ciphertext = plan.seal_chunk(clear, chunk.index)
+                            if sha256(ciphertext).digest() != chunk.ciphertext_sha256:
+                                raise E2eeError("preview_encoding_changed")
+                            if state == "ready":
+                                continue
                             url, headers = _capability(
                                 _object(
                                     session, project_id, identifier, "put", chunk.index
@@ -207,54 +285,54 @@ def upload_wav_preview(
                             )
                         finally:
                             wipe(clear)
-                    _object(session, project_id, identifier, "finalize")
-                current = snapshot(session, project_id)[file_id]
-                if (
-                    current["deleted"]
-                    or current["value"]["file"]["encryptedObjectId"]
-                    != source_object["object_id"]
-                ):
-                    raise E2eeError("source_changed")
-                public_media = {
-                    **media,
-                    "width": None,
-                    "height": None,
-                    "frameRate": None,
-                    "hasAudio": True,
-                    "initSegment": None,
-                    "playbackLoudness": _playback_loudness(loudness),
-                }
-                preview = {
-                    "previewId": identifier,
-                    "sourceObjectId": source_object["object_id"],
-                    "processingId": identifier,
-                    "jobId": identifier,
-                    "epoch": epoch,
-                    "nonceBaseB64u": encode(nonce_base),
-                    "wrappedDataKey": {
-                        "nonceB64u": wrapped["nonce"],
-                        "ciphertextB64u": wrapped["ciphertext"],
-                    },
-                    "manifest": manifest,
-                    "media": public_media,
-                    "state": "ready",
-                }
-                records.write(
-                    project_id,
-                    key_epoch=_epoch(session, project_id),
-                    records=[
-                        {
-                            "record_id": file_id,
-                            "kind": "file",
-                            "expected_revision": current["revision"],
-                            "value": {**current["value"], "preview": preview},
-                        }
-                    ],
-                )
-                return {"file_id": file_id, "preview_id": identifier, "state": "ready"}
+                    if state == "uploading":
+                        _object(session, project_id, identifier, "finalize")
+                return _publish_preview(session, project_id, file_id, preview)
     finally:
         for key in (source_key, source_dek, project_key, data_key):
             wipe(key)
+
+
+def _publish_preview(
+    session: DeviceSession, project_id: str, file_id: str, preview: dict[str, Any]
+) -> dict[str, str]:
+    current = snapshot(session, project_id).get(file_id)
+    if (
+        current is None
+        or current["deleted"]
+        or current["value"]["file"]["encryptedObjectId"] != preview["sourceObjectId"]
+    ):
+        raise E2eeError("source_changed")
+    saved = current["value"].get("preview", {})
+    if any(
+        saved.get(field) != preview.get(field)
+        for field in (
+            "previewId",
+            "sourceObjectId",
+            "epoch",
+            "nonceBaseB64u",
+            "wrappedDataKey",
+            "manifest",
+        )
+    ):
+        raise E2eeError("revision_conflict")
+    if saved.get("state") != "ready":
+        EncryptedRecords(session).write(
+            project_id,
+            key_epoch=_epoch(session, project_id),
+            records=[
+                {
+                    "record_id": file_id,
+                    "kind": "file",
+                    "expected_revision": current["revision"],
+                    "value": {
+                        **current["value"],
+                        "preview": {**saved, "state": "ready"},
+                    },
+                }
+            ],
+        )
+    return {"file_id": file_id, "preview_id": preview["previewId"], "state": "ready"}
 
 
 def _playback_loudness(measurement: dict[str, Any]) -> dict[str, Any]:

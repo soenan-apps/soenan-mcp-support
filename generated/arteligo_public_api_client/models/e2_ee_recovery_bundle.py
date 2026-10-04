@@ -11,6 +11,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.e2_ee_device_certificate import E2EeDeviceCertificate
     from ..models.e2_ee_device_root_proof import E2EeDeviceRootProof
+    from ..models.e2_ee_envelope import E2EeEnvelope
     from ..models.e2_ee_signed_command import E2EeSignedCommand
 
 
@@ -29,6 +30,8 @@ class E2EeRecoveryBundle:
         public_command (E2EeSignedCommand):
         certificates (list[E2EeDeviceCertificate] | Unset):
         device_roots (list[E2EeDeviceRootProof] | Unset):
+        envelopes (list[E2EeEnvelope] | Unset): Current readable scope keys sealed to the replacement recovery root.
+            Required for recovery_rotate and saved atomically with the root; omitted from stored recovery responses.
     """
 
     recovery_id: str
@@ -39,6 +42,7 @@ class E2EeRecoveryBundle:
     public_command: E2EeSignedCommand
     certificates: list[E2EeDeviceCertificate] | Unset = UNSET
     device_roots: list[E2EeDeviceRootProof] | Unset = UNSET
+    envelopes: list[E2EeEnvelope] | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         recovery_id = self.recovery_id
@@ -67,6 +71,13 @@ class E2EeRecoveryBundle:
                 device_roots_item = device_roots_item_data.to_dict()
                 device_roots.append(device_roots_item)
 
+        envelopes: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.envelopes, Unset):
+            envelopes = []
+            for envelopes_item_data in self.envelopes:
+                envelopes_item = envelopes_item_data.to_dict()
+                envelopes.append(envelopes_item)
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -83,6 +94,8 @@ class E2EeRecoveryBundle:
             field_dict["certificates"] = certificates
         if device_roots is not UNSET:
             field_dict["device_roots"] = device_roots
+        if envelopes is not UNSET:
+            field_dict["envelopes"] = envelopes
 
         return field_dict
 
@@ -90,6 +103,7 @@ class E2EeRecoveryBundle:
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.e2_ee_device_certificate import E2EeDeviceCertificate
         from ..models.e2_ee_device_root_proof import E2EeDeviceRootProof
+        from ..models.e2_ee_envelope import E2EeEnvelope
         from ..models.e2_ee_signed_command import E2EeSignedCommand
 
         d = dict(src_dict)
@@ -127,6 +141,15 @@ class E2EeRecoveryBundle:
 
                 device_roots.append(device_roots_item)
 
+        _envelopes = d.pop("envelopes", UNSET)
+        envelopes: list[E2EeEnvelope] | Unset = UNSET
+        if _envelopes is not UNSET:
+            envelopes = []
+            for envelopes_item_data in _envelopes:
+                envelopes_item = E2EeEnvelope.from_dict(envelopes_item_data)
+
+                envelopes.append(envelopes_item)
+
         e2_ee_recovery_bundle = cls(
             recovery_id=recovery_id,
             encryption_public_key=encryption_public_key,
@@ -136,6 +159,7 @@ class E2EeRecoveryBundle:
             public_command=public_command,
             certificates=certificates,
             device_roots=device_roots,
+            envelopes=envelopes,
         )
 
         return e2_ee_recovery_bundle
