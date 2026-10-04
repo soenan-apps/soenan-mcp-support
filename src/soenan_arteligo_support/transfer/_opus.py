@@ -64,11 +64,17 @@ def prepare_opus_preview(
         end = source.seek(0, io.SEEK_END)
         source.seek(start)
         if end - start != source_size:
-            raise TransferSizeMismatch("WAV source size does not match the upload handoff")
+            raise TransferSizeMismatch(
+                "WAV source size does not match the selected file"
+            )
         deadline = time.monotonic() + timeout
         try:
             source_sha256 = _encode(
-                source, source_size, output, _remaining(deadline), output_limit,
+                source,
+                source_size,
+                output,
+                _remaining(deadline),
+                output_limit,
             )
             size = output.stat().st_size
             if not 0 < size <= output_limit:
@@ -80,8 +86,15 @@ def prepare_opus_preview(
             integrated, peak, loudness_range = _analyze(output, _remaining(deadline))
             source.seek(start)
             yield OpusPreview(
-                output, size, integrated, peak, loudness_range, duration, channels,
-                bitrate, source_sha256,
+                output,
+                size,
+                integrated,
+                peak,
+                loudness_range,
+                duration,
+                channels,
+                bitrate,
+                source_sha256,
             )
         finally:
             source.seek(start)
@@ -125,7 +138,8 @@ def preflight_wav_preview(source: BinaryIO, source_size: int) -> None:
                         raise TransferError("RF64 data length is unavailable")
                     chunk_size = rf64_data_size
                 if (
-                    byte_rate is None or block_align is None
+                    byte_rate is None
+                    or block_align is None
                     or chunk_size > source_size - offset
                     or chunk_size % block_align
                 ):
@@ -136,7 +150,10 @@ def preflight_wav_preview(source: BinaryIO, source_size: int) -> None:
                 source.seek(start)
                 _wav_pan_filter(source, source_size)
                 return
-            if chunk_size > _HEADER_SCAN_LIMIT - offset or offset + chunk_size > source_size:
+            if (
+                chunk_size > _HEADER_SCAN_LIMIT - offset
+                or offset + chunk_size > source_size
+            ):
                 raise TransferError("WAV header exceeds the local scan limit")
             if chunk_id == b"ds64" and chunk_size >= 16:
                 source.seek(start + offset + 8)
@@ -147,7 +164,8 @@ def preflight_wav_preview(source: BinaryIO, source_size: int) -> None:
                 fmt = _read_header(source, 16)
                 sample_rate, byte_rate, block_align = struct.unpack_from("<IIH", fmt, 4)
                 if (
-                    sample_rate == 0 or block_align == 0
+                    sample_rate == 0
+                    or block_align == 0
                     or byte_rate != sample_rate * block_align
                 ):
                     raise TransferError("WAV format rate is invalid")
@@ -170,7 +188,10 @@ def _wav_pan_filter(source: BinaryIO, source_size: int) -> str | None:
             offset += 8
             if chunk_id == b"data":
                 break
-            if chunk_size > _HEADER_SCAN_LIMIT - offset or offset + chunk_size > source_size:
+            if (
+                chunk_size > _HEADER_SCAN_LIMIT - offset
+                or offset + chunk_size > source_size
+            ):
                 raise TransferError("WAV format header exceeds the local scan limit")
             if chunk_id == b"fmt ":
                 if chunk_size < 16:
@@ -181,7 +202,8 @@ def _wav_pan_filter(source: BinaryIO, source_size: int) -> str | None:
                     raise TransferError("WAV channel count is unsupported")
                 if encoding == 0xFFFE:
                     if (
-                        chunk_size < 40 or struct.unpack_from("<H", fmt, 16)[0] < 22
+                        chunk_size < 40
+                        or struct.unpack_from("<H", fmt, 16)[0] < 22
                         or fmt[28:40] != _WAVE_SUBFORMAT_TAIL
                         or struct.unpack_from("<I", fmt, 24)[0] not in (1, 3)
                     ):
@@ -198,17 +220,30 @@ def _wav_pan_filter(source: BinaryIO, source_size: int) -> str | None:
                 if mask not in _SURROUND_MASKS or mask.bit_count() != channels:
                     raise TransferError("WAV channel layout is unsupported")
                 speakers = [bit for bit in range(32) if mask & (1 << bit)]
-                left = {0: 1.0, 2: _SURROUND_WEIGHT, 4: _SURROUND_WEIGHT, 9: _SURROUND_WEIGHT}
-                right = {1: 1.0, 2: _SURROUND_WEIGHT, 5: _SURROUND_WEIGHT, 10: _SURROUND_WEIGHT}
+                left = {
+                    0: 1.0,
+                    2: _SURROUND_WEIGHT,
+                    4: _SURROUND_WEIGHT,
+                    9: _SURROUND_WEIGHT,
+                }
+                right = {
+                    1: 1.0,
+                    2: _SURROUND_WEIGHT,
+                    5: _SURROUND_WEIGHT,
+                    10: _SURROUND_WEIGHT,
+                }
                 gain = 1.0 / max(
                     sum(left.get(bit, 0.0) for bit in speakers),
                     sum(right.get(bit, 0.0) for bit in speakers),
                 )
+
                 def row(weights: dict[int, float]) -> str:
                     return "+".join(
                         f"{weights[bit] * gain:.17g}*c{index}"
-                        for index, bit in enumerate(speakers) if bit in weights
+                        for index, bit in enumerate(speakers)
+                        if bit in weights
                     )
+
                 return f"pan=stereo|c0={row(left)}|c1={row(right)}"
             offset += chunk_size + (chunk_size & 1)
         raise TransferError("WAV format header is missing")
@@ -217,25 +252,60 @@ def _wav_pan_filter(source: BinaryIO, source_size: int) -> str | None:
 
 
 def _encode(
-    source: BinaryIO, source_size: int, output: Path, timeout: float,
+    source: BinaryIO,
+    source_size: int,
+    output: Path,
+    timeout: float,
     output_limit: int,
 ) -> bytes:
     pan_filter = _wav_pan_filter(source, source_size)
     command = [
-        _binary("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
-        "-threads", "2", "-filter_threads", "2", "-i", "pipe:0",
-        "-map", "0:a:0", "-vn", "-ar", "48000",
+        _binary("ffmpeg"),
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-nostdin",
+        "-y",
+        "-threads",
+        "2",
+        "-filter_threads",
+        "2",
+        "-i",
+        "pipe:0",
+        "-map",
+        "0:a:0",
+        "-vn",
+        "-ar",
+        "48000",
         *(["-af", pan_filter] if pan_filter is not None else ["-ac", "2"]),
-        "-c:a", "libopus", "-threads", "2", "-b:a", "128k", "-vbr", "on",
-        "-fflags", "+bitexact", "-flags:a", "+bitexact",
-        "-fs", str(output_limit + 1), "-f", "webm", str(output),
+        "-c:a",
+        "libopus",
+        "-threads",
+        "2",
+        "-b:a",
+        "128k",
+        "-vbr",
+        "on",
+        "-fflags",
+        "+bitexact",
+        "-flags:a",
+        "+bitexact",
+        "-fs",
+        str(output_limit + 1),
+        "-f",
+        "webm",
+        str(output),
     ]
     errors: list[Exception] = []
     source_digest = sha256()
     try:
         process = subprocess.Popen(
-            command, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL, close_fds=True, env=_CHILD_ENV,
+            command,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+            env=_CHILD_ENV,
         )
     except OSError:
         raise TransferError("local ffmpeg is unavailable") from None
@@ -247,7 +317,9 @@ def _encode(
             while remaining:
                 data = source.read(min(remaining, _COPY_SIZE))
                 if not isinstance(data, bytes) or not data or len(data) > remaining:
-                    raise TransferSizeMismatch("WAV source changed during preview encoding")
+                    raise TransferSizeMismatch(
+                        "WAV source changed during preview encoding"
+                    )
                 process.stdin.write(data)
                 source_digest.update(data)
                 remaining -= len(data)
@@ -289,12 +361,22 @@ def _verify_encoded_media(output: Path, timeout: float) -> tuple[float, int]:
     try:
         result = subprocess.run(
             [
-                _binary("ffprobe"), "-v", "error", "-show_entries",
+                _binary("ffprobe"),
+                "-v",
+                "error",
+                "-show_entries",
                 "format=format_name,duration:stream=codec_type,codec_name,sample_rate,channels",
-                "-of", "json", str(output),
+                "-of",
+                "json",
+                str(output),
             ],
-            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-            timeout=timeout, check=False, close_fds=True, env=_CHILD_ENV,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=timeout,
+            check=False,
+            close_fds=True,
+            env=_CHILD_ENV,
         )
     except (OSError, subprocess.TimeoutExpired):
         raise TransferError("encoded preview could not be verified") from None
@@ -322,16 +404,33 @@ def _verify_encoded_media(output: Path, timeout: float) -> tuple[float, int]:
 
 def _analyze(output: Path, timeout: float) -> tuple[int | None, int | None, int | None]:
     command = [
-        _binary("ffmpeg"), "-hide_banner", "-nostdin", "-threads", "2",
-        "-filter_threads", "2", "-i", str(output),
-        "-map", "0:a:0", "-af", "loudnorm=I=-16:TP=-1.5:LRA=11:print_format=json",
-        "-f", "null", "-",
+        _binary("ffmpeg"),
+        "-hide_banner",
+        "-nostdin",
+        "-threads",
+        "2",
+        "-filter_threads",
+        "2",
+        "-i",
+        str(output),
+        "-map",
+        "0:a:0",
+        "-af",
+        "loudnorm=I=-16:TP=-1.5:LRA=11:print_format=json",
+        "-f",
+        "null",
+        "-",
     ]
     with tempfile.TemporaryFile(mode="w+b") as diagnostics:
         try:
             result = subprocess.run(
-                command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                stderr=diagnostics, timeout=timeout, check=False, close_fds=True,
+                command,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=diagnostics,
+                timeout=timeout,
+                check=False,
+                close_fds=True,
                 env=_CHILD_ENV,
             )
         except subprocess.TimeoutExpired:

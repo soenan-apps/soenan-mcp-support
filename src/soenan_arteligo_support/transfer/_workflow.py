@@ -1,808 +1,438 @@
 from __future__ import annotations
 
-import io
+from datetime import datetime, timezone
+from hashlib import sha256
+import mimetypes
 import os
+from pathlib import Path
+import secrets
+import struct
 import tempfile
 import time
-from base64 import urlsafe_b64encode
-from collections.abc import Mapping
-from hashlib import sha256
-from pathlib import Path
-from typing import Any, BinaryIO, TypeAlias
+from typing import Any
+import uuid
 
-import httpx
-
-from ._api import ArteligoTransferAPI
-from ._claim import redeem_file_key_claim
-from ._crypto import (
-    CHUNK_SIZE,
-    MAXIMUM_CHUNKS,
-    ChunkMetadata,
-    EncryptionContractError,
-    _base64url_bytes,
-    build_encryption_plan,
-    build_preview_encryption_plan,
-    parse_file_handoff_plan,
-    parse_preview_decryption_plan,
-)
-from ._handoff import TransferHandoff, _claim_descriptor, _identifier, parse_handoff
+from ..e2ee._crypto import E2eeError, decode, encode, wipe
+from ..e2ee._records import EncryptedRecords
+from ..e2ee._session import DeviceSession
+from ._crypto import EncryptionPlan, build_encryption_plan, parse_decryption_plan
 from ._http import (
     DEFAULT_TIMEOUTS,
     DEFAULT_TRANSPORT,
-    TransferError,
-    TransferHTTPError,
-    TransferSizeMismatch,
     TransferTimeouts,
     TransferTransport,
-    get_ciphertext,
     put_ciphertext,
+    get_ciphertext,
 )
-from ._opus import OpusPreview, preflight_wav_preview, prepare_opus_preview
 
-PathSource: TypeAlias = str | os.PathLike[str]
-UploadSource: TypeAlias = PathSource | BinaryIO
-DownloadDestination: TypeAlias = PathSource | BinaryIO
 
-_DOWNLOAD_SPOOL_MEMORY_LIMIT = 8 * 1024 * 1024
-_DOWNLOAD_COPY_SIZE = 1024 * 1024
+def key_aad(project: str, epoch: int, object_id: str, purpose: int = 1) -> bytes:
+    result = bytearray(b"audaligo-project-key-v1\0") + bytes([purpose])
+    for field in (project, str(epoch), object_id):
+        try:
+            value = field.encode("ascii")
+        except UnicodeEncodeError:
+            raise E2eeError("invalid_object_context") from None
+        if not 1 <= len(value) <= 256:
+            raise E2eeError("invalid_object_context")
+        result.extend(struct.pack(">I", len(value)))
+        result.extend(value)
+    return bytes(result)
+
+
+def snapshot(session: DeviceSession, scope: str) -> dict[str, dict[str, Any]]:
+    records = EncryptedRecords(session)
+    result: dict[str, dict[str, Any]] = {}
+    after: str | None = None
+    for _ in range(64):
+        parameters: dict[str, Any] = {"scope_id": scope, "limit": 256}
+        if after is not None:
+            parameters["after_record_id"] = after
+        page = session.api.call("e2eeGetSnapshot", **parameters)
+        opened = [records.open(scope, item) for item in page["records"]]
+        for item in opened:
+            if after is not None and item["record_id"] <= after:
+                raise E2eeError("invalid_cursor")
+            result[item["record_id"]] = item
+        if not page["has_more"]:
+            return result
+        if not opened:
+            raise E2eeError("invalid_cursor")
+        after = opened[-1]["record_id"]
+    raise E2eeError("snapshot_limit_exceeded")
+
+
+def _epoch(session: DeviceSession, scope: str) -> int:
+    value = next(
+        (
+            project
+            for project in session.api.call("e2eeListProjects")["projects"]
+            if project["project_id"] == scope
+        ),
+        None,
+    )
+    if value is None:
+        raise E2eeError("not_found")
+    return value["key_epoch"]
+
+
+def _object(
+    session: DeviceSession,
+    scope: str,
+    identifier: str,
+    action: str,
+    index: int | None = None,
+) -> dict[str, Any]:
+    operations = {
+        "put": ("e2eePutObjectCapability", "object_put"),
+        "finalize": ("e2eeFinalizeObject", "object_finalize"),
+        "delete": ("e2eeDeleteObject", "object_delete"),
+    }
+    body: dict[str, Any] = {"scope_id": scope, "object_id": identifier}
+    if index is not None:
+        body["index"] = index
+    api_operation, operation = operations[action]
+    return session.command(
+        api_operation, operation, body, scope_id=scope, object_id=identifier
+    )
+
+
+def _capability(
+    value: dict[str, Any], method: str, length: int
+) -> tuple[str, dict[str, str]]:
+    if (
+        value.get("method") != method
+        or not isinstance(value.get("expires_at"), int)
+        or value["expires_at"] <= time.time()
+        or value.get("content_length", length) not in {None, length}
+        or not isinstance(value.get("url"), str)
+        or not isinstance(value.get("headers"), dict)
+    ):
+        raise E2eeError("invalid_capability")
+    return value["url"], value["headers"]
 
 
 def upload_file(
-    structured_content: Mapping[str, Any],
+    session: DeviceSession,
     *,
-    source: UploadSource,
+    project_id: str,
+    source: str | Path,
+    parent_folder_id: str | None = None,
+    upload_id: str | None = None,
     timeouts: TransferTimeouts = DEFAULT_TIMEOUTS,
     transport: TransferTransport = DEFAULT_TRANSPORT,
-    claim_transport: TransferTransport = DEFAULT_TRANSPORT,
-    control_transport: httpx.BaseTransport | None = None,
-) -> Mapping[str, Any]:
-    """Consume an MCP upload handoff and transfer locally encrypted ciphertext."""
-    handoff = _parse_handoff(structured_content)
-    if handoff.operation != "upload" or handoff.upload is None:
-        raise TransferError("structuredContent is not an upload handoff")
-    upload = handoff.upload
-    stream, close_stream, plaintext_size = _open_upload_source(source)
+) -> dict[str, Any]:
+    session.require_approved()
+    source = Path(source)
+    records = EncryptedRecords(session)
+    epoch = _epoch(session, project_id)
+    identifier = upload_id or str(uuid.uuid4())
+    pending_id = "upl_" + identifier
+    current = snapshot(session, project_id)
+    pending = current.get(pending_id)
+    data_key = bytearray()
+    project_key = session.scope_key(project_id, epoch)
     try:
-        if plaintext_size != upload.plaintext_size:
-            raise TransferSizeMismatch("source size does not match the MCP handoff")
-        if plaintext_size > CHUNK_SIZE * MAXIMUM_CHUNKS:
-            raise TransferError("plaintext exceeds the managed transfer limit")
-        if upload.preview_profile == "opus-webm-v1":
-            preflight_wav_preview(stream, plaintext_size)
-        return _upload_prepared_file(
-            handoff, stream, plaintext_size, timeouts,
-            transport, claim_transport, control_transport,
-        )
-    except EncryptionContractError as error:
-        raise TransferError(str(error)) from None
-    finally:
-        if close_stream:
-            stream.close()
-
-
-def _upload_prepared_file(
-    handoff: TransferHandoff,
-    stream: BinaryIO,
-    plaintext_size: int,
-    timeouts: TransferTimeouts,
-    transport: TransferTransport,
-    claim_transport: TransferTransport,
-    control_transport: httpx.BaseTransport | None,
-) -> Mapping[str, Any]:
-    upload = handoff.upload
-    if upload is None:
-        raise TransferError("upload metadata is missing")
-    key_claim = redeem_file_key_claim(
-        handoff.key_claim,
-        expected_direction="upload",
-        expected_project_id=handoff.project_id,
-        expected_object_id=handoff.object_id,
-        expected_epoch=handoff.epoch,
-        timeouts=timeouts,
-        transport=claim_transport,
-    )
-    plan = build_encryption_plan(
-        stream,
-        project_id=handoff.project_id,
-        file_id=upload.operation_id,
-        object_id=handoff.object_id,
-        epoch=handoff.epoch,
-        data_key=key_claim.data_key,
-        wrapped_nonce=key_claim.wrapped_nonce,
-        wrapped_data_key=key_claim.wrapped_data_key,
-        plaintext_size=plaintext_size,
-        capture_source_sha256=upload.preview_profile == "opus-webm-v1",
-    )
-    source_start = stream.tell()
-    with ArteligoTransferAPI(
-        control_origin=handoff.control_origin,
-        continuation=handoff.continuation,
-        timeouts=timeouts,
-        control_transport=control_transport,
-    ) as api:
-        manifest = api.put_manifest(
-            project_id=handoff.project_id,
-            upload_id=handoff.object_id,
-            manifest=plan.manifest(),
-        )
-        if manifest.get("state") != "ready":
-            for chunk in plan.chunks:
-                cleartext = _read_exact(stream, chunk.plaintext_size)
-                ciphertext = plan.seal_chunk(cleartext, chunk.index)
-                if sha256(ciphertext).digest() != chunk.ciphertext_sha256:
-                    raise TransferSizeMismatch("source changed after the upload manifest was built")
-                capability = api.upload_capability(
-                    project_id=handoff.project_id,
-                    upload_id=handoff.object_id,
-                    chunk_index=chunk.index,
+        with source.open("rb") as stream:
+            size = os.fstat(stream.fileno()).st_size
+            if not 0 < size <= 8 * 1024**3 - 1024 * 16:
+                raise E2eeError("file_size_limit")
+            if pending is None:
+                if upload_id is not None:
+                    raise E2eeError("upload_not_found")
+                file_id = "fil_" + secrets.token_hex(16)
+                data_key = session.crypto.key()
+                wrapped = session.crypto.seal(
+                    project_key, data_key, key_aad(project_id, epoch, identifier)
                 )
-                url, headers = _validate_capability(
-                    capability, operation="PUT", object_id=handoff.object_id, chunk=chunk,
+                plan = build_encryption_plan(
+                    stream,
+                    project_id=project_id,
+                    file_id=file_id,
+                    object_id=identifier,
+                    epoch=epoch,
+                    data_key=data_key,
+                    wrapped_nonce=bytes(decode(wrapped["nonce"])),
+                    wrapped_data_key=bytes(decode(wrapped["ciphertext"])),
+                    plaintext_size=size,
                 )
-                put_ciphertext(
-                    url, headers, ciphertext, timeouts=timeouts, transport=transport,
-                )
-            if stream.read(1):
-                raise TransferSizeMismatch("source changed after the upload manifest was built")
-            api.complete_upload(
-                project_id=handoff.project_id,
-                upload_id=handoff.object_id,
-            )
-        result = api.commit_file(
-            project_id=handoff.project_id,
-            file_id=upload.operation_id,
-            upload_id=handoff.object_id,
-            filename=upload.filename,
-            plaintext_size=upload.plaintext_size,
-        )
-        if upload.preview_profile == "opus-webm-v1":
-            stream.seek(source_start)
-            try:
-                _upload_preview(
-                    api, handoff, stream, plaintext_size, plan.source_sha256,
-                    timeouts, transport, claim_transport,
-                )
-            except (TransferError, EncryptionContractError) as error:
-                raise TransferError(
-                    "source committed; preview pending; retry the same MCP begin operation ID",
-                    code="preview_pending",
-                    recoverable=isinstance(error, TransferError) and error.recoverable,
-                ) from None
-        return result
-
-
-def _upload_preview(
-    api: ArteligoTransferAPI,
-    handoff: TransferHandoff,
-    source: BinaryIO,
-    source_size: int,
-    source_sha256: bytes | None,
-    timeouts: TransferTimeouts,
-    transport: TransferTransport,
-    claim_transport: TransferTransport,
-) -> None:
-    upload = handoff.upload
-    if upload is None or upload.preview_id is None or source_sha256 is None:
-        raise TransferError("preview upload binding is missing")
-    session = api.begin_preview_upload(
-        project_id=handoff.project_id, file_id=upload.operation_id,
-    )
-    _validate_preview_session(session, handoff)
-    if (
-        session["previewId"] != upload.preview_id
-        or session["processingId"] != upload.processing_id
-        or session["jobId"] != upload.job_id
-    ):
-        raise TransferError(
-            "preview upload handoff is stale; repeat the same MCP begin operation ID",
-            code="preview_handoff_stale",
-            recoverable=True,
-        )
-    if session["state"] == "ready":
-        return
-    # An earlier invocation may have encoded different WebM bytes. Fence its
-    # DEK and nonce before launching a new encoder, even if its manifest was empty.
-    old_preview_id = _identifier(session, "previewId")
-    old_nonce = _base64url_bytes(session, "nonceBaseB64u", 8)
-    session = api.reset_preview_upload(
-        project_id=handoff.project_id,
-        file_id=upload.operation_id,
-        expected_preview_id=old_preview_id,
-    )
-    _validate_preview_session(session, handoff)
-    if (
-        session["state"] != "reserved"
-        or _identifier(session, "previewId") == old_preview_id
-        or _base64url_bytes(session, "nonceBaseB64u", 8) == old_nonce
-    ):
-        raise TransferError("preview reset did not issue fresh encryption material")
-    with prepare_opus_preview(source, source_size=source_size, timeout=timeouts.total) as preview:
-        if preview.source_sha256 != source_sha256:
-            raise TransferSizeMismatch("WAV source changed after source upload")
-        # Encoding can outlive a key claim. Reissue it under this same fenced
-        # preview identity; do not reset or encrypt until the binding is checked.
-        refreshed = api.begin_preview_upload(
-            project_id=handoff.project_id, file_id=upload.operation_id,
-        )
-        _validate_preview_session(refreshed, handoff)
-        if (
-            refreshed["previewId"] != session["previewId"]
-            or refreshed["nonceBaseB64u"] != session["nonceBaseB64u"]
-            or refreshed["processingId"] != session["processingId"]
-            or refreshed["jobId"] != session["jobId"]
-        ):
-            raise TransferError("preview identity changed during local encoding")
-        if refreshed["state"] == "ready":
-            return
-        _publish_preview(
-            api, handoff, refreshed, preview, timeouts, transport, claim_transport,
-        )
-
-
-def _validate_preview_session(
-    session: Mapping[str, Any], handoff: TransferHandoff,
-) -> None:
-    required = {
-        "previewId", "sourceObjectId", "processingId", "jobId",
-        "epoch", "nonceBaseB64u", "state",
-    }
-    if not required.issubset(session) or set(session) - required - {"keyClaim"}:
-        raise TransferError("delegated preview upload session is invalid")
-    if (
-        _identifier(session, "sourceObjectId") != handoff.object_id
-        or _integer(session, "epoch") != handoff.epoch
-        or session["state"] not in {"reserved", "waiting", "ready"}
-    ):
-        raise TransferError("preview upload session does not match the source")
-    for key in ("previewId", "processingId", "jobId"):
-        _identifier(session, key)
-    _base64url_bytes(session, "nonceBaseB64u", 8)
-
-
-def _publish_preview(
-    api: ArteligoTransferAPI,
-    handoff: TransferHandoff,
-    session: Mapping[str, Any],
-    preview: OpusPreview,
-    timeouts: TransferTimeouts,
-    transport: TransferTransport,
-    claim_transport: TransferTransport,
-) -> None:
-    upload = handoff.upload
-    if upload is None:
-        raise TransferError("upload metadata is missing")
-    preview_id = _identifier(session, "previewId")
-    processing_id = _identifier(session, "processingId")
-    job_id = _identifier(session, "jobId")
-    nonce_base = _base64url_bytes(session, "nonceBaseB64u", 8)
-    if "keyClaim" not in session:
-        raise TransferError("preview upload key claim is missing")
-    claim = _claim_descriptor(
-        session["keyClaim"],
-        expected_origin=handoff.control_origin,
-        now_unix_milliseconds=int(time.time() * 1000),
-    )
-    preview_key = redeem_file_key_claim(
-        claim,
-        expected_direction="upload",
-        expected_project_id=handoff.project_id,
-        expected_object_id=preview_id,
-        expected_epoch=handoff.epoch,
-        timeouts=timeouts,
-        transport=claim_transport,
-    )
-    loudness = _preview_loudness(preview)
-    with preview.path.open("rb") as encoded:
-        plan = build_preview_encryption_plan(
-            encoded,
-            project_id=handoff.project_id,
-            source_object_id=handoff.object_id,
-            processing_id=processing_id,
-            preview_id=preview_id,
-            job_id=job_id,
-            epoch=handoff.epoch,
-            data_key=preview_key.data_key,
-            nonce_base=nonce_base,
-            plaintext_size=preview.size,
-        )
-        manifest = {
-            "sourceObjectId": handoff.object_id,
-            "previewId": preview_id,
-            "processingId": processing_id,
-            "jobId": job_id,
-            "epoch": handoff.epoch,
-            "nonceBaseB64u": urlsafe_b64encode(nonce_base).decode("ascii").rstrip("="),
-            "plaintextSize": preview.size,
-            "ciphertextSize": sum(chunk.ciphertext_size for chunk in plan.chunks),
-            "chunkSize": CHUNK_SIZE,
-            "chunks": [
-                {
-                    "chunkIndex": chunk.index,
-                    "plaintextOffset": chunk.plaintext_offset,
-                    "plaintextSize": chunk.plaintext_size,
-                    "ciphertextOffset": chunk.ciphertext_offset,
-                    "ciphertextSize": chunk.ciphertext_size,
-                    "ciphertextSha256B64u": urlsafe_b64encode(
-                        chunk.ciphertext_sha256
-                    ).decode("ascii").rstrip("="),
-                    "finalChunk": chunk.final,
+                private = {
+                    "uploadId": identifier,
+                    "keyEpoch": epoch,
+                    "source": plan.manifest(),
+                    "sourceState": "uploading",
+                    "entryIntent": {
+                        "parentFolderId": parent_folder_id,
+                        "name": source.name,
+                    },
+                    "filename": source.name,
+                    "mimeType": mimetypes.guess_type(source.name)[0]
+                    or "application/octet-stream",
                 }
-                for chunk in plan.chunks
-            ],
-            "media": {
-                "durationSeconds": preview.duration_seconds,
-                "mimeType": "audio/webm",
-                "codecs": "opus",
-                "sampleRate": 48000,
-                "channels": preview.channels,
-                "bitrate": preview.bitrate,
-                "playbackLoudness": loudness,
-            },
+                pending = records.write(
+                    project_id,
+                    key_epoch=epoch,
+                    records=[
+                        {
+                            "record_id": pending_id,
+                            "kind": "file",
+                            "expected_revision": 0,
+                            "value": private,
+                        }
+                    ],
+                )[0]
+            else:
+                if pending["deleted"] or pending["value"].get("uploadId") != identifier:
+                    raise E2eeError("upload_not_found")
+                private = pending["value"]
+                manifest = private["source"]
+                object_value = manifest["object"]
+                if (
+                    object_value["project_id"] != project_id
+                    or object_value["object_id"] != identifier
+                    or object_value["plaintext_size"] != size
+                ):
+                    raise E2eeError("source_changed")
+                epoch = object_value["epoch"]
+                wipe(project_key)
+                project_key = session.scope_key(project_id, epoch)
+                wrapped = manifest["encryption"]["wrapped_data_key"]
+                data_key = session.crypto.open(
+                    project_key,
+                    {
+                        "nonce": wrapped["nonceB64u"],
+                        "ciphertext": wrapped["ciphertextB64u"],
+                    },
+                    key_aad(project_id, epoch, identifier),
+                )
+                parsed = parse_decryption_plan(
+                    manifest,
+                    data_key=data_key,
+                    wrapped_nonce=bytes(decode(wrapped["nonceB64u"])),
+                    wrapped_data_key=bytes(decode(wrapped["ciphertextB64u"])),
+                )
+                plan = EncryptionPlan(
+                    parsed.project_id,
+                    parsed.file_id,
+                    parsed.object_id,
+                    parsed.epoch,
+                    parsed.plaintext_size,
+                    parsed.chunk_count,
+                    parsed.nonce_base,
+                    data_key,
+                    bytes(decode(wrapped["nonceB64u"])),
+                    bytes(decode(wrapped["ciphertextB64u"])),
+                    parsed.chunks,
+                )
+                file_id = plan.file_id
+            session.command(
+                "e2eeBeginObject",
+                "object_begin",
+                {
+                    "scope_id": project_id,
+                    "object_id": identifier,
+                    "key_epoch": epoch,
+                    "ciphertext_size": sum(
+                        chunk.ciphertext_size for chunk in plan.chunks
+                    ),
+                    "chunks": [
+                        {
+                            "index": chunk.index,
+                            "ciphertext_size": chunk.ciphertext_size,
+                            "checksum_sha256": encode(chunk.ciphertext_sha256),
+                        }
+                        for chunk in plan.chunks
+                    ],
+                },
+                scope_id=project_id,
+            )
+            for chunk in plan.chunks:
+                clear = bytearray(stream.read(chunk.plaintext_size))
+                try:
+                    ciphertext = plan.seal_chunk(clear, chunk.index)
+                    if sha256(ciphertext).digest() != chunk.ciphertext_sha256:
+                        raise E2eeError("source_changed")
+                    capability = _object(
+                        session, project_id, identifier, "put", chunk.index
+                    )
+                    url, headers = _capability(capability, "PUT", len(ciphertext))
+                    put_ciphertext(
+                        url, headers, ciphertext, timeouts=timeouts, transport=transport
+                    )
+                finally:
+                    wipe(clear)
+            if stream.read(1):
+                raise E2eeError("source_changed")
+        _object(session, project_id, identifier, "finalize")
+        current = snapshot(session, project_id)
+        pending = current[pending_id]
+        epoch = _epoch(session, project_id)
+        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        entry_id = "ent_" + file_id
+        file = {
+            "projectId": project_id,
+            "fileId": file_id,
+            "entryId": entry_id,
+            "encryptedObjectId": identifier,
+            "createdBy": session.subject,
+            "fileKind": "project_file",
+            "originalFilename": private["filename"],
+            "originalPlaintextSize": size,
+            "mimeType": private["mimeType"],
+            "createdAt": now,
+            "updatedAt": now,
         }
-        state = api.put_preview_manifest(
-            project_id=handoff.project_id,
-            file_id=upload.operation_id,
-            manifest=manifest,
+        entry = {
+            **private["entryIntent"],
+            "kind": "file",
+            "id": entry_id,
+            "fileId": file_id,
+            "projectId": project_id,
+            "revision": 1,
+            "createdAt": now,
+            "updatedAt": now,
+            "deletedAt": None,
+            "file": {
+                "fileId": file_id,
+                "name": file["originalFilename"],
+                "sizeBytes": size,
+                "mimeType": file["mimeType"],
+                "createdBy": session.subject,
+            },
+            "breadcrumbs": [],
+        }
+        pages = sorted(
+            (
+                item
+                for item in current.values()
+                if item["kind"] == "directory" and not item["deleted"]
+            ),
+            key=lambda item: item["record_id"],
         )
-        if state.get("objectId") != preview_id:
-            raise TransferError("preview manifest response does not match the source")
-        if state.get("state") == "ready":
-            return
-        for chunk in plan.chunks:
-            cleartext = _read_exact(encoded, chunk.plaintext_size)
-            ciphertext = plan.seal_chunk(cleartext, chunk.index)
-            if sha256(ciphertext).digest() != chunk.ciphertext_sha256:
-                raise TransferSizeMismatch("encoded preview changed after manifest creation")
-            capability = api.preview_upload_capability(
-                project_id=handoff.project_id,
-                file_id=upload.operation_id,
-                chunk_index=chunk.index,
+        entries = [value for page in pages for value in page["value"]["entries"]] + [
+            entry
+        ]
+        entries.sort(key=lambda item: item["id"])
+        writes = [
+            {
+                "record_id": file_id,
+                "kind": "file",
+                "expected_revision": 0,
+                "value": {**private, "sourceState": "ready", "file": file},
+            },
+            {
+                "record_id": pending_id,
+                "kind": "file",
+                "expected_revision": pending["revision"],
+                "value": {},
+                "deleted": True,
+            },
+        ]
+        for index in range((len(entries) + 63) // 64):
+            previous = pages[index] if index < len(pages) else None
+            value = {"entries": entries[index * 64 : (index + 1) * 64]}
+            if previous is not None and previous["value"] == value:
+                continue
+            writes.append(
+                {
+                    "record_id": previous["record_id"]
+                    if previous
+                    else "dpg_" + secrets.token_hex(16),
+                    "kind": "directory",
+                    "expected_revision": previous["revision"] if previous else 0,
+                    "value": value,
+                }
             )
-            url, headers = _validate_capability(
-                capability,
-                operation="PUT",
-                object_id=preview_id,
-                chunk=chunk,
-            )
-            put_ciphertext(
-                url, headers, ciphertext, timeouts=timeouts, transport=transport,
-            )
-        if encoded.read(1):
-            raise TransferSizeMismatch("encoded preview changed after manifest creation")
-        completed = api.complete_preview_upload(
-            project_id=handoff.project_id, file_id=upload.operation_id,
-        )
-        if completed.get("objectId") != preview_id or completed.get("state") != "ready":
-            raise TransferError("preview completion was not confirmed")
-
-
-def _preview_loudness(preview: OpusPreview) -> dict[str, object]:
-    integrated = preview.integrated_lufs_x100
-    peak = preview.true_peak_dbtp_x100
-    loudness_range = preview.loudness_range_lu_x100
-    if integrated is None or peak is None or loudness_range is None:
-        return {"kind": "unmeasurable"}
-    if not (
-        -9900 <= integrated <= 9900
-        and -9900 <= peak <= 9900
-        and 0 <= loudness_range <= 9900
-    ):
-        raise TransferError("encoded preview loudness exceeds supported range")
-    return {
-        "kind": "measured",
-        "integratedLufsX100": integrated,
-        "truePeakDbtpX100": peak,
-        "loudnessRangeLuX100": loudness_range,
-    }
+        records.write(project_id, key_epoch=epoch, records=writes)
+        return {"project_id": project_id, "file_id": file_id, "object_id": identifier}
+    except (OSError, KeyError, ValueError):
+        raise E2eeError("transfer_failed") from None
+    finally:
+        wipe(data_key)
+        wipe(project_key)
 
 
 def download_file(
-    structured_content: Mapping[str, Any],
+    session: DeviceSession,
     *,
-    destination: DownloadDestination,
+    project_id: str,
+    file_id: str,
+    destination: str | Path,
     timeouts: TransferTimeouts = DEFAULT_TIMEOUTS,
     transport: TransferTransport = DEFAULT_TRANSPORT,
-    claim_transport: TransferTransport = DEFAULT_TRANSPORT,
-    control_transport: httpx.BaseTransport | None = None,
 ) -> int:
-    """Consume an MCP file handoff and atomically write locally decrypted bytes."""
-    handoff = _parse_handoff(structured_content)
-    if handoff.operation != "file_download" or handoff.file is None:
-        raise TransferError("structuredContent is not a file download handoff")
-    key_claim = _redeem_download_claim(handoff, timeouts, claim_transport)
-    try:
-        plan = parse_file_handoff_plan(
-            _required_manifest(handoff),
-            project_id=handoff.project_id,
-            object_id=handoff.object_id,
-            epoch=handoff.epoch,
-            data_key=key_claim.data_key,
-            wrapped_nonce=key_claim.wrapped_nonce,
-            wrapped_data_key=key_claim.wrapped_data_key,
-        )
-    except EncryptionContractError as error:
-        raise TransferError(str(error)) from None
-    if plan.file_id != handoff.file.file_id:
-        raise TransferError("file manifest does not match the handoff")
-    return _download(
-        handoff,
-        destination,
-        plan,
-        timeouts,
-        transport,
-        control_transport,
-    )
-
-
-def download_preview(
-    structured_content: Mapping[str, Any],
-    *,
-    destination: DownloadDestination,
-    timeouts: TransferTimeouts = DEFAULT_TIMEOUTS,
-    transport: TransferTransport = DEFAULT_TRANSPORT,
-    claim_transport: TransferTransport = DEFAULT_TRANSPORT,
-    control_transport: httpx.BaseTransport | None = None,
-) -> int:
-    """Consume an MCP preview handoff and atomically write decrypted preview bytes."""
-    handoff = _parse_handoff(structured_content)
-    if handoff.operation != "preview_download" or handoff.preview is None:
-        raise TransferError("structuredContent is not a preview download handoff")
-    key_claim = _redeem_download_claim(handoff, timeouts, claim_transport)
-    try:
-        plan = parse_preview_decryption_plan(
-            _required_manifest(handoff),
-            project_id=handoff.project_id,
-            preview_id=handoff.object_id,
-            epoch=handoff.epoch,
-            data_key=key_claim.data_key,
-        )
-    except EncryptionContractError as error:
-        raise TransferError(str(error)) from None
-    return _download(
-        handoff,
-        destination,
-        plan,
-        timeouts,
-        transport,
-        control_transport,
-    )
-
-
-def _redeem_download_claim(
-    handoff: TransferHandoff,
-    timeouts: TransferTimeouts,
-    claim_transport: TransferTransport,
-) -> Any:
-    return redeem_file_key_claim(
-        handoff.key_claim,
-        expected_direction="download",
-        expected_project_id=handoff.project_id,
-        expected_object_id=handoff.object_id,
-        expected_epoch=handoff.epoch,
-        timeouts=timeouts,
-        transport=claim_transport,
-    )
-
-
-def _parse_handoff(structured_content: Mapping[str, Any]) -> TransferHandoff:
-    try:
-        return parse_handoff(structured_content)
-    except TransferError as error:
-        if error.code != "transfer_failed":
-            raise
-        raise TransferError(
-            str(error),
-            code="handoff_invalid",
-            recoverable=False,
-        ) from None
-
-
-def _required_manifest(handoff: TransferHandoff) -> Mapping[str, Any]:
-    if handoff.manifest is None:
-        raise TransferError("structuredContent omitted the download manifest")
-    return handoff.manifest
-
-
-def _download(
-    handoff: TransferHandoff,
-    destination: DownloadDestination,
-    plan: Any,
-    timeouts: TransferTimeouts,
-    transport: TransferTransport,
-    control_transport: httpx.BaseTransport | None,
-) -> int:
-    with ArteligoTransferAPI(
-        control_origin=handoff.control_origin,
-        continuation=handoff.continuation,
-        timeouts=timeouts,
-        control_transport=control_transport,
-    ) as api:
-        if isinstance(destination, (str, os.PathLike)):
-            return _download_to_path(
-                api,
-                handoff.project_id,
-                Path(destination),
-                plan,
-                timeouts,
-                transport,
-            )
-        _require_writer(destination)
-        with tempfile.SpooledTemporaryFile(
-            max_size=_DOWNLOAD_SPOOL_MEMORY_LIMIT,
-            mode="w+b",
-        ) as staged:
-            count = _download_to_stream(
-                api,
-                handoff.project_id,
-                staged,
-                plan,
-                timeouts,
-                transport,
-            )
-            staged.seek(0)
-            _commit_staged_stream(destination, staged, count)
-            return count
-
-
-def _download_to_path(
-    api: ArteligoTransferAPI,
-    project_id: str,
-    destination: Path,
-    plan: Any,
-    timeouts: TransferTimeouts,
-    transport: TransferTransport,
-) -> int:
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{destination.name}.", suffix=".part", dir=destination.parent
-    )
-    temporary = Path(temporary_name)
-    try:
-        with os.fdopen(descriptor, "wb") as stream:
-            count = _download_to_stream(
-                api,
-                project_id,
-                stream,
-                plan,
-                timeouts,
-                transport,
-            )
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary, destination)
-        return count
-    except BaseException:
-        try:
-            temporary.unlink()
-        except FileNotFoundError:
-            pass
-        raise
-
-
-def _download_to_stream(
-    api: ArteligoTransferAPI,
-    project_id: str,
-    destination: BinaryIO,
-    plan: Any,
-    timeouts: TransferTimeouts,
-    transport: TransferTransport,
-) -> int:
-    written = 0
-    for chunk in plan.chunks:
-        ciphertext = _download_ciphertext_chunk(
-            api,
-            project_id=project_id,
-            object_id=plan.object_id,
-            chunk=chunk,
-            timeouts=timeouts,
-            transport=transport,
-        )
-        try:
-            cleartext = plan.open_chunk(ciphertext, chunk.index)
-        except EncryptionContractError as error:
-            raise TransferError(str(error)) from None
-        _write_all(destination, cleartext)
-        written += len(cleartext)
-    if written != plan.plaintext_size:
-        raise TransferSizeMismatch()
-    return written
-
-
-def _download_ciphertext_chunk(
-    api: ArteligoTransferAPI,
-    *,
-    project_id: str,
-    object_id: str,
-    chunk: ChunkMetadata,
-    timeouts: TransferTimeouts,
-    transport: TransferTransport,
-) -> bytes:
-    for attempt in range(2):
-        capability = api.read_capability(
-            project_id=project_id,
-            object_id=object_id,
-            chunk_index=chunk.index,
-        )
-        url, headers = _validate_capability(
-            capability, operation="GET", object_id=object_id, chunk=chunk
-        )
-        try:
-            return get_ciphertext(
-                url,
-                headers,
-                chunk.ciphertext_size,
-                timeouts=timeouts,
-                transport=transport,
-            )
-        except TransferHTTPError as error:
-            # A GET has no caller-visible effect and is buffered before decryption. Only
-            # rejected, expiring capabilities may be reacquired, and only once.
-            if attempt == 0 and error.status in {401, 403}:
-                continue
-            raise
-    raise TransferError("download capability reacquisition failed")
-
-
-def _validate_capability(
-    capability: Mapping[str, Any],
-    *,
-    operation: str,
-    object_id: str,
-    chunk: ChunkMetadata,
-) -> tuple[str, dict[str, str]]:
+    session.require_approved()
+    record = snapshot(session, project_id).get(file_id)
     if (
-        _string(capability, "operation") != operation
-        or _string(capability, "objectId") != object_id
-        or _integer_or_zero(capability, "chunkIndex") != chunk.index
-        or _integer(capability, "contentLength") != chunk.ciphertext_size
+        record is None
+        or record["deleted"]
+        or record["kind"] != "file"
+        or "file" not in record["value"]
     ):
-        raise TransferError("Bucket capability does not match the requested chunk")
-    url = _string(capability, "url")
-    raw_headers = capability.get("headers", {})
-    if not isinstance(raw_headers, Mapping):
-        raise TransferError("Bucket capability headers are invalid")
-    headers: dict[str, str] = {}
-    for name, value in raw_headers.items():
-        if not isinstance(name, str) or not isinstance(value, str):
-            raise TransferError("Bucket capability headers are invalid")
-        lowered = name.lower()
-        if not lowered or lowered in headers:
-            raise TransferError("Bucket capability headers are invalid")
-        headers[lowered] = value
-    return url, headers
-
-
-def _open_upload_source(source: UploadSource) -> tuple[BinaryIO, bool, int]:
-    if isinstance(source, (str, os.PathLike)):
-        path = Path(source)
-        size = path.stat().st_size
-        stream = path.open("rb")
-        return stream, True, size
-    _require_reader(source)
-    size = _remaining_stream_size(source)
-    if size is None:
-        raise TypeError("source binary stream must be seekable")
-    return source, False, size
-
-
-def _remaining_stream_size(stream: BinaryIO) -> int | None:
+        raise E2eeError("not_found")
+    manifest = record["value"]["source"]
+    value = manifest["object"]
+    if value["project_id"] != project_id or value["file_id"] != file_id:
+        raise E2eeError("invalid_object_context")
+    wrapped = manifest["encryption"]["wrapped_data_key"]
+    project_key = session.scope_key(project_id, value["epoch"])
+    data_key = bytearray()
+    temporary: str | None = None
+    destination = Path(destination)
+    if destination.exists():
+        wipe(project_key)
+        raise E2eeError("destination_exists")
     try:
-        start = stream.tell()
-        end = stream.seek(0, io.SEEK_END)
-        stream.seek(start)
-    except (AttributeError, OSError, io.UnsupportedOperation):
-        return None
-    if (
-        not isinstance(start, int)
-        or not isinstance(end, int)
-        or start < 0
-        or end < start
-    ):
-        return None
-    return end - start
-
-
-def _require_reader(stream: BinaryIO) -> None:
-    if not callable(getattr(stream, "read", None)):
-        raise TypeError("source must be a path or readable binary stream")
-
-
-def _require_writer(stream: BinaryIO) -> None:
-    if not callable(getattr(stream, "write", None)):
-        raise TypeError("destination must be a path or writable binary stream")
-
-
-def _read_exact(stream: BinaryIO, length: int) -> bytes:
-    chunks: list[bytes] = []
-    remaining = length
-    while remaining:
-        value = stream.read(remaining)
-        if not isinstance(value, bytes) or not value:
-            raise TransferSizeMismatch()
-        if len(value) > remaining:
-            raise TransferSizeMismatch()
-        chunks.append(value)
-        remaining -= len(value)
-    return b"".join(chunks)
-
-
-def _write_all(destination: BinaryIO, data: bytes) -> None:
-    view = memoryview(data)
-    written = 0
-    while written < len(view):
-        count = destination.write(view[written:])
-        if not isinstance(count, int) or count <= 0:
-            raise TransferError("destination rejected plaintext")
-        written += count
-
-
-def _commit_staged_stream(
-    destination: BinaryIO,
-    staged: BinaryIO,
-    expected_size: int,
-) -> None:
-    rollback = _append_rollback_position(destination)
-    copied = 0
-    try:
-        while copied < expected_size:
-            data = staged.read(min(_DOWNLOAD_COPY_SIZE, expected_size - copied))
-            if not isinstance(data, bytes) or not data:
-                raise TransferSizeMismatch(
-                    "staged plaintext size does not match manifest"
+        data_key = session.crypto.open(
+            project_key,
+            {"nonce": wrapped["nonceB64u"], "ciphertext": wrapped["ciphertextB64u"]},
+            key_aad(project_id, value["epoch"], value["object_id"]),
+        )
+        plan = parse_decryption_plan(
+            manifest,
+            data_key=data_key,
+            wrapped_nonce=bytes(decode(wrapped["nonceB64u"])),
+            wrapped_data_key=bytes(decode(wrapped["ciphertextB64u"])),
+        )
+        descriptor = session.api.call(
+            "e2eeGetObject", scope_id=project_id, object_id=plan.object_id
+        )
+        if descriptor.get("state") != "ready":
+            raise E2eeError("object_not_ready")
+        handle, temporary = tempfile.mkstemp(
+            prefix=".arteligo-", dir=destination.parent
+        )
+        with os.fdopen(handle, "wb") as output:
+            for chunk in plan.chunks:
+                capability = session.api.call(
+                    "e2eeGetObjectCapability",
+                    scope_id=project_id,
+                    object_id=plan.object_id,
+                    index=chunk.index,
                 )
-            _write_all(destination, data)
-            copied += len(data)
-        if staged.read(1):
-            raise TransferSizeMismatch("staged plaintext size does not match manifest")
-    except BaseException:
-        _rollback_stream(destination, rollback)
-        raise
-
-
-def _append_rollback_position(destination: BinaryIO) -> int | None:
-    try:
-        position = destination.tell()
-        if not isinstance(position, int) or position < 0:
-            return None
-        return position
-    except (AttributeError, OSError, io.UnsupportedOperation):
-        return None
-
-
-def _rollback_stream(destination: BinaryIO, position: int | None) -> None:
-    if position is None:
-        return
-    try:
-        destination.seek(position)
-        destination.truncate(position)
-    except (AttributeError, OSError, io.UnsupportedOperation):
-        pass
-
-
-def _string(value: Mapping[str, Any], key: str) -> str:
-    result = value.get(key)
-    if not isinstance(result, str) or not result:
-        raise TransferError(f"{key} must be a nonempty string")
-    return result
-
-
-def _integer(value: Mapping[str, Any], key: str) -> int:
-    raw = value.get(key)
-    if isinstance(raw, bool):
-        raise TransferError(f"{key} must be an integer")
-    if isinstance(raw, int):
-        result = raw
-    elif (
-        isinstance(raw, str)
-        and raw.isdecimal()
-        and (len(raw) == 1 or not raw.startswith("0"))
-    ):
-        result = int(raw)
-    else:
-        raise TransferError(f"{key} must be an integer")
-    if not 0 <= result <= 9_007_199_254_740_991:
-        raise TransferError("capability integer exceeds the wire limit")
-    return result
-
-
-def _integer_or_zero(value: Mapping[str, Any], key: str) -> int:
-    return 0 if key not in value else _integer(value, key)
+                url, headers = _capability(capability, "GET", chunk.ciphertext_size)
+                encrypted = get_ciphertext(
+                    url,
+                    headers,
+                    chunk.ciphertext_size,
+                    timeouts=timeouts,
+                    transport=transport,
+                )
+                clear = bytearray(plan.open_chunk(encrypted, chunk.index))
+                try:
+                    output.write(clear)
+                finally:
+                    wipe(clear)
+            output.flush()
+            os.fsync(output.fileno())
+        os.link(temporary, destination)
+        return plan.plaintext_size
+    except FileExistsError:
+        raise E2eeError("destination_exists") from None
+    except (OSError, KeyError, ValueError):
+        raise E2eeError("transfer_failed") from None
+    finally:
+        wipe(data_key)
+        wipe(project_key)
+        if temporary is not None:
+            Path(temporary).unlink(missing_ok=True)

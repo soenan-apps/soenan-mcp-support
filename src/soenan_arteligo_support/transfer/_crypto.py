@@ -9,8 +9,35 @@ from dataclasses import dataclass
 from hashlib import sha256
 from typing import Any, BinaryIO
 
-from cryptography.exceptions import InvalidTag
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from ..e2ee._crypto import E2eeCrypto, E2eeError, decode, encode
+
+
+class AESGCM:
+    def __init__(self, key: bytes):
+        self.key = key
+        self.crypto = E2eeCrypto()
+
+    def encrypt(self, nonce: bytes, plaintext: bytes, aad: bytes) -> bytes:
+        sealed = self.crypto.execute(
+            {
+                "op": "aead_seal_with_nonce",
+                "key": encode(self.key),
+                "nonce": encode(nonce),
+                "plaintext": encode(plaintext),
+                "aad": encode(aad),
+            }
+        )
+        return bytes(decode(sealed["ciphertext"]))
+
+    def decrypt(self, nonce: bytes, ciphertext: bytes, aad: bytes) -> bytes:
+        return bytes(
+            self.crypto.open(
+                self.key,
+                {"nonce": encode(nonce), "ciphertext": encode(ciphertext)},
+                aad,
+            )
+        )
+
 
 MANIFEST_VERSION = 1
 MANIFEST_TYPE = "audaligo.managed-encrypted-object-manifest"
@@ -20,7 +47,7 @@ CONTENT_KEY_ALGORITHM = "A256GCM"
 WRAP_ALGORITHM = "a256gcm-project-epoch-v1"
 SHARE_ID = "project_file_managed_v1"
 CHUNK_SIZE = 8 * 1024 * 1024
-MAXIMUM_CHUNKS = 4096
+MAXIMUM_CHUNKS = 1024
 MAXIMUM_WIRE_INTEGER = 9_007_199_254_740_991
 _TAG_SIZE = 16
 
@@ -135,7 +162,9 @@ class PreviewEncryptionPlan:
     def seal_chunk(self, cleartext: bytes, index: int) -> bytes:
         chunk = self.chunks[index]
         if len(cleartext) != chunk.plaintext_size:
-            raise EncryptionContractError("preview plaintext chunk size does not match plan")
+            raise EncryptionContractError(
+                "preview plaintext chunk size does not match plan"
+            )
         return AESGCM(self.data_key).encrypt(
             chunk_nonce(self.nonce_base, index),
             cleartext,
@@ -225,8 +254,16 @@ def build_preview_encryption_plan(
         raise EncryptionContractError("preview stream exceeds its declared size")
     stream.seek(start)
     return PreviewEncryptionPlan(
-        project_id, source_object_id, processing_id, preview_id, job_id,
-        epoch, plaintext_size, nonce_base, data_key, tuple(chunks),
+        project_id,
+        source_object_id,
+        processing_id,
+        preview_id,
+        job_id,
+        epoch,
+        plaintext_size,
+        nonce_base,
+        data_key,
+        tuple(chunks),
     )
 
 
@@ -271,7 +308,7 @@ class DecryptionPlan:
                     final=chunk.final,
                 ),
             )
-        except InvalidTag:
+        except E2eeError:
             raise EncryptionContractError("ciphertext authentication failed") from None
         if len(cleartext) != chunk.plaintext_size:
             raise EncryptionContractError(
@@ -325,7 +362,7 @@ class PreviewDecryptionPlan:
                     final=chunk.final,
                 ),
             )
-        except InvalidTag:
+        except E2eeError:
             raise EncryptionContractError(
                 "preview ciphertext authentication failed"
             ) from None
@@ -584,7 +621,7 @@ def parse_decryption_plan(
         _base64url_bytes(wrapped, "nonceB64u", 12) != wrapped_nonce
         or _base64url_bytes(wrapped, "ciphertextB64u", 48) != wrapped_data_key
     ):
-        raise EncryptionContractError("file key claim does not match manifest")
+        raise EncryptionContractError("wrapped file key does not match manifest")
     return DecryptionPlan(
         project_id=project_id,
         file_id=file_id,
@@ -596,66 +633,6 @@ def parse_decryption_plan(
         nonce_base=nonce_base,
         data_key=data_key,
         chunks=tuple(chunks),
-    )
-
-
-def parse_file_handoff_plan(
-    manifest: Mapping[str, Any],
-    *,
-    project_id: str,
-    object_id: str,
-    epoch: int,
-    data_key: bytes,
-    wrapped_nonce: bytes,
-    wrapped_data_key: bytes,
-) -> DecryptionPlan:
-    raw_chunks = manifest.get("chunks")
-    if not isinstance(raw_chunks, Sequence) or isinstance(raw_chunks, (str, bytes)):
-        raise EncryptionContractError("manifest chunks must be an array")
-    normalized = {
-        "v": manifest.get("version"),
-        "type": manifest.get("type"),
-        "suite_id": manifest.get("suiteId"),
-        "encryption": {
-            "mode": manifest.get("encryptionMode"),
-            "content_key_alg": manifest.get("contentKeyAlgorithm"),
-            "wrap_alg": manifest.get("wrapAlgorithm"),
-            "wrapped_data_key": {
-                "nonceB64u": _base64url(wrapped_nonce),
-                "ciphertextB64u": _base64url(wrapped_data_key),
-            },
-        },
-        "object": {
-            "chunk_count": len(raw_chunks),
-            "chunk_size": manifest.get("chunkSize"),
-            "chunks": [
-                {
-                    "chunk_index": chunk.get("chunkIndex"),
-                    "ciphertext_offset": chunk.get("ciphertextOffset"),
-                    "ciphertext_sha256_b64u": chunk.get("ciphertextSha256Base64url"),
-                    "ciphertext_size": chunk.get("ciphertextSize"),
-                    "final_chunk": chunk.get("finalChunk"),
-                    "plaintext_offset": chunk.get("plaintextOffset"),
-                    "plaintext_size": chunk.get("plaintextSize"),
-                }
-                for chunk in raw_chunks
-                if isinstance(chunk, Mapping)
-            ],
-            "ciphertext_size": manifest.get("ciphertextSize"),
-            "epoch": epoch,
-            "file_id": manifest.get("fileId"),
-            "nonce_base_b64u": manifest.get("nonceBase64url"),
-            "object_id": object_id,
-            "plaintext_size": manifest.get("plaintextSize"),
-            "project_id": project_id,
-            "share_id": manifest.get("shareId"),
-        },
-    }
-    return parse_decryption_plan(
-        normalized,
-        data_key=data_key,
-        wrapped_nonce=wrapped_nonce,
-        wrapped_data_key=wrapped_data_key,
     )
 
 
@@ -835,8 +812,6 @@ def _context(value: str) -> bytes:
     ):
         raise EncryptionContractError("managed key context is invalid")
     return encoded
-
-
 
 
 def _replay_stable_nonce_base(

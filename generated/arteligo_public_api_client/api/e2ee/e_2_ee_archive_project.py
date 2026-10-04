@@ -1,0 +1,205 @@
+from http import HTTPStatus
+from typing import Any
+from urllib.parse import quote
+
+import httpx
+
+from ...client import AuthenticatedClient, Client
+from ...models.e2_ee_archive_project_sec_fetch_site import (
+    E2EeArchiveProjectSecFetchSite,
+)
+from ...models.e2_ee_project import E2EeProject
+from ...models.e2_ee_signed_command import E2EeSignedCommand
+from ...models.error_envelope import ErrorEnvelope
+from ...types import UNSET, Response, Unset
+
+
+def _get_kwargs(
+    scope_id: str,
+    *,
+    body: E2EeSignedCommand,
+    origin: str | Unset = UNSET,
+    sec_fetch_site: E2EeArchiveProjectSecFetchSite | Unset = UNSET,
+) -> dict[str, Any]:
+    headers: dict[str, Any] = {}
+    if not isinstance(origin, Unset):
+        headers["Origin"] = origin
+
+    if not isinstance(sec_fetch_site, Unset):
+        headers["Sec-Fetch-Site"] = str(sec_fetch_site)
+
+    _kwargs: dict[str, Any] = {
+        "method": "post",
+        "url": "/api/e2ee/projects/{scope_id}/archive".format(
+            scope_id=quote(str(scope_id), safe=""),
+        ),
+    }
+
+    _kwargs["json"] = body.to_dict()
+
+    headers["Content-Type"] = "application/json"
+
+    _kwargs["headers"] = headers
+    return _kwargs
+
+
+def _parse_response(
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> E2EeProject | ErrorEnvelope:
+    if response.status_code == 200:
+        response_200 = E2EeProject.from_dict(response.json())
+
+        return response_200
+
+    response_default = ErrorEnvelope.from_dict(response.json())
+
+    return response_default
+
+
+def _build_response(
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> Response[E2EeProject | ErrorEnvelope]:
+    return Response(
+        status_code=HTTPStatus(response.status_code),
+        content=response.content,
+        headers=response.headers,
+        parsed=_parse_response(client=client, response=response),
+    )
+
+
+def sync_detailed(
+    scope_id: str,
+    *,
+    client: AuthenticatedClient,
+    body: E2EeSignedCommand,
+    origin: str | Unset = UNSET,
+    sec_fetch_site: E2EeArchiveProjectSecFetchSite | Unset = UNSET,
+) -> Response[E2EeProject | ErrorEnvelope]:
+    """
+    Args:
+        scope_id (str):
+        origin (str | Unset):
+        sec_fetch_site (E2EeArchiveProjectSecFetchSite | Unset):
+        body (E2EeSignedCommand):
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        Response[E2EeProject | ErrorEnvelope]
+    """
+
+    kwargs = _get_kwargs(
+        scope_id=scope_id,
+        body=body,
+        origin=origin,
+        sec_fetch_site=sec_fetch_site,
+    )
+
+    response = client.get_httpx_client().request(
+        **kwargs,
+    )
+
+    return _build_response(client=client, response=response)
+
+
+def sync(
+    scope_id: str,
+    *,
+    client: AuthenticatedClient,
+    body: E2EeSignedCommand,
+    origin: str | Unset = UNSET,
+    sec_fetch_site: E2EeArchiveProjectSecFetchSite | Unset = UNSET,
+) -> E2EeProject | ErrorEnvelope | None:
+    """
+    Args:
+        scope_id (str):
+        origin (str | Unset):
+        sec_fetch_site (E2EeArchiveProjectSecFetchSite | Unset):
+        body (E2EeSignedCommand):
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        E2EeProject | ErrorEnvelope
+    """
+
+    return sync_detailed(
+        scope_id=scope_id,
+        client=client,
+        body=body,
+        origin=origin,
+        sec_fetch_site=sec_fetch_site,
+    ).parsed
+
+
+async def asyncio_detailed(
+    scope_id: str,
+    *,
+    client: AuthenticatedClient,
+    body: E2EeSignedCommand,
+    origin: str | Unset = UNSET,
+    sec_fetch_site: E2EeArchiveProjectSecFetchSite | Unset = UNSET,
+) -> Response[E2EeProject | ErrorEnvelope]:
+    """
+    Args:
+        scope_id (str):
+        origin (str | Unset):
+        sec_fetch_site (E2EeArchiveProjectSecFetchSite | Unset):
+        body (E2EeSignedCommand):
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        Response[E2EeProject | ErrorEnvelope]
+    """
+
+    kwargs = _get_kwargs(
+        scope_id=scope_id,
+        body=body,
+        origin=origin,
+        sec_fetch_site=sec_fetch_site,
+    )
+
+    response = await client.get_async_httpx_client().request(**kwargs)
+
+    return _build_response(client=client, response=response)
+
+
+async def asyncio(
+    scope_id: str,
+    *,
+    client: AuthenticatedClient,
+    body: E2EeSignedCommand,
+    origin: str | Unset = UNSET,
+    sec_fetch_site: E2EeArchiveProjectSecFetchSite | Unset = UNSET,
+) -> E2EeProject | ErrorEnvelope | None:
+    """
+    Args:
+        scope_id (str):
+        origin (str | Unset):
+        sec_fetch_site (E2EeArchiveProjectSecFetchSite | Unset):
+        body (E2EeSignedCommand):
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        E2EeProject | ErrorEnvelope
+    """
+
+    return (
+        await asyncio_detailed(
+            scope_id=scope_id,
+            client=client,
+            body=body,
+            origin=origin,
+            sec_fetch_site=sec_fetch_site,
+        )
+    ).parsed

@@ -1,129 +1,102 @@
-# Arteligo encrypted transfer support
+# Arteligo のローカル E2EE クライアント
 
-`soenan-arteligo-support` consumes an authorized MCP `structuredContent` handoff, redeems its one-use file-key claim, and transfers ciphertext directly between the local process and Railway Bucket. Soenan MCP starts every transfer. The SDK does not start an Arteligo product operation and does not call Soenan MCP.
+この SDK と local MCP は、利用者の承認済み端末として Arteligo の内容を暗号化・復号します。プロジェクト名、ファイル名、フォルダー構成、提出物、コメント、チャットなどは送信前に暗号化します。Arteligo と remote MCP は平文の鍵や内容を受け取りません。
 
-The MCP client obtains an Account-issued JWT for the single canonical MCP OAuth resource. MCP and Arteligo validate that JWT against Account JWKS. The SDK never forwards it to Arteligo. Account owns tokens and current product access; Arteligo owns project, file, key, claim, continuation, and Bucket-capability lifecycle.
+Account が本人確認と OAuth を管理し、Arteligo が端末の承認状態、所属、権限、署名済み暗号文、revision、Bucket capability を管理します。暗号処理は Flutter と同じ `arteligo/native/e2ee` の Rust ライブラリーを使います。Python に別の HPKE や AES-GCM 実装はありません。
 
-## Requirements
+## 開発環境への導入
 
-- Python 3.10 or later
-- An unmodified `structuredContent` result from an Arteligo begin-transfer MCP tool
-- Direct network access to the handoff's Arteligo control origin and short-lived Railway Bucket URLs
-- Local `ffmpeg` and `ffprobe` with `libopus` available on `PATH` for WAV uploads
+Python 3.10 以降と Rust toolchain が必要です。macOS Keychain、Windows Credential Manager、Linux Secret Service のいずれかを使います。平文ファイルへ保存する keyring backend へは切り替えません。
 
-The package uses `cryptography==50.0.0` for AES-256-GCM interoperability with Arteligo's managed encryption contracts.
+ワークスペースのルートから、二つのローカル package を同時に導入します。
 
-WAV upload handoffs with `upload.previewProfile=opus-webm-v1` encode an audio-only 48 kHz, at-most-stereo WebM/Opus preview locally. FFmpeg targets 128 kbps with variable bitrate; `media.bitrate` reports the rounded effective rate of the serialized WebM (`plaintextSize × 8 ÷ durationSeconds`), not a guaranteed encoder setting. Before uploading the source, the SDK rejects WAV durations above 24 hours. It measures integrated LUFS, true peak dBTP, and loudness range from the **encoded preview**, not the WAV source. The child reads the source over standard input, inherits no caller environment, limits codec and filter thread settings to two each, and leaves no plaintext preview after the invocation. Actual encoded output is capped at 512 MiB and reserves 256 MiB of available local disk space; encoding, probing, and analysis share the configured total timeout. Non-WAV transfers do not require media tools.
-
-For multichannel `WAVEFORMATEXTENSIBLE` input, the SDK accepts 3.0, quad, 5.0/5.1 back or side, and 7.1 speaker masks (`0x7`, `0x33`, `0x37`, `0x607`, `0x3f`, `0x60f`, `0x63f`). It folds center and surround channels into stereo with peak-safe normalization and omits LFE; unsupported or contradictory multichannel masks fail before encoding. Mono and stereo PCM/float WAV remain accepted.
-
-The existing SDK source-object limit remains 4,096 chunks of 8 MiB each (32 GiB). WAVs above that limit are rejected before encryption or upload. A preview has at most 64 chunks of 8 MiB (512 MiB plaintext); quota accounts for the additional 16-byte authentication tag per chunk.
-
-## Use the checked-out source
-
-Install this source tree in an isolated environment while developing or verifying the transfer client:
-
-```console
-python3 -m pip install ./soenan-mcp-support
+```sh
+uv venv soenan-mcp-support/.venv
+uv pip install --python soenan-mcp-support/.venv/bin/python ./arteligo/native/e2ee ./soenan-mcp-support
 ```
 
-The MCP begin tool and Support SDK must implement the same handoff contract. This repository does not imply a package publication, release, or deployment.
+`arteligo-e2ee-native` のビルドは、固定した `Cargo.lock` で Rust ライブラリーを作り、実行環境用の wheel に同梱します。wheel は OS と CPU ごとに作ります。この変更による package 公開やデプロイはありません。
 
-## Use the CLI
+## 端末の認証と承認
 
-Call the corresponding MCP begin tool first. Pass its complete `structuredContent` JSON object directly to standard input. Pass only the local source or destination path as an argument.
+以下の `ACCOUNT_ORIGIN` と `ARTELIGO_ORIGIN` は対象環境の origin に置き換えます。HTTPS を使い、ローカル開発の loopback だけ HTTP を許可します。OAuth token と端末の秘密鍵は OS の保護領域へ保存し、origin と account ごとに分離します。
 
-```console
-# The MCP client writes structuredContent directly to this command's stdin.
-soenan-arteligo-transfer upload --source ./recording.wav
-soenan-arteligo-transfer download --destination ./recording.wav
-soenan-arteligo-transfer download-preview --destination ./preview.m4a
+```sh
+arteligo --account-origin ACCOUNT_ORIGIN --arteligo-origin ARTELIGO_ORIGIN login
+arteligo --account-origin ACCOUNT_ORIGIN --arteligo-origin ARTELIGO_ORIGIN status
 ```
 
-Do not put the handoff, claim, continuation, capability, or presigned URL in command arguments, environment variables, logs, or durable files. The CLI reads one bounded JSON object from standard input and rejects duplicate or unexpected fields.
+`login` はブラウザーで Account の承認を開き、PKCE を使って loopback callback を受け取ります。ブラウザーへの認証情報入力は利用者が行います。CLI は固定の `arteligo-native-cli` public client と `arteligo:app` scope を使います。
 
-## Use the Python API
+最初の端末では `setup` を実行します。端末内で 256 bit の復旧コードと独立した復旧鍵を生成し、コードで暗号化した復旧 bundle だけを送信します。画面に表示された復旧コードを安全な場所へ保存し、保存したコードを入力すると初期設定が完了します。コードを command argument、環境変数、MCP tool に渡しません。
 
-After the corresponding MCP begin call, pass the same unmodified `structuredContent` object directly in process.
+追加端末では `enroll` を実行し、出力された公開情報を既存の承認済み端末へ直接渡します。既存端末で `approve --pairing-json pairing.json` を実行し、その公開情報の receipt を追加端末へ戻します。追加端末で `accept-approval --receipt-json approval.json` を実行すると、challenge と両端末の公開鍵、承認署名を照合し、鍵転送を確認できます。Flutter の承認画面と同じ receipt を使います。
+
+既存端末を使えない場合は `recover` を実行し、端末上で復旧コードを入力します。復旧コードは server に送らず、ローカルで復旧鍵を開き、新しい端末用の独立した鍵を生成します。復旧鍵の秘密部分は通常の端末鍵として保存しません。
+
+復旧コードを置き換える場合は、承認済み端末で `replace-recovery` を実行します。新しいコードの保存確認後、既存端末の公開鍵を新しい復旧鍵で証明し、organization と project の現行鍵を更新します。旧コードによる復旧はできなくなります。新しいコードから復旧した端末は、過去の project 鍵と、失効済み端末が署名した履歴も検証できます。
+
+他の利用者の端末を直接確認したときは、その公開鍵への信頼を `peer_trust` の署名付き記録として保存します。復旧後は自分の承認済み端末の証明からこの記録を検証するため、server が返した未知の公開鍵を自動的に信頼しません。公開証明には暗号化済みの復旧 bundle を含めません。
+
+## local MCP
+
+MCP host の stdio server command に次を設定します。`--profile` を指定すると同じコンピューター上で保存先を分けられます。
+
+```sh
+arteligo --account-origin ACCOUNT_ORIGIN --arteligo-origin ARTELIGO_ORIGIN mcp
+```
+
+local MCP はプロジェクト一覧、復号した record の読み取り・更新、プロジェクト作成、ローカルファイルのアップロードとダウンロード、WAV の音声プレビュー作成を提供します。端末承認、復旧コード、OAuth token、秘密鍵を扱う操作は MCP tools に含めません。各要求で承認状態を確認し、認証を要する呼び出し時だけ必要に応じて OAuth token を更新します。新しい処理を探す定期ポーリングはありません。
+
+record の平文上限は 512 KiB、署名する command body は 1 MiB です。大きな batch の保存応答が分割された場合は、返却済み cursor から最大 16 ページを読み直し、送信した全 record の revision、暗号文、署名を検証してから成功を返します。応答を揃えられない場合は更新を再送せず、保存結果が未確認であることを返します。
+
+record の `expected_revision` と鍵世代は競合を検出するために必要です。`revision_conflict` の場合は現在の record を読み直してから利用者の変更を適用します。更新を自動的に再実行しません。
+
+## Python API
 
 ```python
-from soenan_arteligo_support.transfer import (
-    TransferTimeouts,
-    download_file,
-    download_preview,
-    upload_file,
-)
+from soenan_arteligo_support.e2ee import EncryptedRecords, open_session
+from soenan_arteligo_support.transfer import download_file, upload_file, upload_wav_preview
 
-upload_result = upload_file(
-    upload_structured_content,
-    source="./recording.wav",
-    timeouts=TransferTimeouts(connect=10, read=60, total=900),
+session = open_session(
+    account_origin="https://account.example",
+    arteligo_origin="https://arteligo.example",
 )
-
-written = download_file(
-    file_download_structured_content,
-    destination="./recording.wav",
-)
-
-preview_written = download_preview(
-    preview_download_structured_content,
-    destination="./preview.m4a",
-)
+try:
+    records = EncryptedRecords(session)
+    page = records.page("prj_example", after=0, limit=128)
+    result = upload_file(session, project_id="prj_example", source="./recording.wav")
+    upload_wav_preview(
+        session,
+        project_id="prj_example",
+        file_id=result["file_id"],
+        source="./recording.wav",
+    )
+    download_file(
+        session,
+        project_id="prj_example",
+        file_id=result["file_id"],
+        destination="./downloaded.wav",
+    )
+finally:
+    session.lock()
 ```
 
-The CLI parses arguments and standard input, then calls these public functions. Both modes use the same handoff parser and SDK-only claim redemption, continuation client, cryptography, Bucket capability validation, transfer engine, and error taxonomy. The MCP client and model do not redeem claims, handle key material, perform chunk cryptography, or use Bucket capabilities.
+DEK はアップロードごとに端末で生成します。ProjectKey で包んだ DEK と詳細 manifest は encrypted file record に保存し、server の object manifest には object ID、鍵世代、暗号文サイズ、chunk index と checksum だけを送ります。Bucket へは暗号文だけを直接送信し、OAuth token は転送しません。
 
-## Handoff contract
+アップロード途中の情報は暗号化した `upl_` record に保存します。失敗後は `upload_id` と同じローカルファイルを明示して再開できます。内容が変わったファイルは checksum の照合で拒否します。元ファイルと directory record は、object の完了後に同じ revision batch で保存します。ダウンロードは全 chunk の checksum と AES-GCM 認証を終えてから、新しい保存先へファイルを公開します。既存ファイルを上書きしません。
 
-Every handoff uses `protocolVersion` `arteligo.encrypted-transfer.v1` and contains:
+`upload_wav_preview` と local MCP の `arteligo_upload_wav_preview` は、元ファイルの暗号文 checksum と手元の WAV が一致することを確認し、ローカルの FFmpeg / FFprobe で Opus に変換します。プレビュー専用の DEK を生成し、暗号文だけを別 object として送信します。再生情報、音量解析、包んだ DEK は暗号化した file record に保存するため、Flutter でも同じプレビューを再生できます。作成済みのプレビューは再利用します。変換の失敗は元ファイルの保存を取り消さず、同じ file ID で明示的に再試行できます。
 
-- `operation`: `upload`, `file_download`, or `preview_download`
-- `projectId`, `objectId`, and `epoch`
-- `keyClaim`: a one-time `arteligo.file-key-claim.v1` descriptor
-- `continuation`: the opaque Arteligo transfer continuation
-- `controlOrigin`: the direct Arteligo control origin
-- `upload`, `file`, or `preview` metadata for the selected operation
-- `manifest` for file and preview downloads
+転送上限は 1,024 chunks、chunk あたり最大 8 MiB の平文、object あたり最大 8 GiB の暗号文です。各 Bucket 要求には接続、読み取り、要求全体の期限があります。プレビューの変換と解析にも期限を設けます。暗号処理中のメモリは chunk 単位に限定し、使用後の可変バッファーは上書きします。Python の文字列や GC 内の複製まで消去できるとは保証しません。
 
-The handoff never contains a clear data key, wrapped data key, project key, presigned URL, or Bucket header. It carries opaque claim and continuation descriptors only through the direct standard-input or in-process handoff. Claim redemption is the only response that supplies operation-bound clear key material to the local SDK process.
+## 契約と検証
 
-Arteligo keys claim state by the SHA-256 digests of a 16-byte claim ID and a 32-byte claim secret. A claim expires after at most 600 seconds, can be consumed once, and does not mirror the durable wrapped key. Active continuation is bounded to 7,200 seconds. Each continuation control operation checks the saved Account principal and current product, project, file, and resource authority; the SDK sends no OAuth bearer.
+HTTP 契約の正本は Arteligo の `contracts/openapi/arteligo-public.yaml` です。`generated/` はその契約から作る client で、手で変更しません。`GeneratedAPI` は生成済み endpoint と model を呼び出す transport adapter です。
 
-The parser rejects an unsupported protocol, unknown field, missing field, expired claim, noncanonical integer, malformed URL, origin mismatch, operation mismatch, metadata or manifest binding mismatch before transfer control starts. A preview manifest uses the canonical `audaligo.preview.read.v1` contract and accepts audio (`audio/mp4`, `mp4a.40.2` or `audio/webm`, `opus`) or video (`video/mp4`, H.264 with optional AAC) output tuples. Bitrate is not part of this download descriptor.
-
-Existing encrypted objects retain the versioned `audaligo.managed-encrypted-object-manifest`, `aes-256-gcm-audaligo-v1`, `audaligo.preview.read.v1`, and `audaligo:managed:*:v1` identifiers. The SDK must authenticate and decrypt that stored format without changing its AES-GCM additional authenticated data or key derivation. A future format rename requires an explicit data-preserving decrypt/re-encrypt migration coordinated with Arteligo; renaming these wire literals alone would make existing objects unreadable. The MCP handoff and key-claim protocols are short-lived and use the new `arteligo.*` names.
-
-## Recovery and errors
-
-The SDK consumes a key claim once and never retries claim redemption. If the claim has expired or was already consumed, call the same MCP begin tool again with the same operation ID, then pass the new handoff to a new SDK invocation.
-
-For a WAV upload, the SDK uploads and commits the source first. Under the original source continuation it begins the source-bound sidecar. A ready sidecar needs no new encoding. Otherwise the SDK resets the previous attempt **before** starting a fresh encoder, so the new WebM can never be encrypted under a previous preview DEK and nonce. It checks the WAV against the committed source bytes, encodes and measures the WebM, refreshes the one-use preview claim under the same reset identity, and publishes the encrypted manifest and direct Bucket chunks. The backend verifies ciphertext size and checksum before completing publication and derives playback gain from the client-reported measurement; silence is unmeasurable.
-
-If the sidecar fails after source commit, `upload_file` returns `preview_pending` rather than source-upload success. Call the same MCP begin tool again with the same operation ID and local WAV, then retry the SDK. Arteligo reissues the source continuation and key claim, and the SDK reuses the committed source, fencing the incomplete preview attempt before re-encoding. A ready preview is never reset. No claim, key, plaintext media, or presigned URL passes through MCP or model output.
-
-The SDK can reacquire a rejected download capability once because it buffers the complete GET response before decryption or destination writes. It does not retry an upload PUT after transmission starts. Arteligo control mutations remain idempotent under the continuation and operation binding.
-
-`TransferError` exposes a stable `code`, a `recoverable` flag, and a secret-free `wire_value()`. The CLI writes the same error object to standard error. Errors never include claims, continuations, clear keys, capabilities, presigned URLs, headers, manifests, filenames, or content.
-
-## Security invariants
-
-- Soenan MCP begins every transfer before the SDK parses a handoff.
-- Account owns JWT issuance and current product access. Arteligo owns project, file, key, claim, continuation, and Bucket-capability lifecycle.
-- The SDK alone redeems the claim, handles clear key material, performs chunk cryptography, and controls Bucket I/O.
-- Plaintext and clear data keys stay in the local process.
-- Arteligo receives the opaque continuation header on control requests. The SDK sends and accepts no bearer credential.
-- Browser file transfer uses Arteligo's HttpOnly cookie; native control APIs use an Arteligo-audience Bearer JWT. The SDK uses only the MCP-authorized handoff and continuation, never either credential.
-- File downloads validate project, file, object, epoch, chunk layout, ciphertext length, SHA-256 digest, and AES-GCM authentication.
-- Audio and video preview downloads authenticate the Arteligo preview IDs, sizes, offsets, and final-chunk state with `audaligo:managed:file-preview:chunk-aead:v1` additional data.
-- Uploads detect source size or content changes before commit.
-- Transfers keep at most one bounded chunk and its ciphertext in memory.
-- A download path changes only after every chunk passes validation and the temporary file is flushed.
-
-## Regenerate the Python API client
-
-The [Arteligo product repository](https://github.com/soenan-apps/arteligo) owns `../arteligo/contracts/openapi/arteligo-public.yaml`. After changing that source, regenerate the complete Python client with the pinned generator (do not hand-edit generated models):
-
-```console
-cd soenan-mcp-support
+```sh
 uvx --from openapi-python-client==0.28.0 --with ruff==0.16.9 openapi-python-client generate --path ../arteligo/contracts/openapi/arteligo-public.yaml --meta none --output-path generated/arteligo_public_api_client --overwrite
+.venv/bin/python -m pytest -q
 ```
+
+検証では、共通 Rust core の既知値、独立端末への承認、双方向の公開鍵確認、復旧コード、公開鍵の差し替え、古い鍵世代の復旧、署名と暗号文の改ざん、実際の loopback Bucket 転送、保存先の原子的な公開を確認します。テストは実際の Keychain や Account の認証情報を使いません。

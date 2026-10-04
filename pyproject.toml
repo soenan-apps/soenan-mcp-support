@@ -5,13 +5,15 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "soenan-arteligo-support"
 version = "0.1.0"
-description = "MCP-authorized client-side encrypted Arteligo transfers"
+description = "Trusted local Arteligo E2EE client and MCP server"
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "Soenan" }]
 dependencies = [
   "attrs>=22.2.0",
-  "cryptography==50.0.0",
+  "arteligo-e2ee-native==0.1.0",
+  "keyring>=25.0,<26",
+  "mcp>=1.26,<2",
   "httpx>=0.23.1,<0.29.0",
   "typing-extensions>=4.7.1",
   "python-dateutil>=2.8.2,<3",
@@ -32,7 +34,7 @@ classifiers = [
 Repository = "https://github.com/soenan-apps/soenan-mcp-support"
 
 [project.scripts]
-soenan-arteligo-transfer = "soenan_arteligo_support.transfer._cli:main"
+arteligo = "soenan_arteligo_support.e2ee._cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src", "generated"]
