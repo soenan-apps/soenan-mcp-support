@@ -14,6 +14,7 @@ from typing import Any
 
 from ..e2ee._crypto import E2eeError, decode, encode, wipe
 from ..e2ee._records import EncryptedRecords
+from ..e2ee._directory import EncryptedDirectory
 from ..e2ee._session import DeviceSession
 from ._crypto import EncryptionPlan, build_encryption_plan, parse_decryption_plan
 from ._http import (
@@ -40,40 +41,38 @@ def key_aad(project: str, epoch: int, object_id: str, purpose: int = 1) -> bytes
     return bytes(result)
 
 
-def snapshot(session: DeviceSession, scope: str) -> dict[str, dict[str, Any]]:
-    records = EncryptedRecords(session)
-    result: dict[str, dict[str, Any]] = {}
-    after: str | None = None
-    for _ in range(64):
-        parameters: dict[str, Any] = {"scope_id": scope, "limit": 256}
-        if after is not None:
-            parameters["after_record_id"] = after
-        page = session.api.call("e2eeGetSnapshot", **parameters)
-        opened = [records.open(scope, item) for item in page["records"]]
-        for item in opened:
-            if after is not None and item["record_id"] <= after:
-                raise E2eeError("invalid_cursor")
-            result[item["record_id"]] = item
-        if not page["has_more"]:
-            return result
-        if not opened:
-            raise E2eeError("invalid_cursor")
-        after = opened[-1]["record_id"]
-    raise E2eeError("snapshot_limit_exceeded")
-
-
 def _epoch(session: DeviceSession, scope: str) -> int:
-    value = next(
-        (
-            project
-            for project in session.api.call("e2eeListProjects")["projects"]
-            if project["project_id"] == scope
-        ),
-        None,
-    )
-    if value is None:
-        raise E2eeError("not_found")
-    return value["key_epoch"]
+    return session.scope_metadata(scope, refresh=True)["key_epoch"]
+
+
+def _completed_upload(
+    records: EncryptedRecords, scope: str, pending: dict[str, Any], upload_id: str
+) -> dict[str, Any]:
+    identifier = pending["value"].get("file_id")
+    if isinstance(identifier, str):
+        record = records.read(scope, [identifier]).get(identifier)
+        if (
+            record is not None
+            and not record["deleted"]
+            and record["value"].get("uploadId") == upload_id
+        ):
+            return record
+        raise E2eeError("upload_not_found")
+    # Persisted v1 upload tombstones did not retain the completed file ID.
+    after = None
+    while True:
+        page = records.current(scope, kind="file", after_record_id=after)
+        for record in page["records"]:
+            if (
+                not record["deleted"]
+                and record["value"].get("uploadId") == upload_id
+                and record["value"].get("sourceState") == "ready"
+                and "file" in record["value"]
+            ):
+                return record
+        if not page["has_more"]:
+            raise E2eeError("upload_not_found")
+        after = page["next_record_id"]
 
 
 def _object(
@@ -128,22 +127,11 @@ def upload_file(
     epoch = _epoch(session, project_id)
     identifier = upload_id or str(uuid.uuid4())
     pending_id = "upl_" + identifier
-    current = snapshot(session, project_id)
+    current = records.read(project_id, [pending_id])
     pending = current.get(pending_id)
     completed = None
     if pending is not None and pending["deleted"]:
-        matches = [
-            item
-            for item in current.values()
-            if item["kind"] == "file"
-            and not item["deleted"]
-            and item["value"].get("uploadId") == identifier
-            and item["value"].get("sourceState") == "ready"
-            and "file" in item["value"]
-        ]
-        if len(matches) != 1:
-            raise E2eeError("upload_not_found")
-        completed = matches[0]
+        completed = _completed_upload(records, project_id, pending, identifier)
     data_key = bytearray()
     project_key = session.scope_key(project_id, epoch)
     try:
@@ -299,7 +287,7 @@ def upload_file(
             return result
         if state == "uploading":
             _object(session, project_id, identifier, "finalize")
-        current = snapshot(session, project_id)
+        current = records.read(project_id, [pending_id, file_id])
         pending = current[pending_id]
         if pending["deleted"]:
             committed = current.get(file_id)
@@ -338,57 +326,38 @@ def upload_file(
             "updatedAt": now,
             "deletedAt": None,
             "file": {
-                "fileId": file_id,
-                "name": file["originalFilename"],
+                "id": file_id,
+                "originalFilename": file["originalFilename"],
                 "sizeBytes": size,
-                "mimeType": file["mimeType"],
-                "createdBy": session.subject,
+                "createdAt": now,
+                "sourceState": "available",
+                "media": {"kind": file["mimeType"].split("/")[0]},
             },
             "breadcrumbs": [],
         }
-        pages = sorted(
-            (
-                item
-                for item in current.values()
-                if item["kind"] == "directory" and not item["deleted"]
-            ),
-            key=lambda item: item["record_id"],
-        )
-        entries = [value for page in pages for value in page["value"]["entries"]] + [
-            entry
-        ]
-        entries.sort(key=lambda item: item["id"])
         writes = [
             {
                 "record_id": file_id,
                 "kind": "file",
                 "expected_revision": 0,
-                "value": {**private, "sourceState": "ready", "file": file},
+                "value": {
+                    **private,
+                    "sourceState": "ready",
+                    "file": file,
+                    "directoryEntry": entry,
+                },
             },
             {
                 "record_id": pending_id,
                 "kind": "file",
                 "expected_revision": pending["revision"],
-                "value": {},
+                "value": {"file_id": file_id},
                 "deleted": True,
             },
         ]
-        for index in range((len(entries) + 63) // 64):
-            previous = pages[index] if index < len(pages) else None
-            value = {"entries": entries[index * 64 : (index + 1) * 64]}
-            if previous is not None and previous["value"] == value:
-                continue
-            writes.append(
-                {
-                    "record_id": previous["record_id"]
-                    if previous
-                    else "dpg_" + secrets.token_hex(16),
-                    "kind": "directory",
-                    "expected_revision": previous["revision"] if previous else 0,
-                    "value": value,
-                }
-            )
-        records.write(project_id, key_epoch=epoch, records=writes)
+        EncryptedDirectory(records, project_id).insert(
+            entry, key_epoch=epoch, additional_records=writes
+        )
         return result
     except (OSError, KeyError, ValueError):
         raise E2eeError("transfer_failed") from None
@@ -407,7 +376,7 @@ def download_file(
     transport: TransferTransport = DEFAULT_TRANSPORT,
 ) -> int:
     session.require_approved()
-    record = snapshot(session, project_id).get(file_id)
+    record = EncryptedRecords(session).read(project_id, [file_id]).get(file_id)
     if (
         record is None
         or record["deleted"]

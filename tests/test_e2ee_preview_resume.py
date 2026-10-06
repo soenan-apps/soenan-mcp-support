@@ -31,7 +31,11 @@ class PreviewAPI(MemoryAPI):
         self.uploads[url.removeprefix(self.base_url)] = ciphertext
 
     def call(self, operation, *, body=None, **parameters):
-        value = json.loads(decode(body["body_bytes"])) if body else None
+        value = (
+            json.loads(decode(body["body_bytes"]))
+            if body and "body_bytes" in body
+            else None
+        )
         if operation == "e2eeGetObject":
             existing = self.objects.get(parameters["object_id"])
             if existing is None or existing["state"] != "ready":
@@ -87,7 +91,7 @@ def preview_workspace(tmp_path, monkeypatch):
 
 
 def read_file(owner, scope, file_id):
-    return _workflow.snapshot(owner, scope)[file_id]
+    return EncryptedRecords(owner).read(scope, [file_id])[file_id]
 
 
 def written_preview(owner, scope, body):

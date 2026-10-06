@@ -17,7 +17,6 @@ from soenan_arteligo_support.e2ee import (
 from soenan_arteligo_support.e2ee._api import GeneratedAPI
 from soenan_arteligo_support.e2ee._crypto import decode, encode
 from soenan_arteligo_support.transfer import upload_file
-from soenan_arteligo_support.transfer._workflow import snapshot
 
 
 class RecoveryAndObjectAPI(MemoryAPI):
@@ -34,7 +33,11 @@ class RecoveryAndObjectAPI(MemoryAPI):
                     ]
                 )
             }
-        value = json.loads(decode(body["body_bytes"])) if body else None
+        value = (
+            json.loads(decode(body["body_bytes"]))
+            if body and "body_bytes" in body
+            else None
+        )
         if (
             operation == "e2eeWriteRecords"
             and self.projects[value["scope_id"]]["lifecycle"] == "rekey_required"
@@ -81,7 +84,11 @@ def test_restore_resumes_same_device_and_finishes_authorized_rekey(
 
     def interrupt(operation, *, body=None, **params):
         nonlocal failed
-        value = json.loads(decode(body["body_bytes"])) if body else {}
+        value = (
+            json.loads(decode(body["body_bytes"]))
+            if body and "body_bytes" in body
+            else {}
+        )
         if not failed and (
             (failure == "restore_request" and operation == "e2eeRestoreRecovery")
             or (failure == "envelope" and operation == "e2eeSaveEnvelopes")
@@ -245,41 +252,32 @@ def test_ready_upload_resumes_metadata_without_reupload_or_duplicates(
         "soenan_arteligo_support.transfer._workflow.put_ciphertext",
         lambda *args, **kwargs: puts.append(args[2]),
     )
-    if failure == "directory_conflict":
-        EncryptedRecords(session).write(
-            scope,
-            key_epoch=1,
-            records=[
-                {
-                    "record_id": "directory-page",
-                    "kind": "directory",
-                    "expected_revision": 0,
-                    "value": {"entries": []},
-                }
-            ],
-        )
     call = api.call
     failed = False
 
     def interrupt(operation, *, body=None, **params):
         nonlocal failed
-        value = json.loads(decode(body["body_bytes"])) if body else {}
+        value = (
+            json.loads(decode(body["body_bytes"]))
+            if body and "body_bytes" in body
+            else {}
+        )
         metadata_write = operation == "e2eeWriteRecords" and any(
             item["record_id"].startswith("fil_") for item in value["records"]
         )
         if not failed and failure == "directory_conflict" and metadata_write:
             failed = True
-            EncryptedRecords(session).write(
-                scope,
+            from soenan_arteligo_support.e2ee import EncryptedDirectory
+
+            EncryptedDirectory(EncryptedRecords(session), scope).insert(
+                {
+                    "id": "other-entry",
+                    "name": "other",
+                    "kind": "file",
+                    "parentFolderId": None,
+                },
                 key_epoch=1,
-                records=[
-                    {
-                        "record_id": "directory-page",
-                        "kind": "directory",
-                        "expected_revision": 1,
-                        "value": {"entries": [{"id": "other-entry", "kind": "folder"}]},
-                    }
-                ],
+                additional_records=[],
             )
         result = call(operation, body=body, **params)
         if not failed and (
@@ -308,15 +306,14 @@ def test_ready_upload_resumes_metadata_without_reupload_or_duplicates(
         == uploaded
     )
     assert api.records == saved
-    current = snapshot(session, scope)
+    current = EncryptedRecords(session).read(
+        scope, ["upl_" + identifier, uploaded["file_id"]]
+    )
     assert current["upl_" + identifier]["deleted"]
     assert current[uploaded["file_id"]]["value"]["sourceState"] == "ready"
-    entries = [
-        entry
-        for item in current.values()
-        if item["kind"] == "directory"
-        for entry in item["value"]["entries"]
-    ]
+    from soenan_arteligo_support.e2ee import EncryptedDirectory
+
+    entries = EncryptedDirectory(EncryptedRecords(session), scope).page()["entries"]
     assert sum(entry.get("fileId") == uploaded["file_id"] for entry in entries) == 1
     if failure == "directory_conflict":
         assert any(entry["id"] == "other-entry" for entry in entries)
@@ -325,6 +322,55 @@ def test_ready_upload_resumes_metadata_without_reupload_or_duplicates(
         upload_file(session, project_id=scope, source=source, upload_id=identifier)
     assert api.records == saved
     assert len(puts) == 1
+
+
+def test_legacy_completed_upload_resumes_by_bounded_client_metadata_scan(
+    workspace, tmp_path, monkeypatch
+):
+    api, session, _, scope = workspace
+    source = tmp_path / "legacy.bin"
+    source.write_bytes(b"legacy saved upload")
+    puts = []
+    monkeypatch.setattr(
+        "soenan_arteligo_support.transfer._workflow.put_ciphertext",
+        lambda *args, **kwargs: puts.append(args),
+    )
+    result = upload_file(session, project_id=scope, source=source)
+    pending_id = "upl_" + result["object_id"]
+    records = EncryptedRecords(session)
+    pending = records.read(scope, [pending_id])[pending_id]
+    records.write(
+        scope,
+        key_epoch=1,
+        records=[
+            {
+                "record_id": pending_id,
+                "kind": "file",
+                "expected_revision": pending["revision"],
+                "value": {},
+                "deleted": True,
+            }
+        ],
+    )
+    call, requests = api.call, []
+
+    def track(operation, **arguments):
+        requests.append((operation, arguments))
+        return call(operation, **arguments)
+
+    monkeypatch.setattr(api, "call", track)
+    assert (
+        upload_file(
+            session, project_id=scope, source=source, upload_id=result["object_id"]
+        )
+        == result
+    )
+    assert len(puts) == 1
+    assert all(operation != "e2eeGetSnapshot" for operation, _ in requests)
+    assert any(
+        operation == "e2eeGetCurrent" and arguments["kind"] == "file"
+        for operation, arguments in requests
+    )
 
 
 def test_organization_envelope_binds_generation_to_authenticated_context(workspace):
@@ -413,6 +459,14 @@ def test_organization_project_commands_wrap_with_observed_organization_epoch(
     call = api.call
 
     def with_organization(operation, **kwargs):
+        if operation == "e2eeGetScope" and kwargs["scope_id"] == "org-test":
+            return {
+                "project_id": "org-test",
+                "owner_org": "org-test",
+                "key_epoch": 5,
+                "role": "owner",
+                "lifecycle": "active",
+            }
         if operation == "e2eeListOrganizations":
             return {
                 "projects": [

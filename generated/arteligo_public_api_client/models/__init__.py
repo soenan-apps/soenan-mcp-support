@@ -15,11 +15,20 @@ from .e2_ee_capability_headers import E2EeCapabilityHeaders
 from .e2_ee_change_project_policy_sec_fetch_site import (
     E2EeChangeProjectPolicySecFetchSite,
 )
+from .e2_ee_changes_page import E2EeChangesPage
+from .e2_ee_command_proof import E2EeCommandProof
+from .e2_ee_content_maintenance import E2EeContentMaintenance
+from .e2_ee_content_maintenance_action import E2EeContentMaintenanceAction
+from .e2_ee_content_maintenance_created_page import E2EeContentMaintenanceCreatedPage
+from .e2_ee_content_maintenance_response import E2EeContentMaintenanceResponse
+from .e2_ee_content_maintenance_status import E2EeContentMaintenanceStatus
 from .e2_ee_create_invitation import E2EeCreateInvitation
 from .e2_ee_create_invitation_sec_fetch_site import E2EeCreateInvitationSecFetchSite
 from .e2_ee_create_organization_sec_fetch_site import E2EeCreateOrganizationSecFetchSite
 from .e2_ee_create_project import E2EeCreateProject
 from .e2_ee_create_project_sec_fetch_site import E2EeCreateProjectSecFetchSite
+from .e2_ee_current_page import E2EeCurrentPage
+from .e2_ee_current_page_commands import E2EeCurrentPageCommands
 from .e2_ee_delete_object_sec_fetch_site import E2EeDeleteObjectSecFetchSite
 from .e2_ee_device import E2EeDevice
 from .e2_ee_device_approval import E2EeDeviceApproval
@@ -53,6 +62,13 @@ from .e2_ee_projects import E2EeProjects
 from .e2_ee_put_object_capability_sec_fetch_site import (
     E2EePutObjectCapabilitySecFetchSite,
 )
+from .e2_ee_read_records_sec_fetch_site import E2EeReadRecordsSecFetchSite
+from .e2_ee_read_request import E2EeReadRequest
+from .e2_ee_read_response import E2EeReadResponse
+from .e2_ee_read_response_commands import E2EeReadResponseCommands
+from .e2_ee_read_scope import E2EeReadScope
+from .e2_ee_read_scope_result import E2EeReadScopeResult
+from .e2_ee_read_scope_result_error import E2EeReadScopeResultError
 from .e2_ee_realtime_event_type_0 import E2EeRealtimeEventType0
 from .e2_ee_realtime_event_type_0_type import E2EeRealtimeEventType0Type
 from .e2_ee_realtime_event_type_1 import E2EeRealtimeEventType1
@@ -62,8 +78,12 @@ from .e2_ee_recipient_kind import E2EeRecipientKind
 from .e2_ee_recipients import E2EeRecipients
 from .e2_ee_record import E2EeRecord
 from .e2_ee_record_batch import E2EeRecordBatch
+from .e2_ee_record_batch_format_version import E2EeRecordBatchFormatVersion
+from .e2_ee_record_change import E2EeRecordChange
 from .e2_ee_record_kind import E2EeRecordKind
 from .e2_ee_record_page import E2EeRecordPage
+from .e2_ee_record_precondition import E2EeRecordPrecondition
+from .e2_ee_record_reference import E2EeRecordReference
 from .e2_ee_record_write import E2EeRecordWrite
 from .e2_ee_recovery_bundle import E2EeRecoveryBundle
 from .e2_ee_recovery_public import E2EeRecoveryPublic
@@ -123,11 +143,20 @@ __all__ = (
     "E2EeCapability",
     "E2EeCapabilityHeaders",
     "E2EeChangeProjectPolicySecFetchSite",
+    "E2EeChangesPage",
+    "E2EeCommandProof",
+    "E2EeContentMaintenance",
+    "E2EeContentMaintenanceAction",
+    "E2EeContentMaintenanceCreatedPage",
+    "E2EeContentMaintenanceResponse",
+    "E2EeContentMaintenanceStatus",
     "E2EeCreateInvitation",
     "E2EeCreateInvitationSecFetchSite",
     "E2EeCreateOrganizationSecFetchSite",
     "E2EeCreateProject",
     "E2EeCreateProjectSecFetchSite",
+    "E2EeCurrentPage",
+    "E2EeCurrentPageCommands",
     "E2EeDeleteObjectSecFetchSite",
     "E2EeDevice",
     "E2EeDeviceApproval",
@@ -159,6 +188,13 @@ __all__ = (
     "E2EeProjectPolicy",
     "E2EeProjects",
     "E2EePutObjectCapabilitySecFetchSite",
+    "E2EeReadRecordsSecFetchSite",
+    "E2EeReadRequest",
+    "E2EeReadResponse",
+    "E2EeReadResponseCommands",
+    "E2EeReadScope",
+    "E2EeReadScopeResult",
+    "E2EeReadScopeResultError",
     "E2EeRealtimeEventType0",
     "E2EeRealtimeEventType0Type",
     "E2EeRealtimeEventType1",
@@ -168,8 +204,12 @@ __all__ = (
     "E2EeRecipients",
     "E2EeRecord",
     "E2EeRecordBatch",
+    "E2EeRecordBatchFormatVersion",
+    "E2EeRecordChange",
     "E2EeRecordKind",
     "E2EeRecordPage",
+    "E2EeRecordPrecondition",
+    "E2EeRecordReference",
     "E2EeRecordWrite",
     "E2EeRecoveryBundle",
     "E2EeRecoveryPublic",

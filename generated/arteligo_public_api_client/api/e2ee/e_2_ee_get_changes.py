@@ -5,7 +5,7 @@ from urllib.parse import quote
 import httpx
 
 from ...client import AuthenticatedClient, Client
-from ...models.e2_ee_current_page import E2EeCurrentPage
+from ...models.e2_ee_changes_page import E2EeChangesPage
 from ...models.error_envelope import ErrorEnvelope
 from ...types import UNSET, Response, Unset
 
@@ -13,8 +13,8 @@ from ...types import UNSET, Response, Unset
 def _get_kwargs(
     scope_id: str,
     *,
-    after: int | Unset = UNSET,
-    limit: int | Unset = UNSET,
+    after: int | Unset = 0,
+    limit: int | Unset = 256,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
@@ -27,7 +27,7 @@ def _get_kwargs(
 
     _kwargs: dict[str, Any] = {
         "method": "get",
-        "url": "/api/e2ee/scopes/{scope_id}/records".format(
+        "url": "/api/e2ee/scopes/{scope_id}/changes".format(
             scope_id=quote(str(scope_id), safe=""),
         ),
         "params": params,
@@ -38,9 +38,9 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> E2EeCurrentPage | ErrorEnvelope:
+) -> E2EeChangesPage | ErrorEnvelope:
     if response.status_code == 200:
-        response_200 = E2EeCurrentPage.from_dict(response.json())
+        response_200 = E2EeChangesPage.from_dict(response.json())
 
         return response_200
 
@@ -51,7 +51,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[E2EeCurrentPage | ErrorEnvelope]:
+) -> Response[E2EeChangesPage | ErrorEnvelope]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -64,21 +64,24 @@ def sync_detailed(
     scope_id: str,
     *,
     client: AuthenticatedClient,
-    after: int | Unset = UNSET,
-    limit: int | Unset = UNSET,
-) -> Response[E2EeCurrentPage | ErrorEnvelope]:
-    """
+    after: int | Unset = 0,
+    limit: int | Unset = 256,
+) -> Response[E2EeChangesPage | ErrorEnvelope]:
+    """Invalidation metadata without content or signatures. Observation cursors are not verified record
+    revisions. Complete transactions are returned; the first transaction may exceed the requested soft
+    limit, up to 256 changes. A cursor outside the retained range returns revision_conflict.
+
     Args:
         scope_id (str):
-        after (int | Unset):
-        limit (int | Unset):
+        after (int | Unset):  Default: 0.
+        limit (int | Unset):  Default: 256.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[E2EeCurrentPage | ErrorEnvelope]
+        Response[E2EeChangesPage | ErrorEnvelope]
     """
 
     kwargs = _get_kwargs(
@@ -98,21 +101,24 @@ def sync(
     scope_id: str,
     *,
     client: AuthenticatedClient,
-    after: int | Unset = UNSET,
-    limit: int | Unset = UNSET,
-) -> E2EeCurrentPage | ErrorEnvelope | None:
-    """
+    after: int | Unset = 0,
+    limit: int | Unset = 256,
+) -> E2EeChangesPage | ErrorEnvelope | None:
+    """Invalidation metadata without content or signatures. Observation cursors are not verified record
+    revisions. Complete transactions are returned; the first transaction may exceed the requested soft
+    limit, up to 256 changes. A cursor outside the retained range returns revision_conflict.
+
     Args:
         scope_id (str):
-        after (int | Unset):
-        limit (int | Unset):
+        after (int | Unset):  Default: 0.
+        limit (int | Unset):  Default: 256.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        E2EeCurrentPage | ErrorEnvelope
+        E2EeChangesPage | ErrorEnvelope
     """
 
     return sync_detailed(
@@ -127,21 +133,24 @@ async def asyncio_detailed(
     scope_id: str,
     *,
     client: AuthenticatedClient,
-    after: int | Unset = UNSET,
-    limit: int | Unset = UNSET,
-) -> Response[E2EeCurrentPage | ErrorEnvelope]:
-    """
+    after: int | Unset = 0,
+    limit: int | Unset = 256,
+) -> Response[E2EeChangesPage | ErrorEnvelope]:
+    """Invalidation metadata without content or signatures. Observation cursors are not verified record
+    revisions. Complete transactions are returned; the first transaction may exceed the requested soft
+    limit, up to 256 changes. A cursor outside the retained range returns revision_conflict.
+
     Args:
         scope_id (str):
-        after (int | Unset):
-        limit (int | Unset):
+        after (int | Unset):  Default: 0.
+        limit (int | Unset):  Default: 256.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[E2EeCurrentPage | ErrorEnvelope]
+        Response[E2EeChangesPage | ErrorEnvelope]
     """
 
     kwargs = _get_kwargs(
@@ -159,21 +168,24 @@ async def asyncio(
     scope_id: str,
     *,
     client: AuthenticatedClient,
-    after: int | Unset = UNSET,
-    limit: int | Unset = UNSET,
-) -> E2EeCurrentPage | ErrorEnvelope | None:
-    """
+    after: int | Unset = 0,
+    limit: int | Unset = 256,
+) -> E2EeChangesPage | ErrorEnvelope | None:
+    """Invalidation metadata without content or signatures. Observation cursors are not verified record
+    revisions. Complete transactions are returned; the first transaction may exceed the requested soft
+    limit, up to 256 changes. A cursor outside the retained range returns revision_conflict.
+
     Args:
         scope_id (str):
-        after (int | Unset):
-        limit (int | Unset):
+        after (int | Unset):  Default: 0.
+        limit (int | Unset):  Default: 256.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        E2EeCurrentPage | ErrorEnvelope
+        E2EeChangesPage | ErrorEnvelope
     """
 
     return (

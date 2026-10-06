@@ -54,14 +54,14 @@ arteligo --account-origin ACCOUNT_ORIGIN --arteligo-origin ARTELIGO_ORIGIN mcp
 
 local MCP はプロジェクト一覧、復号した record の読み取り・更新、プロジェクト作成、ローカルファイルのアップロードとダウンロード、WAV の音声プレビュー作成を提供します。端末承認、復旧コード、OAuth token、秘密鍵を扱う操作は MCP tools に含めません。各要求で承認状態を確認し、認証を要する呼び出し時だけ必要に応じて OAuth token を更新します。新しい処理を探す定期ポーリングはありません。
 
-record の平文上限は 512 KiB、署名する command body は 1 MiB です。大きな batch の保存応答が分割された場合は、返却済み cursor から最大 16 ページを読み直し、送信した全 record の revision、暗号文、署名を検証してから成功を返します。応答を揃えられない場合は更新を再送せず、保存結果が未確認であることを返します。
+record の平文上限は 512 KiB、署名する command body は 1 MiB です。内容の書き込みは形式 2、初回受付の期限、読み取った record の期待 revision を署名に含めます。SDK が設定する期限は作成から 29 日後で、確定結果はサーバーが 30 日間保持します。大きな batch の保存応答が分割された場合は、返却済み cursor から最大 16 ページを読み直し、送信した全 record の revision、暗号文、署名を検証してから成功を返します。応答を揃えられない場合は更新を再送せず、保存結果が未確認であることを返します。
 
 record の `expected_revision` と鍵世代は競合を検出するために必要です。`revision_conflict` の場合は現在の record を読み直してから利用者の変更を適用します。更新を自動的に再実行しません。
 
 ## Python API
 
 ```python
-from soenan_arteligo_support.e2ee import EncryptedRecords, open_session
+from soenan_arteligo_support.e2ee import EncryptedDirectory, EncryptedRecords, open_session
 from soenan_arteligo_support.transfer import download_file, upload_file, upload_wav_preview
 
 session = open_session(
@@ -70,7 +70,8 @@ session = open_session(
 )
 try:
     records = EncryptedRecords(session)
-    page = records.page("prj_example", after=0, limit=128)
+    page = EncryptedDirectory(records, "prj_example").page(limit=100)
+    selected = records.read("prj_example", ["fil_example"])
     result = upload_file(session, project_id="prj_example", source="./recording.wav")
     upload_wav_preview(
         session,
@@ -88,9 +89,21 @@ finally:
     session.lock()
 ```
 
+`read` は指定した最大 256 record だけを取得・復号します。`read_many` は最大 32 scopes の概要などを一括で取得でき、ある scope の認可・鍵・検証の失敗を他の scope の結果から分離します。同じ署名付き command は応答内で一度検証します。鍵と証明は読み取り応答から受け取り、scope ごとの内容取得で全 project 一覧を読み直しません。
+
+`current(scope, kind=..., after_record_id=..., limit=256)` は種類ごとの現在値、`changes(scope, after=..., limit=256)` は内容を含まない変更ページを返します。変更 cursor は署名・復号を確認済みの record revision ではありません。利用する内容は `read` で取得・検証します。
+
+フォルダーは暗号化した header と B+tree を端末で解釈します。`EncryptedDirectory.page` は既定 100 件、最大 200 件を名前順で返し、続きは返却された `cursor` を渡します。folder の revision が変わると `revision_conflict` になるため、その folder の先頭から取り直します。アップロードは対象 folder の索引の枝と file record を一つの batch で更新し、他の folder の内容を読みません。
+
+旧 directory 形式は `migrate_directory(records, scope, maximum_batches=64)` または local MCP の `arteligo_migrate_directory` で変換します。移行中は通常の内容更新を止め、暗号化した checkpoint から再開します。新しい root を公開するまで旧 directory を保持し、公開後に旧 record を回収します。返り値の `complete` が `false` なら、同じ project を指定して続きを実行します。既存 file ID と Bucket object は変わりません。
+
+公開前の移行を取り消す場合は `abort_directory_migration` または local MCP の `arteligo_abort_directory_migration` を使います。移行で作った node だけを最大 128 件ずつ回収し、最後に checkpoint を最小の tombstone に置き換えて通常更新を再開します。取消の途中も同じ操作で再開でき、旧 directory と file は保持します。公開済みの root はこの操作では取り消せません。
+
+ファイル名の検索・並べ替えはクライアントの処理です。サーバーへ名前、パス、検索文字列を渡す経路はありません。未取得の範囲を検索するアプリケーションは、通常の上限付き取得を使い、範囲・進捗・取消を管理します。SDK はプロジェクト全体の自動取得を行いません。
+
 DEK はアップロードごとに端末で生成します。ProjectKey で包んだ DEK と詳細 manifest は encrypted file record に保存し、server の object manifest には object ID、鍵世代、暗号文サイズ、chunk index と checksum だけを送ります。Bucket へは暗号文だけを直接送信し、OAuth token は転送しません。
 
-アップロード途中の情報は暗号化した `upl_` record に保存します。失敗後は `upload_id` と同じローカルファイルを明示して再開できます。内容が変わったファイルは checksum の照合で拒否します。object が `ready` なら転送を繰り返さず、元ファイルと directory record の保存から再開します。この二つは同じ revision batch で保存します。保存の完了応答を失った場合も、再実行で同じ file ID を返し、一覧の項目を増やしません。directory の更新と競合した場合は、同じ `upload_id` で再実行します。ダウンロードは全 chunk の checksum と AES-GCM 認証を終えてから、新しい保存先へファイルを公開します。既存ファイルを上書きしません。
+アップロード途中の情報は暗号化した `upl_` record に保存します。失敗後は `upload_id` と同じローカルファイルを明示して再開できます。内容が変わったファイルは checksum の照合で拒否します。object が `ready` なら転送を繰り返さず、元ファイルと directory record の保存から再開します。これらは同じ revision batch で保存します。保存の完了応答を失った場合も、再実行で同じ file ID を返し、一覧の項目を増やしません。directory の更新と競合した場合は、同じ `upload_id` で再実行します。ダウンロードは全 chunk の checksum と AES-GCM 認証を終えてから、新しい保存先へファイルを公開します。既存ファイルを上書きしません。
 
 `upload_wav_preview` と local MCP の `arteligo_upload_wav_preview` は、元ファイルの暗号文 checksum と手元の WAV が一致することを確認し、ローカルの FFmpeg / FFprobe で Opus に変換します。プレビュー専用の DEK を生成し、送信前に object ID、manifest、包んだ DEK を暗号化した file record に保存します。再生情報と音量解析も同じ record に保存するため、Flutter でも同じプレビューを再生できます。転送や保存の応答を失った場合は、同じ file ID と WAV を指定して再開します。object が `ready` なら変換と転送を繰り返さず、record の保存を完了します。転送途中の再開では変換後の checksum を照合し、同じ鍵と nonce で異なる内容を送ることを防ぎます。変換の失敗は元ファイルの保存を取り消しません。
 
@@ -106,3 +119,11 @@ uvx --from openapi-python-client==0.28.0 --with ruff==0.16.9 openapi-python-clie
 ```
 
 検証では、共通 Rust core の既知値、独立端末への承認、双方向の公開鍵確認、復旧コード、公開鍵の差し替え、過去世代の鍵の復旧、署名と暗号文の改ざん、実際の loopback Bucket 転送、保存先の原子的な公開を確認します。テストは実際の Keychain や Account の認証情報を使いません。
+
+ローカルスタックのブラウザー性能検証には、ワークスペースの `bin/soenan local acceptance arteligo-browser-metadata prepare` を使います。`--cdp-url` で承認済み端末を持つブラウザー、`--origin` でローカル Arteligo、`--entries` で件数、`--manifest` で公開情報だけの検証記録を指定します。既存のブラウザー認証と保護済み端末情報をメモリー内だけで使い、専用プロジェクトに署名・暗号化した file metadata とフォルダー索引を作ります。既定では概要一覧の測定用に空のプロジェクトも 49 件作り、各プロジェクトの削除用 manifest を親の `overview_fixture_manifests` から参照します。既存プロジェクトは変更しません。
+
+この fixture は Bucket object を作らないため、一覧の表示・復号・ページングを測定するためのものです。ファイルのダウンロードは検証できません。中断した場合も manifest に残る `scope_id` が削除対象になります。検証後はワークスペース側でその専用 scope を削除します。`check` は保存済み manifest を使って先頭と続きの各 100 件を読み、HTTP 回数、応答バイト数、所要時間を記録します。
+
+作成要求の前に公開情報だけの manifest を保存します。作成応答を失った場合は、`archive` が対象 scope の署名付き作成証明を読み直して回収を続けます。作成が確認できない場合は manifest を残し、完了扱いにしません。`archive` 後の `cleanup` はワークスペース側で作成証明と所有者を検査し、専用 scope のメタデータと利用量を回収します。
+
+同じ入口の `benchmark` は、認証済みプロジェクト一覧、先頭 32 project の一括概要取得、fixture の file metadata 先頭 100 件を測定します。既定は同時接続数 1・8・16、各 30 秒、各 3 回です。`--output` へ応答件数、HTTP status、失敗、認証更新回数、応答バイト数、p50・p95 を保存します。Cookie はブラウザー内の要求だけに使い、端末鍵は読み取りません。負荷測定は UI の時間測定や大量データ生成と分けて実行します。

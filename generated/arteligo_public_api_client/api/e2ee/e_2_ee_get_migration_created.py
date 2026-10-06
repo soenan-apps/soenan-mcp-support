@@ -5,7 +5,9 @@ from urllib.parse import quote
 import httpx
 
 from ...client import AuthenticatedClient, Client
-from ...models.e2_ee_current_page import E2EeCurrentPage
+from ...models.e2_ee_content_maintenance_created_page import (
+    E2EeContentMaintenanceCreatedPage,
+)
 from ...models.error_envelope import ErrorEnvelope
 from ...types import UNSET, Response, Unset
 
@@ -13,13 +15,16 @@ from ...types import UNSET, Response, Unset
 def _get_kwargs(
     scope_id: str,
     *,
-    after: int | Unset = UNSET,
-    limit: int | Unset = UNSET,
+    migration_id: str,
+    after_record_id: str | Unset = UNSET,
+    limit: int | Unset = 256,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
 
-    params["after"] = after
+    params["migration_id"] = migration_id
+
+    params["after_record_id"] = after_record_id
 
     params["limit"] = limit
 
@@ -27,7 +32,7 @@ def _get_kwargs(
 
     _kwargs: dict[str, Any] = {
         "method": "get",
-        "url": "/api/e2ee/scopes/{scope_id}/records".format(
+        "url": "/api/e2ee/scopes/{scope_id}/migration/created".format(
             scope_id=quote(str(scope_id), safe=""),
         ),
         "params": params,
@@ -38,9 +43,9 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> E2EeCurrentPage | ErrorEnvelope:
+) -> E2EeContentMaintenanceCreatedPage | ErrorEnvelope:
     if response.status_code == 200:
-        response_200 = E2EeCurrentPage.from_dict(response.json())
+        response_200 = E2EeContentMaintenanceCreatedPage.from_dict(response.json())
 
         return response_200
 
@@ -51,7 +56,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[E2EeCurrentPage | ErrorEnvelope]:
+) -> Response[E2EeContentMaintenanceCreatedPage | ErrorEnvelope]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -64,26 +69,30 @@ def sync_detailed(
     scope_id: str,
     *,
     client: AuthenticatedClient,
-    after: int | Unset = UNSET,
-    limit: int | Unset = UNSET,
-) -> Response[E2EeCurrentPage | ErrorEnvelope]:
-    """
+    migration_id: str,
+    after_record_id: str | Unset = UNSET,
+    limit: int | Unset = 256,
+) -> Response[E2EeContentMaintenanceCreatedPage | ErrorEnvelope]:
+    """Bounded created-record IDs for resuming or cleaning a content-format migration.
+
     Args:
         scope_id (str):
-        after (int | Unset):
-        limit (int | Unset):
+        migration_id (str):
+        after_record_id (str | Unset):
+        limit (int | Unset):  Default: 256.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[E2EeCurrentPage | ErrorEnvelope]
+        Response[E2EeContentMaintenanceCreatedPage | ErrorEnvelope]
     """
 
     kwargs = _get_kwargs(
         scope_id=scope_id,
-        after=after,
+        migration_id=migration_id,
+        after_record_id=after_record_id,
         limit=limit,
     )
 
@@ -98,27 +107,31 @@ def sync(
     scope_id: str,
     *,
     client: AuthenticatedClient,
-    after: int | Unset = UNSET,
-    limit: int | Unset = UNSET,
-) -> E2EeCurrentPage | ErrorEnvelope | None:
-    """
+    migration_id: str,
+    after_record_id: str | Unset = UNSET,
+    limit: int | Unset = 256,
+) -> E2EeContentMaintenanceCreatedPage | ErrorEnvelope | None:
+    """Bounded created-record IDs for resuming or cleaning a content-format migration.
+
     Args:
         scope_id (str):
-        after (int | Unset):
-        limit (int | Unset):
+        migration_id (str):
+        after_record_id (str | Unset):
+        limit (int | Unset):  Default: 256.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        E2EeCurrentPage | ErrorEnvelope
+        E2EeContentMaintenanceCreatedPage | ErrorEnvelope
     """
 
     return sync_detailed(
         scope_id=scope_id,
         client=client,
-        after=after,
+        migration_id=migration_id,
+        after_record_id=after_record_id,
         limit=limit,
     ).parsed
 
@@ -127,26 +140,30 @@ async def asyncio_detailed(
     scope_id: str,
     *,
     client: AuthenticatedClient,
-    after: int | Unset = UNSET,
-    limit: int | Unset = UNSET,
-) -> Response[E2EeCurrentPage | ErrorEnvelope]:
-    """
+    migration_id: str,
+    after_record_id: str | Unset = UNSET,
+    limit: int | Unset = 256,
+) -> Response[E2EeContentMaintenanceCreatedPage | ErrorEnvelope]:
+    """Bounded created-record IDs for resuming or cleaning a content-format migration.
+
     Args:
         scope_id (str):
-        after (int | Unset):
-        limit (int | Unset):
+        migration_id (str):
+        after_record_id (str | Unset):
+        limit (int | Unset):  Default: 256.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[E2EeCurrentPage | ErrorEnvelope]
+        Response[E2EeContentMaintenanceCreatedPage | ErrorEnvelope]
     """
 
     kwargs = _get_kwargs(
         scope_id=scope_id,
-        after=after,
+        migration_id=migration_id,
+        after_record_id=after_record_id,
         limit=limit,
     )
 
@@ -159,28 +176,32 @@ async def asyncio(
     scope_id: str,
     *,
     client: AuthenticatedClient,
-    after: int | Unset = UNSET,
-    limit: int | Unset = UNSET,
-) -> E2EeCurrentPage | ErrorEnvelope | None:
-    """
+    migration_id: str,
+    after_record_id: str | Unset = UNSET,
+    limit: int | Unset = 256,
+) -> E2EeContentMaintenanceCreatedPage | ErrorEnvelope | None:
+    """Bounded created-record IDs for resuming or cleaning a content-format migration.
+
     Args:
         scope_id (str):
-        after (int | Unset):
-        limit (int | Unset):
+        migration_id (str):
+        after_record_id (str | Unset):
+        limit (int | Unset):  Default: 256.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        E2EeCurrentPage | ErrorEnvelope
+        E2EeContentMaintenanceCreatedPage | ErrorEnvelope
     """
 
     return (
         await asyncio_detailed(
             scope_id=scope_id,
             client=client,
-            after=after,
+            migration_id=migration_id,
+            after_record_id=after_record_id,
             limit=limit,
         )
     ).parsed

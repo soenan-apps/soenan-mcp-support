@@ -16,12 +16,15 @@ from soenan_arteligo_support.e2ee import (
     _cli,
 )
 from soenan_arteligo_support.e2ee._crypto import decode
-from soenan_arteligo_support.transfer._workflow import snapshot
 
 
 class RecoveryReplacementAPI(RecoveryAndObjectAPI):
     def call(self, operation, *, body=None, **parameters):
-        value = json.loads(decode(body["body_bytes"])) if body else None
+        value = (
+            json.loads(decode(body["body_bytes"]))
+            if body and "body_bytes" in body
+            else None
+        )
         if operation != "e2eeRotateRecovery":
             return super().call(operation, body=body, **parameters)
         expected = {
@@ -128,7 +131,7 @@ def test_recovery_replacement_resumes_the_confirmed_code_after_restart(
     assert api.projects[scopes[("viewer", "active")]]["key_epoch"] == 1
     assert api.projects[scopes[("owner", "archived")]]["key_epoch"] == 1
     for scope in scopes.values():
-        assert snapshot(resumed, scope)[scope]["value"]["title"]
+        assert EncryptedRecords(resumed).read(scope, [scope])[scope]["value"]["title"]
 
 
 @pytest.mark.parametrize("failure", ["response", "rekey"])
@@ -160,7 +163,8 @@ def test_new_code_recovers_all_existing_scopes_when_the_last_device_is_lost(
     assert recovered.state == "approved"
     for (role, lifecycle), scope in scopes.items():
         assert (
-            snapshot(recovered, scope)[scope]["value"]["title"] == f"{role} {lifecycle}"
+            EncryptedRecords(recovered).read(scope, [scope])[scope]["value"]["title"]
+            == f"{role} {lifecycle}"
         )
 
 
@@ -250,7 +254,10 @@ def test_new_recovery_root_opens_old_records_through_a_cold_project_key_chain():
         if envelope["scope_id"] == scope
         and envelope["recipient_id"] in current_recipients
     )
-    assert snapshot(recovered, scope)[scope]["value"]["title"] == "初期 epoch の記録"
+    assert (
+        EncryptedRecords(recovered).read(scope, [scope])[scope]["value"]["title"]
+        == "初期 epoch の記録"
+    )
 
 
 @pytest.mark.parametrize("revocation", ["explicit", "restore"])

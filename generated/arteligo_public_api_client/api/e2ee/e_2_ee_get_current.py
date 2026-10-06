@@ -6,6 +6,7 @@ import httpx
 
 from ...client import AuthenticatedClient, Client
 from ...models.e2_ee_current_page import E2EeCurrentPage
+from ...models.e2_ee_record_kind import E2EeRecordKind
 from ...models.error_envelope import ErrorEnvelope
 from ...types import UNSET, Response, Unset
 
@@ -13,13 +14,20 @@ from ...types import UNSET, Response, Unset
 def _get_kwargs(
     scope_id: str,
     *,
-    after: int | Unset = UNSET,
-    limit: int | Unset = UNSET,
+    kind: E2EeRecordKind | Unset = UNSET,
+    after_record_id: str | Unset = UNSET,
+    limit: int | Unset = 256,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
 
-    params["after"] = after
+    json_kind: str | Unset = UNSET
+    if not isinstance(kind, Unset):
+        json_kind = kind.value
+
+    params["kind"] = json_kind
+
+    params["after_record_id"] = after_record_id
 
     params["limit"] = limit
 
@@ -27,7 +35,7 @@ def _get_kwargs(
 
     _kwargs: dict[str, Any] = {
         "method": "get",
-        "url": "/api/e2ee/scopes/{scope_id}/records".format(
+        "url": "/api/e2ee/scopes/{scope_id}/current".format(
             scope_id=quote(str(scope_id), safe=""),
         ),
         "params": params,
@@ -64,14 +72,19 @@ def sync_detailed(
     scope_id: str,
     *,
     client: AuthenticatedClient,
-    after: int | Unset = UNSET,
-    limit: int | Unset = UNSET,
+    kind: E2EeRecordKind | Unset = UNSET,
+    after_record_id: str | Unset = UNSET,
+    limit: int | Unset = 256,
 ) -> Response[E2EeCurrentPage | ErrorEnvelope]:
-    """
+    """Bounded current records ordered by opaque record ID. Optional kind is a public record category, not
+    a name or folder search. The complete encoded response is limited to 8 MiB. Continue using
+    next_record_id when has_more.
+
     Args:
         scope_id (str):
-        after (int | Unset):
-        limit (int | Unset):
+        kind (E2EeRecordKind | Unset):
+        after_record_id (str | Unset):
+        limit (int | Unset):  Default: 256.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -83,7 +96,8 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         scope_id=scope_id,
-        after=after,
+        kind=kind,
+        after_record_id=after_record_id,
         limit=limit,
     )
 
@@ -98,14 +112,19 @@ def sync(
     scope_id: str,
     *,
     client: AuthenticatedClient,
-    after: int | Unset = UNSET,
-    limit: int | Unset = UNSET,
+    kind: E2EeRecordKind | Unset = UNSET,
+    after_record_id: str | Unset = UNSET,
+    limit: int | Unset = 256,
 ) -> E2EeCurrentPage | ErrorEnvelope | None:
-    """
+    """Bounded current records ordered by opaque record ID. Optional kind is a public record category, not
+    a name or folder search. The complete encoded response is limited to 8 MiB. Continue using
+    next_record_id when has_more.
+
     Args:
         scope_id (str):
-        after (int | Unset):
-        limit (int | Unset):
+        kind (E2EeRecordKind | Unset):
+        after_record_id (str | Unset):
+        limit (int | Unset):  Default: 256.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -118,7 +137,8 @@ def sync(
     return sync_detailed(
         scope_id=scope_id,
         client=client,
-        after=after,
+        kind=kind,
+        after_record_id=after_record_id,
         limit=limit,
     ).parsed
 
@@ -127,14 +147,19 @@ async def asyncio_detailed(
     scope_id: str,
     *,
     client: AuthenticatedClient,
-    after: int | Unset = UNSET,
-    limit: int | Unset = UNSET,
+    kind: E2EeRecordKind | Unset = UNSET,
+    after_record_id: str | Unset = UNSET,
+    limit: int | Unset = 256,
 ) -> Response[E2EeCurrentPage | ErrorEnvelope]:
-    """
+    """Bounded current records ordered by opaque record ID. Optional kind is a public record category, not
+    a name or folder search. The complete encoded response is limited to 8 MiB. Continue using
+    next_record_id when has_more.
+
     Args:
         scope_id (str):
-        after (int | Unset):
-        limit (int | Unset):
+        kind (E2EeRecordKind | Unset):
+        after_record_id (str | Unset):
+        limit (int | Unset):  Default: 256.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -146,7 +171,8 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         scope_id=scope_id,
-        after=after,
+        kind=kind,
+        after_record_id=after_record_id,
         limit=limit,
     )
 
@@ -159,14 +185,19 @@ async def asyncio(
     scope_id: str,
     *,
     client: AuthenticatedClient,
-    after: int | Unset = UNSET,
-    limit: int | Unset = UNSET,
+    kind: E2EeRecordKind | Unset = UNSET,
+    after_record_id: str | Unset = UNSET,
+    limit: int | Unset = 256,
 ) -> E2EeCurrentPage | ErrorEnvelope | None:
-    """
+    """Bounded current records ordered by opaque record ID. Optional kind is a public record category, not
+    a name or folder search. The complete encoded response is limited to 8 MiB. Continue using
+    next_record_id when has_more.
+
     Args:
         scope_id (str):
-        after (int | Unset):
-        limit (int | Unset):
+        kind (E2EeRecordKind | Unset):
+        after_record_id (str | Unset):
+        limit (int | Unset):  Default: 256.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -180,7 +211,8 @@ async def asyncio(
         await asyncio_detailed(
             scope_id=scope_id,
             client=client,
-            after=after,
+            kind=kind,
+            after_record_id=after_record_id,
             limit=limit,
         )
     ).parsed

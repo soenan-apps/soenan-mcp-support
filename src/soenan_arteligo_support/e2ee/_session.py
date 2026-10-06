@@ -30,6 +30,9 @@ class DeviceSession:
         self._device: dict[str, Any] | None = None
         self._devices: dict[str, dict[str, Any]] = {}
         self._scope_keys: dict[tuple[str, int], bytearray] = {}
+        self._scope_metadata: dict[str, dict[str, Any]] = {}
+        self._key_bundles: dict[str, dict[str, Any]] = {}
+        self._key_bundle_sizes: dict[str, int] = {}
         self._restoring_recovery: tuple[str, bytearray] | None = None
         self.recovery: dict[str, Any] | None = None
         self.state = "needs_setup"
@@ -272,7 +275,48 @@ class DeviceSession:
         self.require_approved()
         projects = self.api.call("e2eeListProjects")["projects"]
         organizations = self.api.call("e2eeListOrganizations")["projects"]
-        return organizations + projects
+        values = organizations + projects
+        self._scope_metadata = {value["project_id"]: value for value in values}
+        return values
+
+    def scope_metadata(self, scope: str, *, refresh: bool = False) -> dict[str, Any]:
+        self.require_approved()
+        if refresh or scope not in self._scope_metadata:
+            value = self.api.call("e2eeGetScope", scope_id=scope)
+            if value.get("project_id") != scope:
+                raise E2eeError("invalid_record_scope")
+            if (
+                self._scope_metadata.get(scope, {}).get("key_epoch")
+                != value["key_epoch"]
+            ):
+                self._key_bundles.pop(scope, None)
+                self._key_bundle_sizes.pop(scope, None)
+            self._scope_metadata[scope] = value
+        return self._scope_metadata[scope]
+
+    def receive_read_bundle(self, bundle: dict[str, Any]) -> None:
+        scope = bundle["scope_id"]
+        metadata = bundle["metadata"]
+        if metadata.get("project_id") != scope:
+            raise E2eeError("invalid_record_scope")
+        self._scope_metadata[scope] = metadata
+        self._devices.update(
+            {value["device_id"]: value for value in bundle.get("devices", [])}
+        )
+        self._key_bundles[scope] = {
+            field: bundle.get(field, []) for field in ("envelopes", "epochs")
+        }
+        self._key_bundle_sizes[scope] = len(
+            json.dumps(self._key_bundles[scope], separators=(",", ":")).encode()
+        )
+        # One read can carry 32 projects and a distinct organization key for each.
+        while (
+            len(self._key_bundles) > 64
+            or sum(self._key_bundle_sizes.values()) > 64 * 1024 * 1024
+        ):
+            oldest = next(iter(self._key_bundles))
+            self._key_bundles.pop(oldest)
+            self._key_bundle_sizes.pop(oldest)
 
     def prepare_recovery_replacement(self) -> dict[str, Any]:
         self.require_approved()
@@ -905,16 +949,39 @@ class DeviceSession:
             wipe(context)
 
     def device(self, scope: str, identifier: str) -> dict[str, Any]:
-        if identifier not in self._devices:
-            values = self.api.call("e2eeGetMemberDevices", scope_id=scope)["devices"]
-            self._devices.update({item["device_id"]: item for item in values})
+        fetched: set[str] = set()
+
+        def fetch(value: str) -> None:
+            if value in fetched:
+                return
+            if len(fetched) >= 32:
+                raise E2eeError("untrusted_device")
+            fetched.add(value)
+            values = self.api.call(
+                "e2eeGetMemberDevices", scope_id=scope, device_id=value
+            )["devices"]
+            for item in values:
+                if item["device_id"] == value:
+                    self._devices[value] = item
 
         def lookup(value: str) -> dict[str, Any]:
+            cached = self._devices.get(value)
+            if cached is None or (
+                not cached.get("certificates")
+                and self.trust._load("devices", value) is None
+            ):
+                fetch(value)
             if value not in self._devices:
                 raise E2eeError("untrusted_device")
             return self._devices[value]
 
-        return self.trust.verify_device(lookup(identifier), lookup)
+        try:
+            return self.trust.verify_device(lookup(identifier), lookup)
+        except E2eeError as error:
+            if identifier in fetched or error.code != "untrusted_device":
+                raise
+            fetch(identifier)
+            return self.trust.verify_device(lookup(identifier), lookup)
 
     def _read_key(
         self,
@@ -926,13 +993,38 @@ class DeviceSession:
         secret_key: str | None = None,
         organization_epoch: int | None = None,
     ) -> bytearray:
-        values = self.api.call(
-            "e2eeGetEnvelopes",
-            scope_id=scope,
-            epoch=epoch,
-            recipient_id=recipient,
-            recipient_kind=kind,
-        )["envelopes"]
+        bundle = self._key_bundles.get(scope)
+        values = (
+            [
+                value
+                for value in bundle.get("envelopes", [])
+                if value["key_epoch"] == epoch
+                and value["recipient_id"] == recipient
+                and value["recipient_kind"] == kind
+            ]
+            if bundle is not None
+            else []
+        )
+        if not values:
+            metadata = self._scope_metadata.get(scope, {})
+            if (
+                kind == "device"
+                and metadata.get("participation_policy") == "organization"
+                and any(
+                    value.get("key_epoch") == epoch
+                    and value.get("recipient_kind") == "organization"
+                    and value.get("recipient_id") == metadata.get("owner_org")
+                    for value in (bundle or {}).get("envelopes", [])
+                )
+            ):
+                raise E2eeError("key_redistribution_required")
+            values = self.api.call(
+                "e2eeGetEnvelopes",
+                scope_id=scope,
+                epoch=epoch,
+                recipient_id=recipient,
+                recipient_kind=kind,
+            )["envelopes"]
         if len(values) > 1024:
             raise E2eeError("limit_exceeded")
         for envelope in values:
@@ -1126,10 +1218,8 @@ class DeviceSession:
         except E2eeError as error:
             if error.code != "key_redistribution_required":
                 raise
-            metadata = next(
-                (item for item in self.scopes() if item["project_id"] == scope), None
-            )
-            if metadata is None or epoch > metadata["key_epoch"]:
+            metadata = self.scope_metadata(scope)
+            if epoch > metadata["key_epoch"]:
                 raise E2eeError("key_redistribution_required") from None
             current = metadata["key_epoch"]
             if epoch < current:
@@ -1140,16 +1230,7 @@ class DeviceSession:
                 "participation_policy"
             ) == "organization" and metadata.get("owner_org"):
                 org_id = metadata["owner_org"]
-                organization = next(
-                    (
-                        item
-                        for item in self.api.call("e2eeListOrganizations")["projects"]
-                        if item["project_id"] == org_id
-                    ),
-                    None,
-                )
-                if organization is None:
-                    raise E2eeError("organization_approval_required") from None
+                organization = self.scope_metadata(org_id)
                 key = self._read_key(
                     scope,
                     epoch,
@@ -1165,20 +1246,29 @@ class DeviceSession:
     def _previous_key(self, scope: str, target: int, current: int) -> bytearray:
         if current - target > 4096:
             raise E2eeError("epoch_limit_exceeded")
-        links: dict[int, dict[str, Any]] = {}
-        after = target
-        for _ in range(16):
-            page = self.api.call(
-                "e2eeGetEpochs", scope_id=scope, after_epoch=after, limit=256
-            )["epochs"]
-            for link in page:
-                value = link["key_epoch"]
-                if value <= after or value in links:
-                    raise E2eeError("invalid_epoch_chain")
-                links[value] = link
-            if not page or max(links) >= current:
-                break
-            after = max(links)
+        links = {
+            link["key_epoch"]: link
+            for link in self._key_bundles.get(scope, {}).get("epochs", [])
+        }
+        if not all(epoch in links for epoch in range(target + 1, current + 1)):
+            links = {}
+            after = target
+            total_bytes = 0
+            for _ in range(4096):
+                page = self.api.call(
+                    "e2eeGetEpochs", scope_id=scope, after_epoch=after, limit=16
+                )["epochs"]
+                total_bytes += len(json.dumps(page, separators=(",", ":")).encode())
+                if total_bytes > 64 * 1024 * 1024:
+                    raise E2eeError("epoch_limit_exceeded")
+                for link in page:
+                    value = link["key_epoch"]
+                    if value <= after or value in links:
+                        raise E2eeError("invalid_epoch_chain")
+                    links[value] = link
+                if not page or max(links) >= current:
+                    break
+                after = max(links)
         key = self.scope_key(scope, current)
         try:
             for epoch in range(current, target, -1):
@@ -1241,4 +1331,7 @@ class DeviceSession:
             self._device.clear()
         self._device = None
         self._devices.clear()
+        self._scope_metadata.clear()
+        self._key_bundles.clear()
+        self._key_bundle_sizes.clear()
         self.state = "locked"

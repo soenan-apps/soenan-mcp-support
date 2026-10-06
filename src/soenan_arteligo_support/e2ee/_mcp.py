@@ -8,9 +8,10 @@ from mcp.server.fastmcp.exceptions import ToolError
 
 from ._crypto import E2eeError
 from ._records import EncryptedRecords
+from ._directory import EncryptedDirectory
+from ._directory_migration import abort_directory_migration, migrate_directory
 from ._session import DeviceSession
 from ..transfer import TransferError, download_file, upload_file, upload_wav_preview
-from ..transfer._workflow import snapshot
 
 
 def create_local_mcp(session_factory: Callable[[], DeviceSession]) -> FastMCP:
@@ -56,14 +57,71 @@ def create_local_mcp(session_factory: Callable[[], DeviceSession]) -> FastMCP:
         )
 
     @server.tool()
-    def arteligo_read_snapshot(project_id: str) -> list[dict[str, Any]]:
-        """Read current decrypted project records, including names, directories, comments, and chat."""
+    def arteligo_read_changes(
+        project_id: str, after: int = 0, limit: int = 256
+    ) -> dict[str, Any]:
+        """Read bounded invalidations; fetch selected records to verify their current content."""
         return run(
-            lambda session: [
-                item
-                for item in snapshot(session, project_id).values()
-                if not item["deleted"]
-            ]
+            lambda session: EncryptedRecords(session).changes(
+                project_id, after=after, limit=limit
+            )
+        )
+
+    @server.tool()
+    def arteligo_read_current(
+        project_id: str,
+        kind: str | None = None,
+        after_record_id: str | None = None,
+        limit: int = 256,
+    ) -> dict[str, Any]:
+        """Read one bounded current-record page; filtering names and paths stays on this computer."""
+        return run(
+            lambda session: EncryptedRecords(session).current(
+                project_id, kind=kind, after_record_id=after_record_id, limit=limit
+            )
+        )
+
+    @server.tool()
+    def arteligo_get_records(project_id: str, record_ids: list[str]) -> dict[str, Any]:
+        """Read and decrypt up to 256 selected opaque record IDs without reading the project."""
+        return run(
+            lambda session: EncryptedRecords(session).read(project_id, record_ids)
+        )
+
+    @server.tool()
+    def arteligo_list_folder(
+        project_id: str,
+        folder_id: str | None = None,
+        limit: int = 100,
+        cursor: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Read one decrypted folder page in name order; a changed folder invalidates its cursor."""
+        return run(
+            lambda session: EncryptedDirectory(
+                EncryptedRecords(session), project_id
+            ).page(folder_id=folder_id, limit=limit, cursor=cursor)
+        )
+
+    @server.tool()
+    def arteligo_migrate_directory(
+        project_id: str, maximum_batches: int = 64
+    ) -> dict[str, Any]:
+        """Advance or resume the encrypted folder migration, preserving existing file and object IDs."""
+        return run(
+            lambda session: migrate_directory(
+                EncryptedRecords(session), project_id, maximum_batches=maximum_batches
+            )
+        )
+
+    @server.tool()
+    def arteligo_abort_directory_migration(
+        project_id: str, maximum_batches: int = 64
+    ) -> dict[str, Any]:
+        """Discard unpublished migration nodes in bounded batches, retaining the original directory."""
+        return run(
+            lambda session: abort_directory_migration(
+                EncryptedRecords(session), project_id, maximum_batches=maximum_batches
+            )
         )
 
     @server.tool()

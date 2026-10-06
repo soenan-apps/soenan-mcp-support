@@ -1,23 +1,21 @@
 from http import HTTPStatus
 from typing import Any
-from urllib.parse import quote
 
 import httpx
 
 from ...client import AuthenticatedClient, Client
-from ...models.e2_ee_current_page import E2EeCurrentPage
-from ...models.e2_ee_signed_command import E2EeSignedCommand
-from ...models.e2_ee_write_records_sec_fetch_site import E2EeWriteRecordsSecFetchSite
+from ...models.e2_ee_read_records_sec_fetch_site import E2EeReadRecordsSecFetchSite
+from ...models.e2_ee_read_request import E2EeReadRequest
+from ...models.e2_ee_read_response import E2EeReadResponse
 from ...models.error_envelope import ErrorEnvelope
 from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
-    scope_id: str,
     *,
-    body: E2EeSignedCommand,
+    body: E2EeReadRequest,
     origin: str | Unset = UNSET,
-    sec_fetch_site: E2EeWriteRecordsSecFetchSite | Unset = UNSET,
+    sec_fetch_site: E2EeReadRecordsSecFetchSite | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
     if not isinstance(origin, Unset):
@@ -28,9 +26,7 @@ def _get_kwargs(
 
     _kwargs: dict[str, Any] = {
         "method": "post",
-        "url": "/api/e2ee/scopes/{scope_id}/records".format(
-            scope_id=quote(str(scope_id), safe=""),
-        ),
+        "url": "/api/e2ee/records/read",
     }
 
     _kwargs["json"] = body.to_dict()
@@ -43,9 +39,9 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> E2EeCurrentPage | ErrorEnvelope:
+) -> E2EeReadResponse | ErrorEnvelope:
     if response.status_code == 200:
-        response_200 = E2EeCurrentPage.from_dict(response.json())
+        response_200 = E2EeReadResponse.from_dict(response.json())
 
         return response_200
 
@@ -56,7 +52,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[E2EeCurrentPage | ErrorEnvelope]:
+) -> Response[E2EeReadResponse | ErrorEnvelope]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -66,32 +62,31 @@ def _build_response(
 
 
 def sync_detailed(
-    scope_id: str,
     *,
     client: AuthenticatedClient,
-    body: E2EeSignedCommand,
+    body: E2EeReadRequest,
     origin: str | Unset = UNSET,
-    sec_fetch_site: E2EeWriteRecordsSecFetchSite | Unset = UNSET,
-) -> Response[E2EeCurrentPage | ErrorEnvelope]:
-    """Atomically writes encrypted business records in a project scope. Organization scopes distribute keys
-    and do not accept business-record writes.
+    sec_fetch_site: E2EeReadRecordsSecFetchSite | Unset = UNSET,
+) -> Response[E2EeReadResponse | ErrorEnvelope]:
+    """Read up to 256 opaque record IDs across at most 32 distinct scopes. This unsigned JSON POST is a
+    read operation. Scope authorization failures are isolated in the corresponding result. The complete
+    encoded response is limited to 8 MiB; remaining_record_ids explicitly identifies deferred reads.
+    Names, paths, parent relationships, and search predicates are not interpreted by this API.
 
     Args:
-        scope_id (str):
         origin (str | Unset):
-        sec_fetch_site (E2EeWriteRecordsSecFetchSite | Unset):
-        body (E2EeSignedCommand):
+        sec_fetch_site (E2EeReadRecordsSecFetchSite | Unset):
+        body (E2EeReadRequest):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[E2EeCurrentPage | ErrorEnvelope]
+        Response[E2EeReadResponse | ErrorEnvelope]
     """
 
     kwargs = _get_kwargs(
-        scope_id=scope_id,
         body=body,
         origin=origin,
         sec_fetch_site=sec_fetch_site,
@@ -105,32 +100,31 @@ def sync_detailed(
 
 
 def sync(
-    scope_id: str,
     *,
     client: AuthenticatedClient,
-    body: E2EeSignedCommand,
+    body: E2EeReadRequest,
     origin: str | Unset = UNSET,
-    sec_fetch_site: E2EeWriteRecordsSecFetchSite | Unset = UNSET,
-) -> E2EeCurrentPage | ErrorEnvelope | None:
-    """Atomically writes encrypted business records in a project scope. Organization scopes distribute keys
-    and do not accept business-record writes.
+    sec_fetch_site: E2EeReadRecordsSecFetchSite | Unset = UNSET,
+) -> E2EeReadResponse | ErrorEnvelope | None:
+    """Read up to 256 opaque record IDs across at most 32 distinct scopes. This unsigned JSON POST is a
+    read operation. Scope authorization failures are isolated in the corresponding result. The complete
+    encoded response is limited to 8 MiB; remaining_record_ids explicitly identifies deferred reads.
+    Names, paths, parent relationships, and search predicates are not interpreted by this API.
 
     Args:
-        scope_id (str):
         origin (str | Unset):
-        sec_fetch_site (E2EeWriteRecordsSecFetchSite | Unset):
-        body (E2EeSignedCommand):
+        sec_fetch_site (E2EeReadRecordsSecFetchSite | Unset):
+        body (E2EeReadRequest):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        E2EeCurrentPage | ErrorEnvelope
+        E2EeReadResponse | ErrorEnvelope
     """
 
     return sync_detailed(
-        scope_id=scope_id,
         client=client,
         body=body,
         origin=origin,
@@ -139,32 +133,31 @@ def sync(
 
 
 async def asyncio_detailed(
-    scope_id: str,
     *,
     client: AuthenticatedClient,
-    body: E2EeSignedCommand,
+    body: E2EeReadRequest,
     origin: str | Unset = UNSET,
-    sec_fetch_site: E2EeWriteRecordsSecFetchSite | Unset = UNSET,
-) -> Response[E2EeCurrentPage | ErrorEnvelope]:
-    """Atomically writes encrypted business records in a project scope. Organization scopes distribute keys
-    and do not accept business-record writes.
+    sec_fetch_site: E2EeReadRecordsSecFetchSite | Unset = UNSET,
+) -> Response[E2EeReadResponse | ErrorEnvelope]:
+    """Read up to 256 opaque record IDs across at most 32 distinct scopes. This unsigned JSON POST is a
+    read operation. Scope authorization failures are isolated in the corresponding result. The complete
+    encoded response is limited to 8 MiB; remaining_record_ids explicitly identifies deferred reads.
+    Names, paths, parent relationships, and search predicates are not interpreted by this API.
 
     Args:
-        scope_id (str):
         origin (str | Unset):
-        sec_fetch_site (E2EeWriteRecordsSecFetchSite | Unset):
-        body (E2EeSignedCommand):
+        sec_fetch_site (E2EeReadRecordsSecFetchSite | Unset):
+        body (E2EeReadRequest):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[E2EeCurrentPage | ErrorEnvelope]
+        Response[E2EeReadResponse | ErrorEnvelope]
     """
 
     kwargs = _get_kwargs(
-        scope_id=scope_id,
         body=body,
         origin=origin,
         sec_fetch_site=sec_fetch_site,
@@ -176,33 +169,32 @@ async def asyncio_detailed(
 
 
 async def asyncio(
-    scope_id: str,
     *,
     client: AuthenticatedClient,
-    body: E2EeSignedCommand,
+    body: E2EeReadRequest,
     origin: str | Unset = UNSET,
-    sec_fetch_site: E2EeWriteRecordsSecFetchSite | Unset = UNSET,
-) -> E2EeCurrentPage | ErrorEnvelope | None:
-    """Atomically writes encrypted business records in a project scope. Organization scopes distribute keys
-    and do not accept business-record writes.
+    sec_fetch_site: E2EeReadRecordsSecFetchSite | Unset = UNSET,
+) -> E2EeReadResponse | ErrorEnvelope | None:
+    """Read up to 256 opaque record IDs across at most 32 distinct scopes. This unsigned JSON POST is a
+    read operation. Scope authorization failures are isolated in the corresponding result. The complete
+    encoded response is limited to 8 MiB; remaining_record_ids explicitly identifies deferred reads.
+    Names, paths, parent relationships, and search predicates are not interpreted by this API.
 
     Args:
-        scope_id (str):
         origin (str | Unset):
-        sec_fetch_site (E2EeWriteRecordsSecFetchSite | Unset):
-        body (E2EeSignedCommand):
+        sec_fetch_site (E2EeReadRecordsSecFetchSite | Unset):
+        body (E2EeReadRequest):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        E2EeCurrentPage | ErrorEnvelope
+        E2EeReadResponse | ErrorEnvelope
     """
 
     return (
         await asyncio_detailed(
-            scope_id=scope_id,
             client=client,
             body=body,
             origin=origin,
