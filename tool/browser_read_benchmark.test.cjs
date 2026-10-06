@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const vm = require('node:vm');
-const { parseOptions, runTrial } = require('./browser_read_benchmark.cjs');
+const { parseOptions, runTrial, failureCode, selectContext } = require('./browser_read_benchmark.cjs');
 
 const scope = 'prj_' + 'a'.repeat(32);
 const projects = JSON.stringify({ projects: [{ project_id: scope, title: '秘密' }] });
@@ -224,4 +224,20 @@ test('the browser function runs with browser globals and no Node closure', async
   assert.equal(result.operations.succeeded, 1);
   assert.equal(result.api.p50_ms, 10);
   assert.equal(result.api.response_bytes, Buffer.byteLength(projects));
+});
+
+test('failure diagnostics keep only closed codes and discard details', () => {
+  assert.equal(failureCode(new Error('page.evaluate: Target page, context or browser has been closed; private details')), 'browser_target_closed');
+  assert.equal(failureCode(new Error('benchmark_trial_timeout')), 'trial_timeout');
+  assert.equal(failureCode(new Error('Page crashed with private details')), 'browser_page_crashed');
+  assert.equal(failureCode(new Error('Execution context was destroyed: private details')), 'browser_context_changed');
+  assert.equal(failureCode(new Error('unrecognized private details')), 'runner_failed');
+});
+
+test('a reopened persistent profile needs no existing app tab and ambiguous profiles are rejected', () => {
+  const blank = { pages: () => [{ url: () => 'about:blank' }] };
+  assert.equal(selectContext([blank], 'https://app.local.soenan.dev'), blank);
+  assert.throws(() => selectContext([blank, blank], 'https://app.local.soenan.dev'), /browser_context_ambiguous/);
+  const authenticated = { pages: () => [{ url: () => 'https://app.local.soenan.dev/projects', context: () => authenticated }] };
+  assert.equal(selectContext([blank, authenticated], 'https://app.local.soenan.dev'), authenticated);
 });

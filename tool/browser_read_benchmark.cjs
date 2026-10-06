@@ -193,6 +193,26 @@ function saveReport(filename, report) {
   fs.renameSync(temporary, filename);
 }
 
+function failureCode(error) {
+  const message = typeof error?.message === 'string' ? error.message : '';
+  if (message.includes('benchmark_trial_timeout')) return 'trial_timeout';
+  if (message.includes('benchmark_discovery_failed')) return 'discovery_failed';
+  if (message.includes('browser_context_ambiguous')) return 'browser_context_ambiguous';
+  if (/has been closed|Target closed|Browser closed/.test(message)) return 'browser_target_closed';
+  if (/crashed/i.test(message)) return 'browser_page_crashed';
+  if (/Execution context was destroyed|frame was detached/.test(message)) return 'browser_context_changed';
+  if (error instanceof TypeError) return 'runner_type_error';
+  return 'runner_failed';
+}
+
+function selectContext(contexts, origin) {
+  const source = contexts.flatMap(context => context.pages())
+    .find(candidate => { try { return new URL(candidate.url()).origin === origin; } catch { return false; } });
+  if (source) return source.context();
+  if (contexts.length === 1) return contexts[0];
+  throw new Error('browser_context_ambiguous');
+}
+
 async function main(args) {
   const options = parseOptions(args);
   if (fs.existsSync(options.output) || options.output === options.manifest) throw new Error('benchmark_output_exists');
@@ -202,19 +222,18 @@ async function main(args) {
   const { chromium } = require(require.resolve('playwright', { paths: [path.dirname(testing)] }));
   const browser = await chromium.connectOverCDP(options.cdpURL, { timeout: 30000 });
   let page;
+  let stage = 'page_setup';
   const report = { version: 1, state: 'running', configuration: {
     clients: options.clients, profiles: options.profiles, duration_seconds: options.durationMs / 1000,
     repeats: options.repeats, request_timeout_seconds: options.requestTimeoutMs / 1000,
     response_bytes_kind: 'decoded_utf8_body', throughput_duration_includes_drain: true,
   }, trials: [] };
   try {
-    const source = browser.contexts().flatMap(context => context.pages())
-      .find(candidate => { try { return new URL(candidate.url()).origin === options.origin; } catch { return false; } });
-    if (!source) throw new Error('browser_page_missing');
-    page = await source.context().newPage();
+    page = await selectContext(browser.contexts(), options.origin).newPage();
     await page.route('**/flutter_bootstrap.js', route => route.fulfill({ status: 200, contentType: 'application/javascript', body: '' }));
     await page.goto(options.origin + '/', { waitUntil: 'domcontentloaded', timeout: 30000 });
     if (new URL(page.url()).origin !== options.origin) throw new Error('browser_origin_changed');
+    stage = 'discovery';
     const discovery = await boundedEvaluate(page, {
       profile: 'projects', clients: 1, durationMs: options.requestTimeoutMs * 3,
       requestTimeoutMs: options.requestTimeoutMs, operationLimit: 1, discover: true,
@@ -229,6 +248,7 @@ async function main(args) {
     for (const profile of options.profiles) {
       for (const clients of options.clients) {
         for (let repeat = 1; repeat <= options.repeats; repeat += 1) {
+          stage = `${profile}_${clients}_${repeat}`;
           const result = await boundedEvaluate(page, { profile, clients,
             durationMs: options.durationMs, requestTimeoutMs: options.requestTimeoutMs,
             hotScope: manifest.scope_id, scopeIds });
@@ -241,8 +261,9 @@ async function main(args) {
     }
     report.state = 'complete';
     saveReport(options.output, report);
-  } catch {
+  } catch (error) {
     report.state = 'failed';
+    report.failure = { stage, code: failureCode(error) };
     saveReport(options.output, report);
     throw new Error('benchmark_failed');
   } finally {
@@ -251,7 +272,7 @@ async function main(args) {
   }
 }
 
-module.exports = { runTrial, parseOptions, main };
+module.exports = { runTrial, parseOptions, main, failureCode, selectContext };
 if (require.main === module) {
   main(process.argv.slice(2)).then(() => process.exit(0), () => {
     process.stderr.write('{"error":"browser_read_benchmark_failed"}\n');
