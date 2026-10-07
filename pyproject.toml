@@ -11,9 +11,11 @@ requires-python = ">=3.10"
 authors = [{ name = "Soenan" }]
 dependencies = [
   "attrs>=22.2.0",
-  "arteligo-e2ee-native==0.1.0",
+  "arteligo-e2ee-native==0.2.0",
   "keyring>=25.0,<26",
   "mcp>=1.26,<2",
+  "pydantic>=2.8,<3",
+  "anyio>=4.5,<5",
   "httpx>=0.23.1,<0.29.0",
   "typing-extensions>=4.7.1",
   "python-dateutil>=2.8.2,<3",

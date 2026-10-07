@@ -191,6 +191,36 @@ class E2eeCrypto:
             }
         )
 
+    def seal_record(
+        self,
+        key: bytes | bytearray,
+        document: Mapping[str, Any],
+        key_aad: bytes | bytearray,
+        aad: bytes | bytearray,
+        kind: str,
+    ) -> str:
+        return self.execute(
+            {
+                "op": "record_seal", "key": encode(key), "document": document,
+                "key_aad": encode(key_aad), "aad": encode(aad), "kind": kind,
+            }
+        )["ciphertext"]
+
+    def open_record(
+        self,
+        key: bytes | bytearray,
+        ciphertext: str,
+        key_aad: bytes | bytearray,
+        aad: bytes | bytearray,
+        kind: str,
+    ) -> dict[str, Any]:
+        return self.execute(
+            {
+                "op": "record_open", "key": encode(key), "ciphertext": ciphertext,
+                "key_aad": encode(key_aad), "aad": encode(aad), "kind": kind,
+            }
+        )["document"]
+
     def open(
         self,
         key: bytes | bytearray,

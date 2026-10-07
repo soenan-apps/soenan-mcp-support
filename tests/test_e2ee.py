@@ -5,6 +5,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import threading
 import time
+from hashlib import sha256
 
 import httpx
 import pytest
@@ -49,7 +50,50 @@ class MemoryAPI:
         self.base_url = ""
 
     def call(self, operation, *, body=None, **params):
+        if operation == "e2eeReadRecords":
+            scopes, commands = [], {}
+            for request in body["scopes"]:
+                scope = request["scope_id"]
+                records = self.records.get(scope, {})
+                values = [
+                    records[identifier]
+                    for identifier in request["record_ids"]
+                    if identifier in records
+                ]
+                page = self._compact(values)
+                commands.update(page["commands"])
+                scopes.append(
+                    {
+                        "scope_id": scope,
+                        "metadata": deepcopy(self.projects[scope]),
+                        "records": page["records"],
+                        "remaining_record_ids": [],
+                        "missing_record_ids": [
+                            identifier
+                            for identifier in request["record_ids"]
+                            if identifier not in records
+                        ],
+                        "devices": deepcopy(list(self.devices.values())),
+                        "envelopes": deepcopy(
+                            [
+                                value
+                                for value in self.envelopes
+                                if value["scope_id"] == scope
+                            ]
+                        ),
+                        "recoveries": [],
+                        "epochs": [],
+                    }
+                )
+            return {
+                "scopes": scopes,
+                "commands": commands,
+                "key_scopes": [],
+                "server_time": int(time.time()),
+            }
         if body is None:
+            if operation == "e2eeGetScope":
+                return deepcopy(self.projects[params["scope_id"]])
             if operation == "e2eeGetTrust":
                 return {"statements": deepcopy(self.trust_statements)}
             if operation == "e2eeGetRecovery":
@@ -87,20 +131,23 @@ class MemoryAPI:
                         ]
                     )
                 }
-            if operation == "e2eeGetSnapshot" or operation == "e2eeGetRecords":
+            if operation in {"e2eeGetSnapshot", "e2eeGetRecords", "e2eeGetCurrent"}:
                 values = list(self.records.get(params["scope_id"], {}).values())
                 values.sort(
                     key=lambda item: (
                         item["record_id"]
-                        if operation == "e2eeGetSnapshot"
+                        if operation in {"e2eeGetSnapshot", "e2eeGetCurrent"}
                         else item["cursor"]
                     )
                 )
-                if operation == "e2eeGetSnapshot":
+                if operation in {"e2eeGetSnapshot", "e2eeGetCurrent"}:
                     values = [
                         item
                         for item in values
                         if item["record_id"] > params.get("after_record_id", "")
+                        and (
+                            params.get("kind") is None or params["kind"] == item["kind"]
+                        )
                     ]
                 else:
                     values = [
@@ -109,13 +156,19 @@ class MemoryAPI:
                         if item["cursor"] > params.get("after", 0)
                     ]
                 count = params.get("limit", 256)
-                return {
+                result = {
                     "records": deepcopy(values[:count]),
                     "cursor": max(
                         [item["cursor"] for item in values] + [params.get("after", 0)]
                     ),
                     "has_more": len(values) > count,
                 }
+                if operation == "e2eeGetCurrent":
+                    result.update(self._compact(values[:count]))
+                    result["next_record_id"] = (
+                        values[count - 1]["record_id"] if len(values) > count else None
+                    )
+                return result
             if operation == "e2eeGetEpochs":
                 return {
                     "epochs": deepcopy(
@@ -320,6 +373,20 @@ class MemoryAPI:
             self._write(scope, value["records"], body)
             return deepcopy(self.projects[scope])
         if operation == "e2eeWriteRecords":
+            assert value["format_version"] == (3 if any(w["kind"] in {"chat", "comment"} for w in value["records"]) else 2)
+            assert (
+                int(time.time()) <= value["expires_at"] <= int(time.time()) + 30 * 86400
+            )
+            for condition in value.get("preconditions", []):
+                record = self.records.get(value["scope_id"], {}).get(
+                    condition["record_id"]
+                )
+                if (
+                    record is None
+                    or record["revision"] != condition["expected_revision"]
+                    or (condition.get("require_live") and record["deleted"])
+                ):
+                    raise E2eeError("revision_conflict")
             return self._write(value["scope_id"], value["records"], body)
         if operation == "e2eeBeginObject":
             self.objects.setdefault(
@@ -352,6 +419,38 @@ class MemoryAPI:
             del self.objects[value["object_id"]]
             return {}
         raise AssertionError(operation)
+
+    @staticmethod
+    def _compact(values):
+        commands, records = {}, []
+        for value in values:
+            command = value["signed_command"]
+            body = json.loads(decode(command["body_bytes"]))
+            operation = "project_create" if "project_id" in body else "records_write"
+            identifier = sha256(
+                json.dumps(command, sort_keys=True).encode()
+            ).hexdigest()
+            commands[identifier] = {
+                "operation": operation,
+                "command": deepcopy(command),
+            }
+            ordinal = next(
+                index
+                for index, record in enumerate(body["records"])
+                if record["record_id"] == value["record_id"]
+            )
+            records.append(
+                {
+                    **{
+                        key: item
+                        for key, item in value.items()
+                        if key not in {"ciphertext", "signed_command"}
+                    },
+                    "command_id": identifier,
+                    "ordinal": ordinal,
+                }
+            )
+        return {"records": records, "commands": commands}
 
     def _write(self, scope, writes, signed):
         current = self.records.setdefault(scope, {})
@@ -727,8 +826,9 @@ def test_oauth_credentials_are_bound_to_account_and_resource_origins():
     assert len(calls) == 1
 
 
+@pytest.mark.parametrize("legacy_copy", [False, True])
 def test_direct_bucket_roundtrip_authenticates_before_destination_publish(
-    initialized, tmp_path
+    initialized, tmp_path, legacy_copy
 ):
     api, session, store, code, scope = initialized
     ciphertexts = {}
@@ -761,6 +861,35 @@ def test_direct_bucket_roundtrip_authenticates_before_destination_publish(
         payload = b"private media content" * 1000
         source.write_bytes(payload)
         result = upload_file(session, project_id=scope, source=source)
+        from soenan_arteligo_support.e2ee import EncryptedDirectory
+
+        records = EncryptedRecords(session)
+        entry = EncryptedDirectory(records, scope).page()["entries"][0]
+        assert entry["file"]["id"] == result["file_id"]
+        assert entry["file"]["originalFilename"] == source.name
+        assert entry["file"]["sizeBytes"] == len(payload)
+        assert entry["file"]["sourceState"] == "available"
+        assert entry["file"]["media"]["kind"] == "audio"
+        assert entry["file"]["createdAt"]
+        saved_file = records.read(scope, [result["file_id"]])[result["file_id"]]
+        assert "directoryEntry" not in saved_file["value"]
+        assert "entryIntent" not in saved_file["value"]
+        locator = records.read(scope, ["floc_" + result["file_id"]])["floc_" + result["file_id"]]["value"]
+        assert locator["name"] == source.name
+        assert locator["parentFolderId"] is None
+        if legacy_copy:
+            records.write(
+                scope,
+                key_epoch=1,
+                records=[
+                    {
+                        "record_id": result["file_id"],
+                        "kind": "file",
+                        "expected_revision": saved_file["revision"],
+                        "value": {**saved_file["value"], "directoryEntry": entry},
+                    }
+                ],
+            )
         assert len(ciphertexts) == 1
         assert payload not in next(iter(ciphertexts.values()))
         remote_manifest = api.objects[result["object_id"]]["manifest"]
@@ -803,7 +932,7 @@ def test_wav_preview_uses_encrypted_object_api_and_authenticates_local_source(
     from hashlib import sha256
     from soenan_arteligo_support.transfer import upload_wav_preview
     from soenan_arteligo_support.transfer._crypto import preview_chunk_aad, chunk_nonce
-    from soenan_arteligo_support.transfer._workflow import snapshot, key_aad
+    from soenan_arteligo_support.transfer._workflow import key_aad
 
     if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
         pytest.skip("local FFmpeg and FFprobe are required")
@@ -852,7 +981,9 @@ def test_wav_preview_uses_encrypted_object_api_and_authenticates_local_source(
             and "wrapped" not in public
             and "duration" not in public
         )
-        private = snapshot(session, scope)[uploaded["file_id"]]["value"]["preview"]
+        private = EncryptedRecords(session).read(scope, [uploaded["file_id"]])[
+            uploaded["file_id"]
+        ]["value"]["preview"]
         assert private["media"]["codecs"] == "opus"
         assert (
             private["media"]["playbackLoudness"]["policyVersion"]
@@ -1043,73 +1174,144 @@ def test_local_mcp_stdio_starts_without_reading_credentials():
 
 
 def test_maximum_source_and_preview_manifests_fit_bounded_record_commands(initialized):
-    from soenan_arteligo_support.transfer._crypto import ChunkMetadata, EncryptionPlan, CHUNK_SIZE
+    from soenan_arteligo_support.transfer._crypto import (
+        ChunkMetadata,
+        EncryptionPlan,
+        CHUNK_SIZE,
+    )
+
     api, session, _, _, scope = initialized
     chunks = tuple(
-        ChunkMetadata(i, i * (CHUNK_SIZE + 16), bytes(range(32)), CHUNK_SIZE + 16,
-                      i == 1023, i * CHUNK_SIZE, CHUNK_SIZE)
+        ChunkMetadata(
+            i,
+            i * (CHUNK_SIZE + 16),
+            bytes(range(32)),
+            CHUNK_SIZE + 16,
+            i == 1023,
+            i * CHUNK_SIZE,
+            CHUNK_SIZE,
+        )
         for i in range(1024)
     )
-    plan = EncryptionPlan(scope, 'fil_' + 'b' * 32, 'a' * 36, 1, CHUNK_SIZE * 1024,
-                          1024, bytes(8), bytes(32), bytes(12), bytes(48), chunks)
-    value = {'source': plan.manifest(), 'preview': plan.manifest(), 'filename': '音声' * 100}
-    sealed = EncryptedRecords(session).seal(scope, record_id='fil_limit', kind='file',
-        expected_revision=0, key_epoch=1, value=value)
-    signed = session.sign('records_write', {'scope_id': scope, 'records': [sealed]})
+    plan = EncryptionPlan(
+        scope,
+        "fil_" + "b" * 32,
+        "a" * 36,
+        1,
+        CHUNK_SIZE * 1024,
+        1024,
+        bytes(8),
+        bytes(32),
+        bytes(12),
+        bytes(48),
+        chunks,
+    )
+    value = {
+        "source": plan.manifest(),
+        "preview": plan.manifest(),
+        "filename": "音声" * 100,
+    }
+    sealed = EncryptedRecords(session).seal(
+        scope,
+        record_id="fil_limit",
+        kind="file",
+        expected_revision=0,
+        key_epoch=1,
+        value=value,
+    )
+    signed = session.sign("records_write", {"scope_id": scope, "records": [sealed]})
     assert len(session.crypto.canonical(value)) < 512 * 1024
-    assert len(sealed['ciphertext']) < 1024 * 1024
-    assert len(decode(signed['body_bytes'])) < 1024 * 1024
+    assert len(sealed["ciphertext"]) < 1024 * 1024
+    assert len(decode(signed["body_bytes"])) < 1024 * 1024
     assert len(json.dumps(signed).encode()) < 2 * 1024 * 1024
-    assert len(signed['body_bytes']) < 2 * 1024 * 1024
-    with pytest.raises(E2eeError, match='record_too_large'):
-        EncryptedRecords(session).seal(scope, record_id='fil_limit', kind='file',
-            expected_revision=0, key_epoch=1, value={'content': 'x' * (512 * 1024)})
-    with pytest.raises(E2eeError, match='command_too_large'):
-        session.sign('records_write', {'content': 'x' * (1024 * 1024)})
+    assert len(signed["body_bytes"]) < 2 * 1024 * 1024
+    with pytest.raises(E2eeError, match="record_too_large"):
+        EncryptedRecords(session).seal(
+            scope,
+            record_id="fil_limit",
+            kind="file",
+            expected_revision=0,
+            key_epoch=1,
+            value={"content": "x" * (512 * 1024)},
+        )
+    with pytest.raises(E2eeError, match="command_too_large"):
+        session.sign("records_write", {"content": "x" * (1024 * 1024)})
 
 
-def test_write_recovers_all_committed_records_from_bounded_partial_response(initialized):
+def test_write_recovers_all_committed_records_from_bounded_partial_response(
+    initialized,
+):
     api, session, _, _, scope = initialized
     call = api.call
     reads = []
 
     def bounded(operation, *, body=None, **parameters):
         result = call(operation, body=body, **parameters)
-        if operation in {'e2eeWriteRecords', 'e2eeGetRecords'}:
-            if operation == 'e2eeGetRecords':
-                reads.append(parameters['after'])
-            if len(result['records']) > 1:
-                result['records'] = result['records'][:1]
-                result['cursor'] = result['records'][-1]['cursor']
-                result['has_more'] = True
+        if operation in {"e2eeWriteRecords", "e2eeGetRecords"}:
+            if operation == "e2eeGetRecords":
+                reads.append(parameters["after"])
+            if len(result["records"]) > 1:
+                result["records"] = result["records"][:1]
+                result["cursor"] = result["records"][-1]["cursor"]
+                result["has_more"] = True
         return result
 
     api.call = bounded
-    records = EncryptedRecords(session).write(scope, key_epoch=1, records=[
-        {'record_id': f'chat_{index}', 'kind': 'chat', 'expected_revision': 0,
-         'value': {'text': f'large batch record {index}'}}
-        for index in range(3)
-    ])
-    assert [record['record_id'] for record in records] == ['chat_0', 'chat_1', 'chat_2']
-    assert [record['value']['text'] for record in records] == [f'large batch record {index}' for index in range(3)]
-    assert all(record['author_subject'] == session.subject for record in records)
+    records = EncryptedRecords(session).write(
+        scope,
+        key_epoch=1,
+        records=[
+            {
+                "record_id": f"chat_{index}",
+                "kind": "chat",
+                "expected_revision": 0,
+                "value": {"text": f"large batch record {index}"},
+            }
+            for index in range(3)
+        ],
+    )
+    assert [record["record_id"] for record in records] == ["chat_0", "chat_1", "chat_2"]
+    assert [record["value"]["text"] for record in records] == [
+        f"large batch record {index}" for index in range(3)
+    ]
+    assert all(record["author_subject"] == session.subject for record in records)
     assert len(reads) == 2 and reads[1] > reads[0]
-    assert len([command for operation, command, _ in api.commands if operation == 'e2eeWriteRecords']) == 1
+    assert (
+        len(
+            [
+                command
+                for operation, command, _ in api.commands
+                if operation == "e2eeWriteRecords"
+            ]
+        )
+        == 1
+    )
 
 
-def test_write_does_not_report_success_for_an_incomplete_committed_response(initialized):
+def test_write_does_not_report_success_for_an_incomplete_committed_response(
+    initialized,
+):
     api, session, _, _, scope = initialized
     call = api.call
 
     def missing(operation, *, body=None, **parameters):
         result = call(operation, body=body, **parameters)
-        if operation == 'e2eeWriteRecords':
-            result['records'] = []
-            result['has_more'] = False
+        if operation == "e2eeWriteRecords":
+            result["records"] = []
+            result["has_more"] = False
         return result
 
     api.call = missing
-    with pytest.raises(E2eeError, match='incomplete_write_response'):
-        EncryptedRecords(session).write(scope, key_epoch=1, records=[
-            {'record_id': 'chat_unconfirmed', 'kind': 'chat', 'expected_revision': 0, 'value': {'text': 'saved'}}
-        ])
+    with pytest.raises(E2eeError, match="incomplete_write_response"):
+        EncryptedRecords(session).write(
+            scope,
+            key_epoch=1,
+            records=[
+                {
+                    "record_id": "chat_unconfirmed",
+                    "kind": "chat",
+                    "expected_revision": 0,
+                    "value": {"text": "saved"},
+                }
+            ],
+        )

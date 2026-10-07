@@ -3,7 +3,8 @@ from __future__ import annotations
 import importlib
 import json
 import re
-from typing import Any, Protocol, get_type_hints
+from enum import Enum
+from typing import Any, Protocol, get_args, get_type_hints
 
 import httpx
 
@@ -43,8 +44,22 @@ class GeneratedAPI:
             endpoint = importlib.import_module(
                 "arteligo_public_api_client.api." + module_name
             )
+            hints = get_type_hints(endpoint.sync_detailed)
+            for name, value in parameters.items():
+                hint = hints.get(name)
+                candidates = get_args(hint) or (hint,)
+                enum = next(
+                    (
+                        candidate
+                        for candidate in candidates
+                        if isinstance(candidate, type) and issubclass(candidate, Enum)
+                    ),
+                    None,
+                )
+                if enum is not None:
+                    parameters[name] = enum(value)
             if body is not None:
-                model = get_type_hints(endpoint.sync_detailed)["body"]
+                model = hints["body"]
                 parameters["body"] = model.from_dict(body)
             client = AuthenticatedClient(
                 base_url=self.oauth.arteligo_origin,
@@ -78,6 +93,7 @@ class GeneratedAPI:
                         "rekey_required",
                         "device_revoked",
                         "service_terms_acceptance_required",
+                        "content_format_update_required",
                     }:
                         code = detail
                 except (ValueError, AttributeError):

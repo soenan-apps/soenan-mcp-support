@@ -31,7 +31,11 @@ class PreviewAPI(MemoryAPI):
         self.uploads[url.removeprefix(self.base_url)] = ciphertext
 
     def call(self, operation, *, body=None, **parameters):
-        value = json.loads(decode(body["body_bytes"])) if body else None
+        value = (
+            json.loads(decode(body["body_bytes"]))
+            if body and "body_bytes" in body
+            else None
+        )
         if operation == "e2eeGetObject":
             existing = self.objects.get(parameters["object_id"])
             if existing is None or existing["state"] != "ready":
@@ -61,6 +65,24 @@ def preview_workspace(tmp_path, monkeypatch):
     monkeypatch.setattr(_workflow, "put_ciphertext", api.put)
     monkeypatch.setattr(_preview, "put_ciphertext", api.put)
     uploaded = upload_file(owner, project_id=scope, source=source)
+    records = EncryptedRecords(owner)
+    uploaded_file = records.read(scope, [uploaded["file_id"]])[uploaded["file_id"]]
+    records.write(
+        scope,
+        key_epoch=1,
+        records=[
+            {
+                "record_id": uploaded["file_id"],
+                "kind": "file",
+                "expected_revision": uploaded_file["revision"],
+                "value": {
+                    **uploaded_file["value"],
+                    "directoryEntry": {"name": source.name},
+                    "additionalMetadata": {"keep": True},
+                },
+            }
+        ],
+    )
     encoding = SimpleNamespace(calls=0, content=b"deterministic preview bytes")
 
     @contextmanager
@@ -87,7 +109,7 @@ def preview_workspace(tmp_path, monkeypatch):
 
 
 def read_file(owner, scope, file_id):
-    return _workflow.snapshot(owner, scope)[file_id]
+    return EncryptedRecords(owner).read(scope, [file_id])[file_id]
 
 
 def written_preview(owner, scope, body):
@@ -98,6 +120,7 @@ def written_preview(owner, scope, body):
         {
             **record,
             "revision": record["expected_revision"] + 1,
+            "cursor": 0,
             "author_device_id": owner.device_id,
             "signed_command": body,
         },
@@ -113,6 +136,8 @@ def test_preview_resumes_same_object_after_commit_boundaries(
     preview_workspace, monkeypatch, failure
 ):
     api, owner, scope, file_id, source, encoding = preview_workspace
+    original_file = api.records[scope][file_id]
+    original_bytes = deepcopy(original_file)
     original = api.call
     failed = False
 
@@ -167,6 +192,11 @@ def test_preview_resumes_same_object_after_commit_boundaries(
     assert len(api.objects) == 2
     assert api.objects[identifier]["state"] == "ready"
     value = read_file(owner, scope, file_id)["value"]
+    assert "directoryEntry" not in value
+    assert value["additionalMetadata"] == {"keep": True}
+    assert original_file == original_bytes
+    opened_original = EncryptedRecords(owner).open(scope, original_file)
+    assert opened_original["value"]["directoryEntry"] == {"name": source.name}
     assert value["preview"] == {**pending, "state": "ready"}
     if failure == "file_conflict":
         assert value["concurrent_note"] == "keep this edit"

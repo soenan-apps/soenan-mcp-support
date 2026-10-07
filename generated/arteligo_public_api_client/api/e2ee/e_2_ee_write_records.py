@@ -5,7 +5,7 @@ from urllib.parse import quote
 import httpx
 
 from ...client import AuthenticatedClient, Client
-from ...models.e2_ee_record_page import E2EeRecordPage
+from ...models.e2_ee_current_page import E2EeCurrentPage
 from ...models.e2_ee_signed_command import E2EeSignedCommand
 from ...models.e2_ee_write_records_sec_fetch_site import E2EeWriteRecordsSecFetchSite
 from ...models.error_envelope import ErrorEnvelope
@@ -43,9 +43,9 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> E2EeRecordPage | ErrorEnvelope:
+) -> E2EeCurrentPage | ErrorEnvelope:
     if response.status_code == 200:
-        response_200 = E2EeRecordPage.from_dict(response.json())
+        response_200 = E2EeCurrentPage.from_dict(response.json())
 
         return response_200
 
@@ -56,7 +56,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[E2EeRecordPage | ErrorEnvelope]:
+) -> Response[E2EeCurrentPage | ErrorEnvelope]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -72,7 +72,7 @@ def sync_detailed(
     body: E2EeSignedCommand,
     origin: str | Unset = UNSET,
     sec_fetch_site: E2EeWriteRecordsSecFetchSite | Unset = UNSET,
-) -> Response[E2EeRecordPage | ErrorEnvelope]:
+) -> Response[E2EeCurrentPage | ErrorEnvelope]:
     """Atomically writes encrypted business records in a project scope. Organization scopes distribute keys
     and do not accept business-record writes.
 
@@ -87,7 +87,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[E2EeRecordPage | ErrorEnvelope]
+        Response[E2EeCurrentPage | ErrorEnvelope]
     """
 
     kwargs = _get_kwargs(
@@ -111,7 +111,7 @@ def sync(
     body: E2EeSignedCommand,
     origin: str | Unset = UNSET,
     sec_fetch_site: E2EeWriteRecordsSecFetchSite | Unset = UNSET,
-) -> E2EeRecordPage | ErrorEnvelope | None:
+) -> E2EeCurrentPage | ErrorEnvelope | None:
     """Atomically writes encrypted business records in a project scope. Organization scopes distribute keys
     and do not accept business-record writes.
 
@@ -126,7 +126,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        E2EeRecordPage | ErrorEnvelope
+        E2EeCurrentPage | ErrorEnvelope
     """
 
     return sync_detailed(
@@ -145,7 +145,7 @@ async def asyncio_detailed(
     body: E2EeSignedCommand,
     origin: str | Unset = UNSET,
     sec_fetch_site: E2EeWriteRecordsSecFetchSite | Unset = UNSET,
-) -> Response[E2EeRecordPage | ErrorEnvelope]:
+) -> Response[E2EeCurrentPage | ErrorEnvelope]:
     """Atomically writes encrypted business records in a project scope. Organization scopes distribute keys
     and do not accept business-record writes.
 
@@ -160,7 +160,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[E2EeRecordPage | ErrorEnvelope]
+        Response[E2EeCurrentPage | ErrorEnvelope]
     """
 
     kwargs = _get_kwargs(
@@ -182,7 +182,7 @@ async def asyncio(
     body: E2EeSignedCommand,
     origin: str | Unset = UNSET,
     sec_fetch_site: E2EeWriteRecordsSecFetchSite | Unset = UNSET,
-) -> E2EeRecordPage | ErrorEnvelope | None:
+) -> E2EeCurrentPage | ErrorEnvelope | None:
     """Atomically writes encrypted business records in a project scope. Organization scopes distribute keys
     and do not accept business-record writes.
 
@@ -197,7 +197,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        E2EeRecordPage | ErrorEnvelope
+        E2EeCurrentPage | ErrorEnvelope
     """
 
     return (

@@ -7,18 +7,27 @@ import httpx
 from ...client import AuthenticatedClient, Client
 from ...models.e2_ee_devices import E2EeDevices
 from ...models.error_envelope import ErrorEnvelope
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     scope_id: str,
+    *,
+    device_id: str | Unset = UNSET,
 ) -> dict[str, Any]:
+
+    params: dict[str, Any] = {}
+
+    params["device_id"] = device_id
+
+    params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
     _kwargs: dict[str, Any] = {
         "method": "get",
         "url": "/api/e2ee/scopes/{scope_id}/devices".format(
             scope_id=quote(str(scope_id), safe=""),
         ),
+        "params": params,
     }
 
     return _kwargs
@@ -52,10 +61,12 @@ def sync_detailed(
     scope_id: str,
     *,
     client: AuthenticatedClient,
+    device_id: str | Unset = UNSET,
 ) -> Response[E2EeDevices | ErrorEnvelope]:
     """
     Args:
         scope_id (str):
+        device_id (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -67,6 +78,7 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         scope_id=scope_id,
+        device_id=device_id,
     )
 
     response = client.get_httpx_client().request(
@@ -80,10 +92,12 @@ def sync(
     scope_id: str,
     *,
     client: AuthenticatedClient,
+    device_id: str | Unset = UNSET,
 ) -> E2EeDevices | ErrorEnvelope | None:
     """
     Args:
         scope_id (str):
+        device_id (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -96,6 +110,7 @@ def sync(
     return sync_detailed(
         scope_id=scope_id,
         client=client,
+        device_id=device_id,
     ).parsed
 
 
@@ -103,10 +118,12 @@ async def asyncio_detailed(
     scope_id: str,
     *,
     client: AuthenticatedClient,
+    device_id: str | Unset = UNSET,
 ) -> Response[E2EeDevices | ErrorEnvelope]:
     """
     Args:
         scope_id (str):
+        device_id (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -118,6 +135,7 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         scope_id=scope_id,
+        device_id=device_id,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -129,10 +147,12 @@ async def asyncio(
     scope_id: str,
     *,
     client: AuthenticatedClient,
+    device_id: str | Unset = UNSET,
 ) -> E2EeDevices | ErrorEnvelope | None:
     """
     Args:
         scope_id (str):
+        device_id (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -146,5 +166,6 @@ async def asyncio(
         await asyncio_detailed(
             scope_id=scope_id,
             client=client,
+            device_id=device_id,
         )
     ).parsed

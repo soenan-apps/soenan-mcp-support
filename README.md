@@ -52,16 +52,20 @@ MCP host の stdio server command に次を設定します。`--profile` を指�
 arteligo --account-origin ACCOUNT_ORIGIN --arteligo-origin ARTELIGO_ORIGIN mcp
 ```
 
-local MCP はプロジェクト一覧、復号した record の読み取り・更新、プロジェクト作成、ローカルファイルのアップロードとダウンロード、WAV の音声プレビュー作成を提供します。端末承認、復旧コード、OAuth token、秘密鍵を扱う操作は MCP tools に含めません。各要求で承認状態を確認し、認証を要する呼び出し時だけ必要に応じて OAuth token を更新します。新しい処理を探す定期ポーリングはありません。
+local MCP はプロジェクト一覧、復号した record の読み取り・更新、プロジェクト作成、ページ単位の会話の読み取りと更新、ローカルファイルのアップロードとダウンロード、WAV の音声プレビュー作成を提供します。端末承認、復旧コード、OAuth token、秘密鍵を扱う操作は MCP tools に含めません。各要求で承認状態を確認し、認証を要する呼び出し時だけ必要に応じて OAuth token を更新します。新しい処理を探す定期ポーリングはありません。
 
-record の平文上限は 512 KiB、署名する command body は 1 MiB です。大きな batch の保存応答が分割された場合は、返却済み cursor から最大 16 ページを読み直し、送信した全 record の revision、暗号文、署名を検証してから成功を返します。応答を揃えられない場合は更新を再送せず、保存結果が未確認であることを返します。
+local MCP の汎用 `arteligo_write_record` は chat/comment の直接更新を `conversation_operation_required` で拒否します。会話では `arteligo_chat_send/edit/delete`、`arteligo_comment_create/edit/reply_create/reply_edit/resolution` を使い、origin、head、索引を同じ batch に保存します。読み取りは `arteligo_chat_messages/events/message`、`arteligo_comment_threads/thread/replies/reply`、全履歴の明示検証は `arteligo_chat_message_history` です。コメントのページでは返却された `next_key` をそのまま `after` に渡します。上限を超える件数、無効な revision と日時は session を開く前に拒否します。
 
-record の `expected_revision` と鍵世代は競合を検出するために必要です。`revision_conflict` の場合は現在の record を読み直してから利用者の変更を適用します。更新を自動的に再実行しません。
+会話 tool は同時に 1 件だけ実行し、追加の要求は `local_operation_busy` を返します。待機キューは作りません。通信や履歴検証の途中で要求を取り消すと、次の checkpoint で停止して session を lock します。保存が既に確定していた場合は、同じ操作 ID で結果を確認します。
+
+record の平文上限は 512 KiB、署名する command body は 1 MiB です。内容の書き込みは、chat/comment を含む batch が形式 3、その他が形式 2 です。初回受付の期限と読み取った record の期待 revision を署名に含めます。SDK が設定する期限は作成から 29 日後で、確定結果はサーバーが 30 日間保持します。大きな batch の保存応答が分割された場合は、返却済み cursor から最大 16 ページを読み直し、送信した全 record の revision、暗号文、署名を検証してから成功を返します。応答を揃えられない場合は更新を再送せず、保存結果が未確認であることを返します。
+
+record の `expected_revision` と鍵世代は競合を検出するために必要です。`revision_conflict` の場合は現在の record を読み直してから利用者の変更を適用します。汎用 record 更新は自動的に再実行しません。会話 API は署名済みの操作 ID を確認し、競合した head と索引を読み直して最大 3 回まで再試行します。
 
 ## Python API
 
 ```python
-from soenan_arteligo_support.e2ee import EncryptedRecords, open_session
+from soenan_arteligo_support.e2ee import EncryptedDirectory, EncryptedRecords, open_session
 from soenan_arteligo_support.transfer import download_file, upload_file, upload_wav_preview
 
 session = open_session(
@@ -70,7 +74,8 @@ session = open_session(
 )
 try:
     records = EncryptedRecords(session)
-    page = records.page("prj_example", after=0, limit=128)
+    page = EncryptedDirectory(records, "prj_example").page(limit=100)
+    selected = records.read("prj_example", ["fil_example"])
     result = upload_file(session, project_id="prj_example", source="./recording.wav")
     upload_wav_preview(
         session,
@@ -88,9 +93,57 @@ finally:
     session.lock()
 ```
 
+`read` は指定した最大 256 record だけを取得・復号します。`read_many` は最大 32 scopes の概要などを一括で取得でき、ある scope の認可・鍵・検証の失敗を他の scope の結果から分離します。同じ署名付き command は応答内で一度検証します。鍵と証明は読み取り応答から受け取り、scope ごとの内容取得で全 project 一覧を読み直しません。
+
+`current(scope, kind=..., after_record_id=..., limit=256)` は種類ごとの現在値、`changes(scope, after=..., limit=256)` は内容を含まない変更ページを返します。変更 cursor は署名・復号を確認済みの record revision ではありません。利用する内容は `read` で取得・検証します。
+
+フォルダーは暗号化した header と B+tree を端末で解釈します。`EncryptedDirectory.page` は既定 100 件、最大 200 件を名前順で返し、続きは返却された `cursor` を渡します。folder の revision が変わると `revision_conflict` になるため、その folder の先頭から取り直します。アップロードは対象 folder の索引の枝と file record を一つの batch で更新し、他の folder の内容を読みません。
+
+### 会話 API
+
+`EncryptedConversations(records, scope, checkpoint=...)` は Flutter と同じ会話形式 3 を読み書きします。新規 project は、空の会話 header 2 個と folder の索引を project 作成と同じ command で保存します。header がない project の通常操作は `content_format_update_required` を返します。`initialize()` は空の検証用 scope に header を明示作成する操作です。既存の会話を変換する機能はありません。
+
+chatのmessage IDは`cmsg_`と32桁の小文字hex、operation IDは16〜128文字の印字可能ASCIIです。本文は8,000 Unicode文字以内、参照は重複なしで10件以内です。参照は`kind`と対応する`fileId`、`stageId`、`commentId`、`replyId`を持つ公開契約の形式を使います。
+
+```python
+from soenan_arteligo_support.e2ee import EncryptedConversations
+
+conversation = EncryptedConversations(records, "prj_0123456789abcdef0123456789abcdef")
+page = conversation.chat_messages(limit=100)
+if page["next_before_sequence"] is not None:
+    older = conversation.chat_messages(before_sequence=page["next_before_sequence"])
+conversation.write_chat(
+    type="sent", message_id="cmsg_0123456789abcdef0123456789abcdef", operation_id="operation_unique_id",
+    body="制作メモ", references=[], committed_at="2026-10-07T00:00:00Z",
+)
+```
+
+| 操作 | メソッドと上限 |
+| --- | --- |
+| 最新メッセージと過去ページ | `chat_messages(before_sequence=..., limit=100)`、最大 100 件 |
+| イベントの取りこぼし | `chat_events(after=..., limit=200)`、最大 200 件 |
+| 1 メッセージと確定済み操作 | `chat_message(id)`、`chat_operation(operation_id)` |
+| 送信、本文編集、削除 | `write_chat(type="sent"/"edited"/"deleted", ...)`。編集と削除は `expected_revision` 必須 |
+| コメント一覧と返信ページ | `comment_threads(anchor=..., after=..., limit=100)`、`comment_replies(parent_id, after=..., limit=100)`、最大 100 件 |
+| コメントと返信 | `comment_thread(id)`、`comment_reply(id)`、`create_comment(id, value)`、`create_reply(id, parent_id=..., value=...)` |
+| 本文編集と解決状態 | `edit_comment`、`edit_reply`、`set_resolution`。操作ごとに `operation_id` を渡す |
+| 全履歴の明示検証 | `chat_message_history(id)`、`archive(snapshot_cursor=...)` |
+
+通常のメッセージ表示は、署名済み origin、現在の head、最新 event をまとめて取得します。編集履歴全体の列挙はしません。コメントも本文 head と最新の編集だけを取得します。origin、event、解決状態、本文編集、削除の terminal は immutable record として保存し、head と索引の更新は同じ CAS batch に含めます。受信した author と actor は署名元の account subject に照合します。
+
+応答を失った操作をやり直すときは、同じ message/comment/reply ID と `operation_id` を使います。確定済みの不変レコードを検証して結果を返し、暗号文の再生成や新しいイベントの追加を行いません。`checkpoint` は読み取り batch、保存の前後、検証ページの境界で呼びます。例外を投げると処理を止めます。保存後の取消は確定済みの操作を取り消さないため、同じ操作 ID で結果を確認します。
+
+`EncryptedRecords.immutable_kind(scope, kind, after=..., snapshot_cursor=..., limit=256)` は immutable record を cursor 順で取得します。最初のページの `snapshot_cursor` を後続の全ページと kind に渡すと、途中で追加された record を除外できます。`archive` はこの経路から会話を再構成し、既定で 100,000 record または平文 64 MiB を超えると `conversation_archive_limit` で止めます。大きな export は `immutable_kind` のページを直接処理します。通常の画面表示から archive は呼びません。
+
+旧 directory 形式は `migrate_directory(records, scope, maximum_batches=64)` または local MCP の `arteligo_migrate_directory` で変換します。移行中は通常の内容更新を止め、暗号化した checkpoint から再開します。新しい root を公開するまで旧 directory を保持し、公開後に旧 record を回収します。返り値の `complete` が `false` なら、同じ project を指定して続きを実行します。既存 file ID と Bucket object は変わりません。
+
+公開前の移行を取り消す場合は `abort_directory_migration` または local MCP の `arteligo_abort_directory_migration` を使います。移行で作った node だけを最大 128 件ずつ回収し、最後に checkpoint を最小の tombstone に置き換えて通常更新を再開します。取消の途中も同じ操作で再開でき、旧 directory と file は保持します。公開済みの root はこの操作では取り消せません。
+
+ファイル名の検索・並べ替えはクライアントの処理です。サーバーへ名前、パス、検索文字列を渡す経路はありません。未取得の範囲を検索するアプリケーションは、通常の上限付き取得を使い、範囲・進捗・取消を管理します。SDK はプロジェクト全体の自動取得を行いません。
+
 DEK はアップロードごとに端末で生成します。ProjectKey で包んだ DEK と詳細 manifest は encrypted file record に保存し、server の object manifest には object ID、鍵世代、暗号文サイズ、chunk index と checksum だけを送ります。Bucket へは暗号文だけを直接送信し、OAuth token は転送しません。
 
-アップロード途中の情報は暗号化した `upl_` record に保存します。失敗後は `upload_id` と同じローカルファイルを明示して再開できます。内容が変わったファイルは checksum の照合で拒否します。object が `ready` なら転送を繰り返さず、元ファイルと directory record の保存から再開します。この二つは同じ revision batch で保存します。保存の完了応答を失った場合も、再実行で同じ file ID を返し、一覧の項目を増やしません。directory の更新と競合した場合は、同じ `upload_id` で再実行します。ダウンロードは全 chunk の checksum と AES-GCM 認証を終えてから、新しい保存先へファイルを公開します。既存ファイルを上書きしません。
+アップロード途中の情報は暗号化した `upl_` record に保存します。失敗後は `upload_id` と同じローカルファイルを明示して再開できます。内容が変わったファイルは checksum の照合で拒否します。object が `ready` なら転送を繰り返さず、元ファイルと directory record の保存から再開します。これらは同じ revision batch で保存します。保存の完了応答を失った場合も、再実行で同じ file ID を返し、一覧の項目を増やしません。directory の更新と競合した場合は、同じ `upload_id` で再実行します。ダウンロードは全 chunk の checksum と AES-GCM 認証を終えてから、新しい保存先へファイルを公開します。既存ファイルを上書きしません。
 
 `upload_wav_preview` と local MCP の `arteligo_upload_wav_preview` は、元ファイルの暗号文 checksum と手元の WAV が一致することを確認し、ローカルの FFmpeg / FFprobe で Opus に変換します。プレビュー専用の DEK を生成し、送信前に object ID、manifest、包んだ DEK を暗号化した file record に保存します。再生情報と音量解析も同じ record に保存するため、Flutter でも同じプレビューを再生できます。転送や保存の応答を失った場合は、同じ file ID と WAV を指定して再開します。object が `ready` なら変換と転送を繰り返さず、record の保存を完了します。転送途中の再開では変換後の checksum を照合し、同じ鍵と nonce で異なる内容を送ることを防ぎます。変換の失敗は元ファイルの保存を取り消しません。
 
@@ -100,9 +153,21 @@ DEK はアップロードごとに端末で生成します。ProjectKey で包�
 
 HTTP 契約の正本は Arteligo の `contracts/openapi/arteligo-public.yaml` です。`generated/` はその契約から作る client で、手で変更しません。`GeneratedAPI` は生成済み endpoint と model を呼び出す transport adapter です。
 
+ワークスペースのルートから、Swift・Dart・Python の生成物をまとめて更新・検査します。
+
 ```sh
-uvx --from openapi-python-client==0.28.0 --with ruff==0.16.9 openapi-python-client generate --path ../arteligo/contracts/openapi/arteligo-public.yaml --meta none --output-path generated/arteligo_public_api_client --overwrite
-.venv/bin/python -m pytest -q
+bin/soenan arteligo contract generate
+bin/soenan arteligo contract check
 ```
 
+SDK のテストは、このリポジトリで `.venv/bin/python -m pytest -q` を実行します。
+
 検証では、共通 Rust core の既知値、独立端末への承認、双方向の公開鍵確認、復旧コード、公開鍵の差し替え、過去世代の鍵の復旧、署名と暗号文の改ざん、実際の loopback Bucket 転送、保存先の原子的な公開を確認します。テストは実際の Keychain や Account の認証情報を使いません。
+
+ローカルスタックのブラウザー性能検証には、ワークスペースの `bin/soenan local acceptance arteligo-browser-metadata prepare` を使います。`--cdp-url` で承認済み端末を持つブラウザー、`--origin` でローカル Arteligo、`--entries` で件数、`--manifest` で公開情報だけの検証記録を指定します。既存のブラウザー認証と保護済み端末情報をメモリー内だけで使い、専用プロジェクトに署名・暗号化した file metadata とフォルダー索引を作ります。既定では概要一覧の測定用に空のプロジェクトも 49 件作り、各プロジェクトの削除用 manifest を親の `overview_fixture_manifests` から参照します。既存プロジェクトは変更しません。
+
+この fixture は Bucket object を作らないため、一覧の表示・復号・ページングを測定するためのものです。ファイルのダウンロードは検証できません。中断した場合も manifest に残る `scope_id` が削除対象になります。検証後はワークスペース側でその専用 scope を削除します。`check` は保存済み manifest を使って先頭と続きの各 100 件を読み、HTTP 回数、応答バイト数、所要時間を記録します。
+
+作成要求の前に公開情報だけの manifest を保存します。作成応答を失った場合は、`archive` が対象 scope の署名付き作成証明を読み直して回収を続けます。作成が確認できない場合は manifest を残し、完了扱いにしません。`archive` 後の `cleanup` はワークスペース側で作成証明と所有者を検査し、専用 scope のメタデータと利用量を回収します。
+
+同じ入口の `benchmark` は、認証済みプロジェクト一覧、先頭 32 project の一括概要取得、fixture の file metadata 先頭 100 件を測定します。既定は同時接続数 1・8・16、各 30 秒、各 3 回です。`--output` へ応答件数、HTTP status、失敗、認証更新回数、応答バイト数、p50・p95 を保存します。Cookie はブラウザー内の要求だけに使い、端末鍵は読み取りません。負荷測定は UI の時間測定や大量データ生成と分けて実行します。

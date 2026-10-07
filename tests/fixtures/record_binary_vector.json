@@ -1,0 +1,14 @@
+{
+  "note": "Public deterministic test material, never production keys",
+  "key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+  "kind": "project",
+  "key_aad": "Zml4dHVyZS5yZWNvcmQta2V5L3Yy",
+  "aad": "Zml4dHVyZS5yZWNvcmQvdjI",
+  "document": {
+    "title": "公開されたテストvector",
+    "unknown": {
+      "keep": true
+    }
+  },
+  "ciphertext": "AgABAgMEBQYHCAkKC2cj9DjhwOQ8pWi9oJ3EVkKz57UHxE5pSwBe374hVD6N7DVpAGHnXxzhT4etqoSeSAwNDg8QERITFBUWF5kYOlxAUWWd5HcBcV48dUxNF75USSB6xTg7PJrIjDGkbIZ2JhxkeXDDYQp7_Qhb2Rsnpo2ac24IZ55KH_mA1dyzSaozy2AvKGtsQbRimMO3ngw"
+}

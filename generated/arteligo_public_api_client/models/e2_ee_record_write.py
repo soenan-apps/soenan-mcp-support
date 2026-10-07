@@ -7,6 +7,7 @@ from attrs import define as _attrs_define
 from typing_extensions import Self
 
 from ..models.e2_ee_record_kind import E2EeRecordKind
+from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="E2EeRecordWrite")
 
@@ -21,6 +22,9 @@ class E2EeRecordWrite:
         key_epoch (int):
         ciphertext (str):
         deleted (bool):
+        immutable (bool | Unset): True only for a new, nondeleted record with expected_revision zero. An immutable head
+            cannot subsequently be updated, deleted, or created by retroactively marking an existing mutable record
+            immutable. Default: False.
     """
 
     record_id: str
@@ -29,6 +33,7 @@ class E2EeRecordWrite:
     key_epoch: int
     ciphertext: str
     deleted: bool
+    immutable: bool | Unset = False
 
     def to_dict(self) -> dict[str, Any]:
         record_id = self.record_id
@@ -43,6 +48,8 @@ class E2EeRecordWrite:
 
         deleted = self.deleted
 
+        immutable = self.immutable
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -55,6 +62,8 @@ class E2EeRecordWrite:
                 "deleted": deleted,
             }
         )
+        if immutable is not UNSET:
+            field_dict["immutable"] = immutable
 
         return field_dict
 
@@ -73,6 +82,8 @@ class E2EeRecordWrite:
 
         deleted = d.pop("deleted")
 
+        immutable = d.pop("immutable", UNSET)
+
         e2_ee_record_write = cls(
             record_id=record_id,
             kind=kind,
@@ -80,6 +91,7 @@ class E2EeRecordWrite:
             key_epoch=key_epoch,
             ciphertext=ciphertext,
             deleted=deleted,
+            immutable=immutable,
         )
 
         return e2_ee_record_write

@@ -23,7 +23,7 @@ from ._http import (
     put_ciphertext,
 )
 from ._opus import prepare_opus_preview
-from ._workflow import _capability, _epoch, _object, key_aad, snapshot
+from ._workflow import _capability, _epoch, _file_metadata_for_write, _object, key_aad
 
 
 def upload_wav_preview(
@@ -38,7 +38,7 @@ def upload_wav_preview(
     """Encode the authenticated source locally and publish an encrypted Opus preview."""
     session.require_approved()
     records = EncryptedRecords(session)
-    record = snapshot(session, project_id).get(file_id)
+    record = EncryptedRecords(session).read(project_id, [file_id]).get(file_id)
     if record is None or record["deleted"] or record["kind"] != "file":
         raise E2eeError("not_found")
     value = record["value"]
@@ -235,7 +235,10 @@ def upload_wav_preview(
                                     "record_id": file_id,
                                     "kind": "file",
                                     "expected_revision": record["revision"],
-                                    "value": {**value, "preview": preview},
+                                    "value": {
+                                        **_file_metadata_for_write(value),
+                                        "preview": preview,
+                                    },
                                 }
                             ],
                         )
@@ -296,7 +299,7 @@ def upload_wav_preview(
 def _publish_preview(
     session: DeviceSession, project_id: str, file_id: str, preview: dict[str, Any]
 ) -> dict[str, str]:
-    current = snapshot(session, project_id).get(file_id)
+    current = EncryptedRecords(session).read(project_id, [file_id]).get(file_id)
     if (
         current is None
         or current["deleted"]
@@ -326,7 +329,7 @@ def _publish_preview(
                     "kind": "file",
                     "expected_revision": current["revision"],
                     "value": {
-                        **current["value"],
+                        **_file_metadata_for_write(current["value"]),
                         "preview": {**saved, "state": "ready"},
                     },
                 }
