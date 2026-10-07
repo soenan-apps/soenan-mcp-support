@@ -193,7 +193,7 @@ def test_one_signed_malformed_payload_keeps_other_scopes_readable(workspace):
         "records_write",
         {
             "scope_id": scope,
-            "format_version": 2,
+            "format_version": 3,
             "expires_at": int(time.time()) + 86400,
             "preconditions": [],
             "records": [

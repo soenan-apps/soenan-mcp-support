@@ -120,6 +120,7 @@ def written_preview(owner, scope, body):
         {
             **record,
             "revision": record["expected_revision"] + 1,
+            "cursor": 0,
             "author_device_id": owner.device_id,
             "signed_command": body,
         },

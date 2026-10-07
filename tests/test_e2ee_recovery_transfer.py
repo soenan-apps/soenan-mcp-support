@@ -310,7 +310,11 @@ def test_ready_upload_resumes_metadata_without_reupload_or_duplicates(
         scope, ["upl_" + identifier, uploaded["file_id"]]
     )
     assert current["upl_" + identifier]["deleted"]
-    assert current[uploaded["file_id"]]["value"]["sourceState"] == "ready"
+    completed = current[uploaded["file_id"]]["value"]
+    assert completed["file"]["encryptedObjectId"] == identifier
+    assert set(completed) == {"file", "source"}
+    locator = EncryptedRecords(session).read(scope, ["floc_" + uploaded["file_id"]])
+    assert locator["floc_" + uploaded["file_id"]]["value"]["name"] == source.name
     from soenan_arteligo_support.e2ee import EncryptedDirectory
 
     entries = EncryptedDirectory(EncryptedRecords(session), scope).page()["entries"]
@@ -324,7 +328,7 @@ def test_ready_upload_resumes_metadata_without_reupload_or_duplicates(
     assert len(puts) == 1
 
 
-def test_legacy_completed_upload_resumes_by_bounded_client_metadata_scan(
+def test_unbound_old_upload_tombstone_does_not_scan_project_contents(
     workspace, tmp_path, monkeypatch
 ):
     api, session, _, scope = workspace
@@ -359,18 +363,10 @@ def test_legacy_completed_upload_resumes_by_bounded_client_metadata_scan(
         return call(operation, **arguments)
 
     monkeypatch.setattr(api, "call", track)
-    assert (
-        upload_file(
-            session, project_id=scope, source=source, upload_id=result["object_id"]
-        )
-        == result
-    )
+    with pytest.raises(E2eeError, match="upload_not_found"):
+        upload_file(session, project_id=scope, source=source, upload_id=result["object_id"])
     assert len(puts) == 1
-    assert all(operation != "e2eeGetSnapshot" for operation, _ in requests)
-    assert any(
-        operation == "e2eeGetCurrent" and arguments["kind"] == "file"
-        for operation, arguments in requests
-    )
+    assert all(operation not in {"e2eeGetCurrent", "e2eeGetSnapshot"} for operation, _ in requests)
 
 
 def test_organization_envelope_binds_generation_to_authenticated_context(workspace):

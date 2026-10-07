@@ -373,7 +373,7 @@ class MemoryAPI:
             self._write(scope, value["records"], body)
             return deepcopy(self.projects[scope])
         if operation == "e2eeWriteRecords":
-            assert value["format_version"] == 2
+            assert value["format_version"] == (3 if any(w["kind"] in {"chat", "comment"} for w in value["records"]) else 2)
             assert (
                 int(time.time()) <= value["expires_at"] <= int(time.time()) + 30 * 86400
             )
@@ -873,10 +873,10 @@ def test_direct_bucket_roundtrip_authenticates_before_destination_publish(
         assert entry["file"]["createdAt"]
         saved_file = records.read(scope, [result["file_id"]])[result["file_id"]]
         assert "directoryEntry" not in saved_file["value"]
-        assert saved_file["value"]["entryIntent"] == {
-            "name": source.name,
-            "parentFolderId": None,
-        }
+        assert "entryIntent" not in saved_file["value"]
+        locator = records.read(scope, ["floc_" + result["file_id"]])["floc_" + result["file_id"]]["value"]
+        assert locator["name"] == source.name
+        assert locator["parentFolderId"] is None
         if legacy_copy:
             records.write(
                 scope,

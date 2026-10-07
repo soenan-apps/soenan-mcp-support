@@ -93,6 +93,7 @@ class GeneratedAPI:
                         "rekey_required",
                         "device_revoked",
                         "service_terms_acceptance_required",
+                        "content_format_update_required",
                     }:
                         code = detail
                 except (ValueError, AttributeError):

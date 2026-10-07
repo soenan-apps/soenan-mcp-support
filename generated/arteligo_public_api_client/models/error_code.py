@@ -5,6 +5,7 @@ class ErrorCode(str, Enum):
     ACCESS_DENIED = "access_denied"
     AUTHORIZATION_UNAVAILABLE = "authorization_unavailable"
     CHAT_UNAVAILABLE = "chat_unavailable"
+    CONTENT_FORMAT_UPDATE_REQUIRED = "content_format_update_required"
     DATABASE_UNAVAILABLE = "database_unavailable"
     DEVICE_REVOKED = "device_revoked"
     ENCRYPTED_OBJECT_ACCESS_DENIED = "encrypted_object_access_denied"

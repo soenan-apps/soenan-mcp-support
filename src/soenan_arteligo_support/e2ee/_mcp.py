@@ -6,12 +6,13 @@ from typing import Any, Literal
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 
+from ..transfer import TransferError, download_file, upload_file, upload_wav_preview
 from ._crypto import E2eeError
-from ._records import EncryptedRecords
 from ._directory import EncryptedDirectory
 from ._directory_migration import abort_directory_migration, migrate_directory
+from ._mcp_conversations import register_conversation_tools
+from ._records import EncryptedRecords
 from ._session import DeviceSession
-from ..transfer import TransferError, download_file, upload_file, upload_wav_preview
 
 
 def create_local_mcp(session_factory: Callable[[], DeviceSession]) -> FastMCP:
@@ -145,6 +146,8 @@ def create_local_mcp(session_factory: Callable[[], DeviceSession]) -> FastMCP:
         deleted: bool = False,
     ) -> list[dict[str, Any]]:
         """Encrypt and sign a record update; a revision conflict requires rereading the current record."""
+        if kind in {"chat", "comment"}:
+            raise ToolError("conversation_operation_required")
         return run(
             lambda session: EncryptedRecords(session).write(
                 project_id,
@@ -223,4 +226,5 @@ def create_local_mcp(session_factory: Callable[[], DeviceSession]) -> FastMCP:
             }
         )
 
+    register_conversation_tools(server, run)
     return server

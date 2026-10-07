@@ -149,7 +149,8 @@ def measure_file_cost(records, scope, record, file_count, path):
     signed_body = json.loads(raw_body)
     signed_record = signed_body["records"][reference["ordinal"]]
     ciphertext = decode(signed_record["ciphertext"])
-    packed = json.loads(ciphertext)
+    binary_v2 = ciphertext[:1] == b"\x02"
+    packed = None if binary_v2 else json.loads(ciphertext)
 
     def size(value):
         return len(records.crypto.canonical(value))
@@ -164,12 +165,13 @@ def measure_file_cost(records, scope, record, file_count, path):
     ]
     fields.sort(key=lambda item: item["named_field_json_bytes"], reverse=True)
     report = {
-        "version": 1,
+        "version": 2,
+        "ciphertext_envelope_version": 2 if binary_v2 else 1,
         "plaintext_json_bytes": size(record["value"]),
         "decoded_ciphertext_packed_bytes": len(ciphertext),
         "ciphertext_base64_bytes": len(signed_record["ciphertext"]),
-        "aead_payload_bytes": len(decode(packed["payload"]["ciphertext"])),
-        "wrapped_key_bytes": len(decode(packed["wrapped_key"]["ciphertext"])),
+        "aead_payload_bytes": len(ciphertext) - 73 if binary_v2 else len(decode(packed["payload"]["ciphertext"])),
+        "wrapped_key_bytes": 48 if binary_v2 else len(decode(packed["wrapped_key"]["ciphertext"])),
         "signed_record_json_bytes": size(signed_record),
         "signed_body_bytes": len(raw_body),
         "signed_command_json_bytes": size(proof["command"]),

@@ -22,7 +22,10 @@ T = TypeVar("T", bound="E2EeRecordBatch")
 class E2EeRecordBatch:
     """
     Attributes:
-        format_version (E2EeRecordBatchFormatVersion):
+        format_version (E2EeRecordBatchFormatVersion): Version 3 is required when any record has kind chat or comment,
+            including mixed batches. All other content batches use version 2. A version-2 conversation write receives 409
+            content_format_update_required; missing or otherwise invalid versions receive 400 invalid_request. Successful
+            stored receipts replay their exact original signed bytes.
         expires_at (int): UNIX seconds; first use must be unexpired and at most 30 days ahead of the database clock.
         scope_id (str):
         records (list[E2EeRecordWrite]):

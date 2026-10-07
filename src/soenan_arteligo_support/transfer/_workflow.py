@@ -13,8 +13,8 @@ from pathlib import Path
 from typing import Any
 
 from ..e2ee._crypto import E2eeError, decode, encode, wipe
-from ..e2ee._records import EncryptedRecords
 from ..e2ee._directory import EncryptedDirectory
+from ..e2ee._records import EncryptedRecords
 from ..e2ee._session import DeviceSession
 from ._crypto import EncryptionPlan, build_encryption_plan, parse_decryption_plan
 from ._http import (
@@ -51,34 +51,25 @@ def _file_metadata_for_write(value: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _completed_file_metadata(pending: dict[str, Any], file: dict[str, Any]) -> dict[str, Any]:
+    value = _file_metadata_for_write(pending)
+    for key in ("uploadId", "keyEpoch", "sourceState", "entryIntent", "filename", "mimeType",
+                "originalFilename", "originalPlaintextSize", "fileKind"):
+        value.pop(key, None)
+    return {**value, "file": file}
+
+
 def _completed_upload(
     records: EncryptedRecords, scope: str, pending: dict[str, Any], upload_id: str
 ) -> dict[str, Any]:
     identifier = pending["value"].get("file_id")
-    if isinstance(identifier, str):
-        record = records.read(scope, [identifier]).get(identifier)
-        if (
-            record is not None
-            and not record["deleted"]
-            and record["value"].get("uploadId") == upload_id
-        ):
-            return record
+    if not isinstance(identifier, str):
         raise E2eeError("upload_not_found")
-    # Persisted v1 upload tombstones did not retain the completed file ID.
-    after = None
-    while True:
-        page = records.current(scope, kind="file", after_record_id=after)
-        for record in page["records"]:
-            if (
-                not record["deleted"]
-                and record["value"].get("uploadId") == upload_id
-                and record["value"].get("sourceState") == "ready"
-                and "file" in record["value"]
-            ):
-                return record
-        if not page["has_more"]:
-            raise E2eeError("upload_not_found")
-        after = page["next_record_id"]
+    record = records.read(scope, [identifier]).get(identifier)
+    if (record is None or record["deleted"] or
+            record["value"].get("file", {}).get("encryptedObjectId") != upload_id):
+        raise E2eeError("upload_not_found")
+    return record
 
 
 def _object(
@@ -191,7 +182,7 @@ def upload_file(
                 )[0]
             else:
                 private = (completed or pending)["value"]
-                if private.get("uploadId") != identifier:
+                if private.get("uploadId", private.get("file", {}).get("encryptedObjectId")) != identifier:
                     raise E2eeError("upload_not_found")
                 manifest = private["source"]
                 object_value = manifest["object"]
@@ -300,8 +291,7 @@ def upload_file(
             if (
                 committed is not None
                 and not committed["deleted"]
-                and committed["value"].get("uploadId") == identifier
-                and committed["value"].get("sourceState") == "ready"
+                and committed["value"].get("file", {}).get("encryptedObjectId") == identifier
             ):
                 return result
             raise E2eeError("upload_not_found")
@@ -342,15 +332,15 @@ def upload_file(
             "breadcrumbs": [],
         }
         writes = [
+            {"record_id": "floc_" + file_id, "kind": "directory", "expected_revision": 0,
+             "value": {"format": 2, "type": "file_locator", "fileId": file_id,
+                       "entryId": entry_id, "name": entry["name"],
+                       "parentFolderId": entry["parentFolderId"], "entryRevision": 1}},
             {
                 "record_id": file_id,
                 "kind": "file",
                 "expected_revision": 0,
-                "value": {
-                    **_file_metadata_for_write(private),
-                    "sourceState": "ready",
-                    "file": file,
-                },
+                "value": _completed_file_metadata(private, file),
             },
             {
                 "record_id": pending_id,

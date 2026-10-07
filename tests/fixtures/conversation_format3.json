@@ -1,0 +1,1053 @@
+{
+  "expected": {
+    "archive": {
+      "comments": [
+        {
+          "anchor": {
+            "fileId": "file",
+            "kind": "file"
+          },
+          "author": {
+            "kind": "member",
+            "member": {
+              "membershipId": "account-subject",
+              "userId": "account-subject"
+            }
+          },
+          "body": "Synthetic comment edit",
+          "bodyHeadId": "fixture_node_9",
+          "createdAt": "2026-10-07T00:00:00Z",
+          "editedAt": "2026-10-07T01:00:00Z",
+          "format": 3,
+          "hasMoreReplies": false,
+          "id": "comment",
+          "recordType": "comment",
+          "references": [],
+          "replies": [
+            {
+              "anchor": {
+                "fileId": "file",
+                "kind": "file"
+              },
+              "author": {
+                "kind": "member",
+                "member": {
+                  "membershipId": "account-subject",
+                  "userId": "account-subject"
+                }
+              },
+              "body": "Synthetic reply edit",
+              "bodyHeadId": "fixture_node_11",
+              "createdAt": "2026-10-07T00:00:00Z",
+              "editedAt": "2026-10-07T01:00:00Z",
+              "format": 3,
+              "id": "reply",
+              "parentCommentId": "comment",
+              "recordType": "reply",
+              "references": [],
+              "revision": 2,
+              "sequence": 1
+            }
+          ],
+          "replyCount": 1,
+          "resolved": true,
+          "revision": 2,
+          "sequence": 1,
+          "threadHeadId": "fixture_node_8"
+        }
+      ],
+      "events": [
+        {
+          "actorMembershipId": "account-subject",
+          "authorMembershipId": "account-subject",
+          "body": "hello",
+          "clientOperationId": "fixture_operation_send",
+          "committedAt": "2026-10-07T00:00:00Z",
+          "format": 3,
+          "messageHeadId": "fixture_node_0",
+          "messageId": "cmsg_11111111111111111111111111111111",
+          "projectId": "prj_11111111111111111111111111111111",
+          "recordType": "event",
+          "references": [
+            {
+              "fileId": "file",
+              "kind": "file"
+            }
+          ],
+          "revision": 1,
+          "sequence": 1,
+          "terminalRecordId": "fixture_node_1",
+          "type": "sent"
+        },
+        {
+          "actorMembershipId": "account-subject",
+          "authorMembershipId": "account-subject",
+          "body": "Synthetic second message",
+          "clientOperationId": "fixture_operation_send2",
+          "committedAt": "2026-10-07T00:00:00Z",
+          "format": 3,
+          "messageHeadId": "fixture_node_5",
+          "messageId": "cmsg_22222222222222222222222222222222",
+          "projectId": "prj_11111111111111111111111111111111",
+          "recordType": "event",
+          "references": [
+            {
+              "fileId": "file",
+              "kind": "file"
+            }
+          ],
+          "revision": 1,
+          "sequence": 2,
+          "terminalRecordId": "fixture_node_6",
+          "type": "sent"
+        },
+        {
+          "actorMembershipId": "account-subject",
+          "authorMembershipId": "account-subject",
+          "body": "Synthetic edit",
+          "clientOperationId": "fixture_operation_edit",
+          "committedAt": "2026-10-07T01:00:00Z",
+          "format": 3,
+          "messageHeadId": "fixture_node_0",
+          "messageId": "cmsg_11111111111111111111111111111111",
+          "projectId": "prj_11111111111111111111111111111111",
+          "recordType": "event",
+          "references": [],
+          "revision": 2,
+          "sequence": 3,
+          "type": "edited"
+        },
+        {
+          "actorMembershipId": "account-subject",
+          "authorMembershipId": "account-subject",
+          "body": null,
+          "clientOperationId": "fixture_operation_delete",
+          "committedAt": "2026-10-07T02:00:00Z",
+          "format": 3,
+          "messageHeadId": "fixture_node_5",
+          "messageId": "cmsg_22222222222222222222222222222222",
+          "projectId": "prj_11111111111111111111111111111111",
+          "recordType": "event",
+          "references": [],
+          "revision": 2,
+          "sequence": 4,
+          "type": "deleted"
+        }
+      ]
+    },
+    "events": [
+      {
+        "actorMembershipId": "account-subject",
+        "authorMembershipId": "account-subject",
+        "body": "hello",
+        "clientOperationId": "fixture_operation_send",
+        "committedAt": "2026-10-07T00:00:00Z",
+        "format": 3,
+        "messageHeadId": "fixture_node_0",
+        "messageId": "cmsg_11111111111111111111111111111111",
+        "projectId": "prj_11111111111111111111111111111111",
+        "recordType": "event",
+        "references": [
+          {
+            "fileId": "file",
+            "kind": "file"
+          }
+        ],
+        "revision": 1,
+        "sequence": 1,
+        "terminalRecordId": "fixture_node_1",
+        "type": "sent"
+      },
+      {
+        "actorMembershipId": "account-subject",
+        "authorMembershipId": "account-subject",
+        "body": "Synthetic second message",
+        "clientOperationId": "fixture_operation_send2",
+        "committedAt": "2026-10-07T00:00:00Z",
+        "format": 3,
+        "messageHeadId": "fixture_node_5",
+        "messageId": "cmsg_22222222222222222222222222222222",
+        "projectId": "prj_11111111111111111111111111111111",
+        "recordType": "event",
+        "references": [
+          {
+            "fileId": "file",
+            "kind": "file"
+          }
+        ],
+        "revision": 1,
+        "sequence": 2,
+        "terminalRecordId": "fixture_node_6",
+        "type": "sent"
+      },
+      {
+        "actorMembershipId": "account-subject",
+        "authorMembershipId": "account-subject",
+        "body": "Synthetic edit",
+        "clientOperationId": "fixture_operation_edit",
+        "committedAt": "2026-10-07T01:00:00Z",
+        "format": 3,
+        "messageHeadId": "fixture_node_0",
+        "messageId": "cmsg_11111111111111111111111111111111",
+        "projectId": "prj_11111111111111111111111111111111",
+        "recordType": "event",
+        "references": [],
+        "revision": 2,
+        "sequence": 3,
+        "type": "edited"
+      },
+      {
+        "actorMembershipId": "account-subject",
+        "authorMembershipId": "account-subject",
+        "body": null,
+        "clientOperationId": "fixture_operation_delete",
+        "committedAt": "2026-10-07T02:00:00Z",
+        "format": 3,
+        "messageHeadId": "fixture_node_5",
+        "messageId": "cmsg_22222222222222222222222222222222",
+        "projectId": "prj_11111111111111111111111111111111",
+        "recordType": "event",
+        "references": [],
+        "revision": 2,
+        "sequence": 4,
+        "type": "deleted"
+      }
+    ],
+    "messages": [
+      {
+        "actorMembershipId": "account-subject",
+        "authorMembershipId": "account-subject",
+        "body": null,
+        "clientOperationId": "fixture_operation_delete",
+        "committedAt": "2026-10-07T02:00:00Z",
+        "format": 3,
+        "messageHeadId": "fixture_node_5",
+        "messageId": "cmsg_22222222222222222222222222222222",
+        "projectId": "prj_11111111111111111111111111111111",
+        "recordType": "event",
+        "references": [
+          {
+            "fileId": "file",
+            "kind": "file"
+          }
+        ],
+        "revision": 2,
+        "sentAt": "2026-10-07T00:00:00Z",
+        "sentSequence": 2,
+        "sequence": 4,
+        "type": "deleted"
+      },
+      {
+        "actorMembershipId": "account-subject",
+        "authorMembershipId": "account-subject",
+        "body": "Synthetic edit",
+        "clientOperationId": "fixture_operation_edit",
+        "committedAt": "2026-10-07T01:00:00Z",
+        "format": 3,
+        "messageHeadId": "fixture_node_0",
+        "messageId": "cmsg_11111111111111111111111111111111",
+        "projectId": "prj_11111111111111111111111111111111",
+        "recordType": "event",
+        "references": [
+          {
+            "fileId": "file",
+            "kind": "file"
+          }
+        ],
+        "revision": 2,
+        "sentAt": "2026-10-07T00:00:00Z",
+        "sentSequence": 1,
+        "sequence": 3,
+        "type": "edited"
+      }
+    ],
+    "replies": [
+      {
+        "anchor": {
+          "fileId": "file",
+          "kind": "file"
+        },
+        "author": {
+          "kind": "member",
+          "member": {
+            "membershipId": "account-subject",
+            "userId": "account-subject"
+          }
+        },
+        "body": "Synthetic reply edit",
+        "bodyHeadId": "fixture_node_11",
+        "createdAt": "2026-10-07T00:00:00Z",
+        "editedAt": "2026-10-07T01:00:00Z",
+        "format": 3,
+        "id": "reply",
+        "parentCommentId": "comment",
+        "recordType": "reply",
+        "references": [],
+        "revision": 2,
+        "sequence": 1
+      }
+    ],
+    "threads": [
+      {
+        "anchor": {
+          "fileId": "file",
+          "kind": "file"
+        },
+        "author": {
+          "kind": "member",
+          "member": {
+            "membershipId": "account-subject",
+            "userId": "account-subject"
+          }
+        },
+        "body": "Synthetic comment edit",
+        "bodyHeadId": "fixture_node_9",
+        "createdAt": "2026-10-07T00:00:00Z",
+        "editedAt": "2026-10-07T01:00:00Z",
+        "format": 3,
+        "hasMoreReplies": true,
+        "id": "comment",
+        "recordType": "comment",
+        "references": [],
+        "replies": [],
+        "replyCount": 1,
+        "resolved": true,
+        "revision": 2,
+        "sequence": 1,
+        "threadHeadId": "fixture_node_8"
+      }
+    ]
+  },
+  "records": {
+    "cevt_fixture_operation_delete": {
+      "author_subject": "account-subject",
+      "cursor": 26,
+      "deleted": false,
+      "immutable": true,
+      "key_epoch": 1,
+      "kind": "chat",
+      "record_id": "cevt_fixture_operation_delete",
+      "revision": 1,
+      "value": {
+        "actorMembershipId": "account-subject",
+        "authorMembershipId": "account-subject",
+        "body": null,
+        "clientOperationId": "fixture_operation_delete",
+        "committedAt": "2026-10-07T02:00:00Z",
+        "format": 3,
+        "messageHeadId": "fixture_node_5",
+        "messageId": "cmsg_22222222222222222222222222222222",
+        "projectId": "prj_11111111111111111111111111111111",
+        "recordType": "event",
+        "references": [],
+        "revision": 2,
+        "sequence": 4,
+        "type": "deleted"
+      }
+    },
+    "cevt_fixture_operation_edit": {
+      "author_subject": "account-subject",
+      "cursor": 20,
+      "deleted": false,
+      "immutable": true,
+      "key_epoch": 1,
+      "kind": "chat",
+      "record_id": "cevt_fixture_operation_edit",
+      "revision": 1,
+      "value": {
+        "actorMembershipId": "account-subject",
+        "authorMembershipId": "account-subject",
+        "body": "Synthetic edit",
+        "clientOperationId": "fixture_operation_edit",
+        "committedAt": "2026-10-07T01:00:00Z",
+        "format": 3,
+        "messageHeadId": "fixture_node_0",
+        "messageId": "cmsg_11111111111111111111111111111111",
+        "projectId": "prj_11111111111111111111111111111111",
+        "recordType": "event",
+        "references": [],
+        "revision": 2,
+        "sequence": 3,
+        "type": "edited"
+      }
+    },
+    "comment": {
+      "author_subject": "account-subject",
+      "cursor": 33,
+      "deleted": false,
+      "immutable": true,
+      "key_epoch": 1,
+      "kind": "comment",
+      "record_id": "comment",
+      "revision": 1,
+      "value": {
+        "anchor": {
+          "fileId": "file",
+          "kind": "file"
+        },
+        "author": {
+          "kind": "member",
+          "member": {
+            "membershipId": "account-subject",
+            "userId": "account-subject"
+          }
+        },
+        "body": "comment",
+        "bodyHeadId": "fixture_node_9",
+        "createdAt": "2026-10-07T00:00:00Z",
+        "format": 3,
+        "id": "comment",
+        "recordType": "comment",
+        "references": [],
+        "sequence": 1,
+        "threadHeadId": "fixture_node_8"
+      }
+    },
+    "conversation_chat_header": {
+      "author_subject": "account-subject",
+      "cursor": 31,
+      "deleted": false,
+      "immutable": false,
+      "key_epoch": 1,
+      "kind": "chat",
+      "record_id": "conversation_chat_header",
+      "revision": 5,
+      "value": {
+        "events": {
+          "id": "fixture_node_3",
+          "revision": 4
+        },
+        "format": 3,
+        "messages": {
+          "id": "fixture_node_4",
+          "revision": 2
+        },
+        "recordType": "chat_header",
+        "sequence": 4
+      }
+    },
+    "conversation_comment_header": {
+      "author_subject": "account-subject",
+      "cursor": 37,
+      "deleted": false,
+      "immutable": false,
+      "key_epoch": 1,
+      "kind": "comment",
+      "record_id": "conversation_comment_header",
+      "revision": 2,
+      "value": {
+        "format": 3,
+        "recordType": "comment_header",
+        "sequence": 1,
+        "threads": {
+          "id": "fixture_node_10",
+          "revision": 1
+        }
+      }
+    },
+    "cop_fixture_operation_delete": {
+      "author_subject": "account-subject",
+      "cursor": 27,
+      "deleted": false,
+      "immutable": true,
+      "key_epoch": 1,
+      "kind": "chat",
+      "record_id": "cop_fixture_operation_delete",
+      "revision": 1,
+      "value": {
+        "eventID": "cevt_fixture_operation_delete",
+        "format": 3,
+        "messageId": "cmsg_22222222222222222222222222222222",
+        "recordType": "operation",
+        "type": "deleted"
+      }
+    },
+    "cop_fixture_operation_edit": {
+      "author_subject": "account-subject",
+      "cursor": 21,
+      "deleted": false,
+      "immutable": true,
+      "key_epoch": 1,
+      "kind": "chat",
+      "record_id": "cop_fixture_operation_edit",
+      "revision": 1,
+      "value": {
+        "eventID": "cevt_fixture_operation_edit",
+        "format": 3,
+        "messageId": "cmsg_11111111111111111111111111111111",
+        "recordType": "operation",
+        "type": "edited"
+      }
+    },
+    "cop_fixture_operation_send": {
+      "author_subject": "account-subject",
+      "cursor": 7,
+      "deleted": false,
+      "immutable": true,
+      "key_epoch": 1,
+      "kind": "chat",
+      "record_id": "cop_fixture_operation_send",
+      "revision": 1,
+      "value": {
+        "eventID": "cmsg_11111111111111111111111111111111",
+        "format": 3,
+        "messageId": "cmsg_11111111111111111111111111111111",
+        "recordType": "operation",
+        "type": "sent"
+      }
+    },
+    "cop_fixture_operation_send2": {
+      "author_subject": "account-subject",
+      "cursor": 14,
+      "deleted": false,
+      "immutable": true,
+      "key_epoch": 1,
+      "kind": "chat",
+      "record_id": "cop_fixture_operation_send2",
+      "revision": 1,
+      "value": {
+        "eventID": "cmsg_22222222222222222222222222222222",
+        "format": 3,
+        "messageId": "cmsg_22222222222222222222222222222222",
+        "recordType": "operation",
+        "type": "sent"
+      }
+    },
+    "cres_resolve": {
+      "author_subject": "account-subject",
+      "cursor": 48,
+      "deleted": false,
+      "immutable": true,
+      "key_epoch": 1,
+      "kind": "comment",
+      "record_id": "cres_resolve",
+      "revision": 1,
+      "value": {
+        "actor": {
+          "kind": "member",
+          "member": {
+            "membershipId": "account-subject",
+            "userId": "account-subject"
+          }
+        },
+        "format": 3,
+        "operationID": "resolve",
+        "parentCommentId": "comment",
+        "recordType": "resolution",
+        "resolved": true
+      }
+    },
+    "ctxt_commentedit": {
+      "author_subject": "account-subject",
+      "cursor": 42,
+      "deleted": false,
+      "immutable": true,
+      "key_epoch": 1,
+      "kind": "comment",
+      "record_id": "ctxt_commentedit",
+      "revision": 1,
+      "value": {
+        "authorAccountSubject": "account-subject",
+        "body": "Synthetic comment edit",
+        "bodyHeadId": "fixture_node_9",
+        "committedAt": "2026-10-07T01:00:00Z",
+        "format": 3,
+        "operationID": "commentedit",
+        "recordType": "text_edit",
+        "revision": 2,
+        "targetID": "comment",
+        "targetType": "comment"
+      }
+    },
+    "ctxt_replyedit": {
+      "author_subject": "account-subject",
+      "cursor": 45,
+      "deleted": false,
+      "immutable": true,
+      "key_epoch": 1,
+      "kind": "comment",
+      "record_id": "ctxt_replyedit",
+      "revision": 1,
+      "value": {
+        "authorAccountSubject": "account-subject",
+        "body": "Synthetic reply edit",
+        "bodyHeadId": "fixture_node_11",
+        "committedAt": "2026-10-07T01:00:00Z",
+        "format": 3,
+        "operationID": "replyedit",
+        "recordType": "text_edit",
+        "revision": 2,
+        "targetID": "reply",
+        "targetType": "reply"
+      }
+    },
+    "fixture_node_0": {
+      "author_subject": "account-subject",
+      "cursor": 22,
+      "deleted": false,
+      "immutable": false,
+      "key_epoch": 1,
+      "kind": "chat",
+      "record_id": "fixture_node_0",
+      "revision": 2,
+      "value": {
+        "events": {
+          "id": "fixture_node_2",
+          "revision": 2
+        },
+        "format": 3,
+        "lastEvent": {
+          "id": "cevt_fixture_operation_edit",
+          "revision": 1
+        },
+        "messageId": "cmsg_11111111111111111111111111111111",
+        "messageRevision": 2,
+        "original": {
+          "id": "cmsg_11111111111111111111111111111111",
+          "revision": 1
+        },
+        "recordType": "message_head"
+      }
+    },
+    "fixture_node_10": {
+      "author_subject": "account-subject",
+      "cursor": 36,
+      "deleted": false,
+      "immutable": false,
+      "key_epoch": 1,
+      "kind": "comment",
+      "record_id": "fixture_node_10",
+      "revision": 1,
+      "value": {
+        "entries": [
+          {
+            "anchorKey": "{\"fileId\":\"file\",\"kind\":\"file\"}",
+            "headID": "fixture_node_8",
+            "id": "comment",
+            "name": "{\"fileId\":\"file\",\"kind\":\"file\"}\u00009007199254740990",
+            "sequence": 1
+          }
+        ],
+        "format": 2,
+        "type": "leaf"
+      }
+    },
+    "fixture_node_11": {
+      "author_subject": "account-subject",
+      "cursor": 47,
+      "deleted": false,
+      "immutable": false,
+      "key_epoch": 1,
+      "kind": "comment",
+      "record_id": "fixture_node_11",
+      "revision": 2,
+      "value": {
+        "edits": {
+          "id": "fixture_node_14",
+          "revision": 1
+        },
+        "format": 3,
+        "lastEdit": {
+          "id": "ctxt_replyedit",
+          "revision": 1
+        },
+        "original": {
+          "id": "reply",
+          "revision": 1
+        },
+        "recordType": "text_head",
+        "targetID": "reply",
+        "targetType": "reply",
+        "textRevision": 2
+      }
+    },
+    "fixture_node_12": {
+      "author_subject": "account-subject",
+      "cursor": 40,
+      "deleted": false,
+      "immutable": false,
+      "key_epoch": 1,
+      "kind": "comment",
+      "record_id": "fixture_node_12",
+      "revision": 1,
+      "value": {
+        "entries": [
+          {
+            "id": "reply",
+            "name": "0000000000000001",
+            "sequence": 1
+          }
+        ],
+        "format": 2,
+        "type": "leaf"
+      }
+    },
+    "fixture_node_13": {
+      "author_subject": "account-subject",
+      "cursor": 43,
+      "deleted": false,
+      "immutable": false,
+      "key_epoch": 1,
+      "kind": "comment",
+      "record_id": "fixture_node_13",
+      "revision": 1,
+      "value": {
+        "entries": [
+          {
+            "id": "ctxt_commentedit",
+            "name": "0000000000000002",
+            "revision": 2
+          }
+        ],
+        "format": 2,
+        "type": "leaf"
+      }
+    },
+    "fixture_node_14": {
+      "author_subject": "account-subject",
+      "cursor": 46,
+      "deleted": false,
+      "immutable": false,
+      "key_epoch": 1,
+      "kind": "comment",
+      "record_id": "fixture_node_14",
+      "revision": 1,
+      "value": {
+        "entries": [
+          {
+            "id": "ctxt_replyedit",
+            "name": "0000000000000002",
+            "revision": 2
+          }
+        ],
+        "format": 2,
+        "type": "leaf"
+      }
+    },
+    "fixture_node_2": {
+      "author_subject": "account-subject",
+      "cursor": 23,
+      "deleted": false,
+      "immutable": false,
+      "key_epoch": 1,
+      "kind": "chat",
+      "record_id": "fixture_node_2",
+      "revision": 2,
+      "value": {
+        "entries": [
+          {
+            "id": "cmsg_11111111111111111111111111111111",
+            "name": "0000000000000001",
+            "revision": 1,
+            "sequence": 1
+          },
+          {
+            "id": "cevt_fixture_operation_edit",
+            "name": "0000000000000002",
+            "revision": 2,
+            "sequence": 3
+          }
+        ],
+        "format": 2,
+        "type": "leaf"
+      }
+    },
+    "fixture_node_3": {
+      "author_subject": "account-subject",
+      "cursor": 30,
+      "deleted": false,
+      "immutable": false,
+      "key_epoch": 1,
+      "kind": "chat",
+      "record_id": "fixture_node_3",
+      "revision": 4,
+      "value": {
+        "entries": [
+          {
+            "id": "cmsg_11111111111111111111111111111111",
+            "name": "0000000000000001",
+            "sequence": 1
+          },
+          {
+            "id": "cmsg_22222222222222222222222222222222",
+            "name": "0000000000000002",
+            "sequence": 2
+          },
+          {
+            "id": "cevt_fixture_operation_edit",
+            "name": "0000000000000003",
+            "sequence": 3
+          },
+          {
+            "id": "cevt_fixture_operation_delete",
+            "name": "0000000000000004",
+            "sequence": 4
+          }
+        ],
+        "format": 2,
+        "type": "leaf"
+      }
+    },
+    "fixture_node_4": {
+      "author_subject": "account-subject",
+      "cursor": 18,
+      "deleted": false,
+      "immutable": false,
+      "key_epoch": 1,
+      "kind": "chat",
+      "record_id": "fixture_node_4",
+      "revision": 2,
+      "value": {
+        "entries": [
+          {
+            "headID": "fixture_node_5",
+            "id": "cmsg_22222222222222222222222222222222",
+            "name": "9007199254740989",
+            "sequence": 2
+          },
+          {
+            "headID": "fixture_node_0",
+            "id": "cmsg_11111111111111111111111111111111",
+            "name": "9007199254740990",
+            "sequence": 1
+          }
+        ],
+        "format": 2,
+        "type": "leaf"
+      }
+    },
+    "fixture_node_5": {
+      "author_subject": "account-subject",
+      "cursor": 28,
+      "deleted": false,
+      "immutable": false,
+      "key_epoch": 1,
+      "kind": "chat",
+      "record_id": "fixture_node_5",
+      "revision": 2,
+      "value": {
+        "events": {
+          "id": "fixture_node_7",
+          "revision": 2
+        },
+        "format": 3,
+        "lastEvent": {
+          "id": "cevt_fixture_operation_delete",
+          "revision": 1
+        },
+        "messageId": "cmsg_22222222222222222222222222222222",
+        "messageRevision": 2,
+        "original": {
+          "id": "cmsg_22222222222222222222222222222222",
+          "revision": 1
+        },
+        "recordType": "message_head"
+      }
+    },
+    "fixture_node_6": {
+      "author_subject": "account-subject",
+      "cursor": 32,
+      "deleted": false,
+      "immutable": true,
+      "key_epoch": 1,
+      "kind": "chat",
+      "record_id": "fixture_node_6",
+      "revision": 1,
+      "value": {
+        "deleteEvent": {
+          "id": "cevt_fixture_operation_delete",
+          "revision": 1
+        },
+        "format": 3,
+        "messageHeadId": "fixture_node_5",
+        "messageId": "cmsg_22222222222222222222222222222222",
+        "messageRevision": 2,
+        "recordType": "terminal"
+      }
+    },
+    "fixture_node_7": {
+      "author_subject": "account-subject",
+      "cursor": 29,
+      "deleted": false,
+      "immutable": false,
+      "key_epoch": 1,
+      "kind": "chat",
+      "record_id": "fixture_node_7",
+      "revision": 2,
+      "value": {
+        "entries": [
+          {
+            "id": "cmsg_22222222222222222222222222222222",
+            "name": "0000000000000001",
+            "revision": 1,
+            "sequence": 2
+          },
+          {
+            "id": "cevt_fixture_operation_delete",
+            "name": "0000000000000002",
+            "revision": 2,
+            "sequence": 4
+          }
+        ],
+        "format": 2,
+        "type": "leaf"
+      }
+    },
+    "fixture_node_8": {
+      "author_subject": "account-subject",
+      "cursor": 49,
+      "deleted": false,
+      "immutable": false,
+      "key_epoch": 1,
+      "kind": "comment",
+      "record_id": "fixture_node_8",
+      "revision": 3,
+      "value": {
+        "commentId": "comment",
+        "format": 3,
+        "original": {
+          "id": "comment",
+          "revision": 1
+        },
+        "recordType": "thread_head",
+        "replies": {
+          "id": "fixture_node_12",
+          "revision": 1
+        },
+        "replyCount": 1,
+        "resolution": {
+          "id": "cres_resolve",
+          "revision": 1
+        }
+      }
+    },
+    "fixture_node_9": {
+      "author_subject": "account-subject",
+      "cursor": 44,
+      "deleted": false,
+      "immutable": false,
+      "key_epoch": 1,
+      "kind": "comment",
+      "record_id": "fixture_node_9",
+      "revision": 2,
+      "value": {
+        "edits": {
+          "id": "fixture_node_13",
+          "revision": 1
+        },
+        "format": 3,
+        "lastEdit": {
+          "id": "ctxt_commentedit",
+          "revision": 1
+        },
+        "original": {
+          "id": "comment",
+          "revision": 1
+        },
+        "recordType": "text_head",
+        "targetID": "comment",
+        "targetType": "comment",
+        "textRevision": 2
+      }
+    },
+    "cmsg_11111111111111111111111111111111": {
+      "author_subject": "account-subject",
+      "cursor": 6,
+      "deleted": false,
+      "immutable": true,
+      "key_epoch": 1,
+      "kind": "chat",
+      "record_id": "cmsg_11111111111111111111111111111111",
+      "revision": 1,
+      "value": {
+        "actorMembershipId": "account-subject",
+        "authorMembershipId": "account-subject",
+        "body": "hello",
+        "clientOperationId": "fixture_operation_send",
+        "committedAt": "2026-10-07T00:00:00Z",
+        "format": 3,
+        "messageHeadId": "fixture_node_0",
+        "messageId": "cmsg_11111111111111111111111111111111",
+        "projectId": "prj_11111111111111111111111111111111",
+        "recordType": "event",
+        "references": [
+          {
+            "fileId": "file",
+            "kind": "file"
+          }
+        ],
+        "revision": 1,
+        "sequence": 1,
+        "terminalRecordId": "fixture_node_1",
+        "type": "sent"
+      }
+    },
+    "cmsg_22222222222222222222222222222222": {
+      "author_subject": "account-subject",
+      "cursor": 13,
+      "deleted": false,
+      "immutable": true,
+      "key_epoch": 1,
+      "kind": "chat",
+      "record_id": "cmsg_22222222222222222222222222222222",
+      "revision": 1,
+      "value": {
+        "actorMembershipId": "account-subject",
+        "authorMembershipId": "account-subject",
+        "body": "Synthetic second message",
+        "clientOperationId": "fixture_operation_send2",
+        "committedAt": "2026-10-07T00:00:00Z",
+        "format": 3,
+        "messageHeadId": "fixture_node_5",
+        "messageId": "cmsg_22222222222222222222222222222222",
+        "projectId": "prj_11111111111111111111111111111111",
+        "recordType": "event",
+        "references": [
+          {
+            "fileId": "file",
+            "kind": "file"
+          }
+        ],
+        "revision": 1,
+        "sequence": 2,
+        "terminalRecordId": "fixture_node_6",
+        "type": "sent"
+      }
+    },
+    "reply": {
+      "author_subject": "account-subject",
+      "cursor": 38,
+      "deleted": false,
+      "immutable": true,
+      "key_epoch": 1,
+      "kind": "comment",
+      "record_id": "reply",
+      "revision": 1,
+      "value": {
+        "anchor": {
+          "fileId": "file",
+          "kind": "file"
+        },
+        "author": {
+          "kind": "member",
+          "member": {
+            "membershipId": "account-subject",
+            "userId": "account-subject"
+          }
+        },
+        "body": "reply",
+        "bodyHeadId": "fixture_node_11",
+        "createdAt": "2026-10-07T00:00:00Z",
+        "format": 3,
+        "id": "reply",
+        "parentCommentId": "comment",
+        "recordType": "reply",
+        "references": [],
+        "sequence": 1
+      }
+    }
+  },
+  "scope": "prj_11111111111111111111111111111111",
+  "subject": "account-subject",
+  "version": 1
+}

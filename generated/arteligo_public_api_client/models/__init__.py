@@ -42,6 +42,8 @@ from .e2_ee_envelopes import E2EeEnvelopes
 from .e2_ee_epoch_link import E2EeEpochLink
 from .e2_ee_epochs import E2EeEpochs
 from .e2_ee_finalize_object_sec_fetch_site import E2EeFinalizeObjectSecFetchSite
+from .e2_ee_immutable_page import E2EeImmutablePage
+from .e2_ee_immutable_page_commands import E2EeImmutablePageCommands
 from .e2_ee_invitation_info import E2EeInvitationInfo
 from .e2_ee_invitation_request import E2EeInvitationRequest
 from .e2_ee_invitation_revoke import E2EeInvitationRevoke
@@ -170,6 +172,8 @@ __all__ = (
     "E2EeEpochLink",
     "E2EeEpochs",
     "E2EeFinalizeObjectSecFetchSite",
+    "E2EeImmutablePage",
+    "E2EeImmutablePageCommands",
     "E2EeInvitationInfo",
     "E2EeInvitationRequest",
     "E2EeInvitationRevoke",

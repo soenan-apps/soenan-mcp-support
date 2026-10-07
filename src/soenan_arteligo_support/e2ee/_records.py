@@ -53,6 +53,7 @@ class EncryptedRecords:
         key_epoch: int,
         value: dict[str, Any],
         deleted: bool = False,
+        immutable: bool = False,
     ) -> dict[str, Any]:
         if (
             kind not in KINDS
@@ -62,7 +63,6 @@ class EncryptedRecords:
         ):
             raise E2eeError("invalid_record")
         key = self.session.scope_key(scope, key_epoch)
-        data_key = self.crypto.key()
         plaintext = self.crypto.canonical(value)
         key_aad = self._context(
             "arteligo.record-key",
@@ -78,22 +78,19 @@ class EncryptedRecords:
         try:
             if len(plaintext) > 512 * 1024:
                 raise E2eeError("record_too_large")
-            packed = {
-                "wrapped_key": self.crypto.seal(key, data_key, key_aad),
-                "payload": self.crypto.seal(data_key, plaintext, payload_aad),
-            }
             return {
                 "record_id": record_id,
                 "kind": kind,
                 "expected_revision": expected_revision,
                 "key_epoch": key_epoch,
                 "deleted": deleted,
-                "ciphertext": encode(
-                    json.dumps(packed, separators=(",", ":")).encode()
+                **({"immutable": True} if immutable else {}),
+                "ciphertext": self.crypto.seal_record(
+                    key, value, key_aad, payload_aad, kind
                 ),
             }
         finally:
-            for secret in (key, data_key, plaintext, key_aad, payload_aad):
+            for secret in (key, plaintext, key_aad, payload_aad):
                 wipe(secret)
 
     def open(
@@ -167,49 +164,45 @@ class EncryptedRecords:
         ):
             raise E2eeError("invalid_record_signature")
         key = self.session.scope_key(scope, wire["key_epoch"])
-        data_key = bytearray()
-        plaintext = bytearray()
+        key_aad = self._context(
+            "arteligo.record-key",
+            scope,
+            wire["record_id"],
+            wire["kind"],
+            wire["key_epoch"],
+            wire["revision"],
+        )
+        payload_aad = self._context(
+            "arteligo.record",
+            scope,
+            wire["record_id"],
+            wire["kind"],
+            wire["key_epoch"],
+            wire["revision"],
+        )
         try:
-            packed = json.loads(decode(wire["ciphertext"]))
-            data_key = self.crypto.open(
-                key,
-                packed["wrapped_key"],
-                self._context(
-                    "arteligo.record-key",
-                    scope,
-                    wire["record_id"],
-                    wire["kind"],
-                    wire["key_epoch"],
-                    wire["revision"],
-                ),
-            )
-            plaintext = self.crypto.open(
-                data_key,
-                packed["payload"],
-                self._context(
-                    "arteligo.record",
-                    scope,
-                    wire["record_id"],
-                    wire["kind"],
-                    wire["key_epoch"],
-                    wire["revision"],
-                ),
-            )
-            value = json.loads(plaintext)
-            if not isinstance(value, dict):
-                raise E2eeError("invalid_record")
+            try:
+                value = self.crypto.open_record(
+                    key, wire["ciphertext"], key_aad, payload_aad, wire["kind"]
+                )
+            except E2eeError as error:
+                if error.code in {"invalid_input", "unsupported_version"}:
+                    raise E2eeError("invalid_record") from None
+                raise
             return {
                 "record_id": wire["record_id"],
+                "cursor": wire["cursor"],
                 "kind": wire["kind"],
                 "revision": wire["revision"],
                 "key_epoch": wire["key_epoch"],
                 "deleted": wire["deleted"],
+                "immutable": match.get("immutable", False) is True,
                 "author_device_id": device["device_id"],
                 "author_subject": device["account_subject"],
                 "value": value,
             }
         finally:
-            for secret in (key, data_key, plaintext):
+            for secret in (key, key_aad, payload_aad):
                 wipe(secret)
 
     def _open_page(self, scope: str, page: dict[str, Any]) -> list[dict[str, Any]]:
@@ -332,6 +325,57 @@ class EncryptedRecords:
             raise E2eeError("invalid_cursor")
         return {**page, "records": opened, "commands": {}, "next_record_id": cursor}
 
+    def immutable_kind(
+        self,
+        scope: str,
+        kind: str,
+        *,
+        after: int = 0,
+        snapshot_cursor: int | None = None,
+        limit: int = 256,
+    ) -> dict[str, Any]:
+        """Read immutable records in cursor order, keeping the first snapshot cursor."""
+        self.session.require_approved()
+        if (
+            kind not in KINDS
+            or type(after) is not int
+            or after < 0
+            or type(limit) is not int
+            or not 1 <= limit <= 256
+            or (
+                snapshot_cursor is not None
+                and (type(snapshot_cursor) is not int or snapshot_cursor < after)
+            )
+        ):
+            raise E2eeError("invalid_cursor")
+        parameters = {"scope_id": scope, "kind": kind, "after": after, "limit": limit}
+        if snapshot_cursor is not None:
+            parameters["snapshot_cursor"] = snapshot_cursor
+        page = self.session.api.call("e2eeGetImmutable", **parameters)
+        opened = self._open_page(scope, page)
+        snapshot, cursor = page["snapshot_cursor"], page["cursor"]
+        cursors = [record["cursor"] for record in opened]
+        if (
+            type(snapshot) is not int
+            or snapshot < after
+            or type(cursor) is not int
+            or (snapshot_cursor is not None and snapshot != snapshot_cursor)
+            or cursors != sorted(set(cursors))
+            or any(not after < item <= snapshot for item in cursors)
+            or cursor != (cursors[-1] if cursors else after)
+            or (page["has_more"] and (not cursors or cursor >= snapshot))
+            or len(opened) > limit
+            or any(
+                record["kind"] != kind
+                or record["deleted"]
+                or not record["immutable"]
+                or record["revision"] != 1
+                for record in opened
+            )
+        ):
+            raise E2eeError("invalid_cursor")
+        return {**page, "records": opened, "commands": {}}
+
     def changes(
         self, scope: str, *, after: int = 0, limit: int = 256
     ) -> dict[str, Any]:
@@ -376,7 +420,9 @@ class EncryptedRecords:
         body = {
             "scope_id": scope,
             "records": writes,
-            "format_version": 2,
+            "format_version": 3
+            if any(w["kind"] in {"chat", "comment"} for w in writes)
+            else 2,
             "expires_at": int(time.time()) + 29 * 86400,
             "preconditions": preconditions or [],
         }
@@ -508,6 +554,7 @@ class EncryptedRecords:
                     )
                 finally:
                     wipe(org_key)
+            from ._conversation_context import initial_records
             from ._directory import initial_directory
 
             root, directory_records = initial_directory()
@@ -518,6 +565,7 @@ class EncryptedRecords:
                 expected_revision=0,
                 key_epoch=1,
                 value={
+                    "lastStageVersion": 0,
                     **value,
                     "id": scope,
                     "slug": scope[4:],
@@ -535,7 +583,7 @@ class EncryptedRecords:
                     "records": [record]
                     + [
                         self.seal(scope, key_epoch=1, **item)
-                        for item in directory_records
+                        for item in [*directory_records, *initial_records()]
                     ],
                 },
             )
