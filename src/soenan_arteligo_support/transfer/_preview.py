@@ -23,7 +23,7 @@ from ._http import (
     put_ciphertext,
 )
 from ._opus import prepare_opus_preview
-from ._workflow import _capability, _epoch, _object, key_aad
+from ._workflow import _capability, _epoch, _file_metadata_for_write, _object, key_aad
 
 
 def upload_wav_preview(
@@ -235,7 +235,10 @@ def upload_wav_preview(
                                     "record_id": file_id,
                                     "kind": "file",
                                     "expected_revision": record["revision"],
-                                    "value": {**value, "preview": preview},
+                                    "value": {
+                                        **_file_metadata_for_write(value),
+                                        "preview": preview,
+                                    },
                                 }
                             ],
                         )
@@ -326,7 +329,7 @@ def _publish_preview(
                     "kind": "file",
                     "expected_revision": current["revision"],
                     "value": {
-                        **current["value"],
+                        **_file_metadata_for_write(current["value"]),
                         "preview": {**saved, "state": "ready"},
                     },
                 }

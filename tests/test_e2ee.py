@@ -826,8 +826,9 @@ def test_oauth_credentials_are_bound_to_account_and_resource_origins():
     assert len(calls) == 1
 
 
+@pytest.mark.parametrize("legacy_copy", [False, True])
 def test_direct_bucket_roundtrip_authenticates_before_destination_publish(
-    initialized, tmp_path
+    initialized, tmp_path, legacy_copy
 ):
     api, session, store, code, scope = initialized
     ciphertexts = {}
@@ -871,7 +872,24 @@ def test_direct_bucket_roundtrip_authenticates_before_destination_publish(
         assert entry["file"]["media"]["kind"] == "audio"
         assert entry["file"]["createdAt"]
         saved_file = records.read(scope, [result["file_id"]])[result["file_id"]]
-        assert saved_file["value"]["directoryEntry"] == entry
+        assert "directoryEntry" not in saved_file["value"]
+        assert saved_file["value"]["entryIntent"] == {
+            "name": source.name,
+            "parentFolderId": None,
+        }
+        if legacy_copy:
+            records.write(
+                scope,
+                key_epoch=1,
+                records=[
+                    {
+                        "record_id": result["file_id"],
+                        "kind": "file",
+                        "expected_revision": saved_file["revision"],
+                        "value": {**saved_file["value"], "directoryEntry": entry},
+                    }
+                ],
+            )
         assert len(ciphertexts) == 1
         assert payload not in next(iter(ciphertexts.values()))
         remote_manifest = api.objects[result["object_id"]]["manifest"]

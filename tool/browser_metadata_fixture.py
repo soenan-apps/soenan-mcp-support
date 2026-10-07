@@ -87,7 +87,6 @@ def file_record(session, scope, sequence, run_id, timestamp, project_key):
         "entryIntent": {"parentFolderId": None, "name": name},
         "filename": name,
         "mimeType": "text/plain",
-        "directoryEntry": entry,
         "file": {
             "projectId": scope,
             "fileId": file_id,
@@ -183,7 +182,11 @@ def measure_file_cost(records, scope, record, file_count, path):
             {"field": name, "value_json_bytes": size(value)}
             for name, value in record["value"]["source"].items()
         ],
-        "directory_entry_json_bytes": size(record["value"]["directoryEntry"]),
+        "directory_entry_json_bytes": (
+            size(record["value"]["directoryEntry"])
+            if "directoryEntry" in record["value"]
+            else 0
+        ),
     }
     save_manifest(path, report)
 

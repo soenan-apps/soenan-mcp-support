@@ -45,6 +45,12 @@ def _epoch(session: DeviceSession, scope: str) -> int:
     return session.scope_metadata(scope, refresh=True)["key_epoch"]
 
 
+def _file_metadata_for_write(value: dict[str, Any]) -> dict[str, Any]:
+    result = dict(value)
+    result.pop("directoryEntry", None)
+    return result
+
+
 def _completed_upload(
     records: EncryptedRecords, scope: str, pending: dict[str, Any], upload_id: str
 ) -> dict[str, Any]:
@@ -341,10 +347,9 @@ def upload_file(
                 "kind": "file",
                 "expected_revision": 0,
                 "value": {
-                    **private,
+                    **_file_metadata_for_write(private),
                     "sourceState": "ready",
                     "file": file,
-                    "directoryEntry": entry,
                 },
             },
             {
