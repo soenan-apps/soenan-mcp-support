@@ -278,11 +278,10 @@ def test_mcp_cursor_can_be_passed_back_without_reformatting(tools):
     assert second["threads"][0]["id"] == "comment1"
 
 
-def test_worker_rejects_extra_work_and_cancellation_locks_the_session(
+def test_independent_work_completes_and_cancellation_locks_its_own_session(
     tools, monkeypatch
 ):
     import threading
-    import time
 
     import anyio
 
@@ -296,13 +295,19 @@ def test_worker_rejects_extra_work_and_cancellation_locks_the_session(
         committed_at="2026-10-07T00:00:00Z",
     )
     started = threading.Event()
-    scopes, results, reads = [], [], []
+    released = threading.Event()
+    lock = threading.Lock()
+    scopes, results, paused = [], [], []
     original = EncryptedRecords.read
 
     def slow_read(self, project, ids):
-        reads.append(list(ids))
-        started.set()
-        time.sleep(0.05)
+        with lock:
+            should_pause = not paused
+            if should_pause:
+                paused.append(self.session)
+        if should_pause:
+            started.set()
+            released.wait()
         return original(self, project, ids)
 
     monkeypatch.setattr(EncryptedRecords, "read", slow_read)
@@ -326,16 +331,21 @@ def test_worker_rejects_extra_work_and_cancellation_locks_the_session(
         async with anyio.create_task_group() as group:
             group.start_soon(history)
             await anyio.to_thread.run_sync(started.wait)
-            with pytest.raises(ToolError, match="local_operation_busy"):
-                await server._tool_manager.call_tool(
+            try:
+                page = await server._tool_manager.call_tool(
                     "arteligo_chat_messages", {"project_id": project}
                 )
-            scopes[0].cancel()
+                assert page["messages"][0]["body"] == "hello"
+                assert created[-1] is not paused[0]
+                assert created[-1].state == "locked"
+                assert paused[0].state == "approved"
+                scopes[0].cancel()
+            finally:
+                released.set()
 
     anyio.run(exercise)
     assert results == []
-    assert len(reads) == 1
-    assert created[-1].state == "locked"
+    assert paused[0].state == "locked"
     assert (
         invoke("arteligo_chat_messages", project_id=scope)["messages"][0]["body"]
         == "hello"

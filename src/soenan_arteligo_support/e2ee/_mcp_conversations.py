@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from datetime import datetime
+from math import inf
 from typing import Annotated, Any
 
 import anyio
-from anyio import CapacityLimiter, WouldBlock
+from anyio import CapacityLimiter
 from pydantic import AfterValidator, BaseModel, Field
 
 from ._conversation_context import MAX_INTEGER
@@ -45,19 +46,10 @@ class ConversationCursor(BaseModel):
 
 
 def register_conversation_tools(server, run):
-    worker = CapacityLimiter(1)
+    worker = CapacityLimiter(inf)
 
     async def invoke(operation):
-        try:
-            worker.acquire_nowait()
-        except WouldBlock:
-            from mcp.server.fastmcp.exceptions import ToolError
-
-            raise ToolError("local_operation_busy") from None
-        try:
-            return await anyio.to_thread.run_sync(run, operation)
-        finally:
-            worker.release()
+        return await anyio.to_thread.run_sync(run, operation, limiter=worker)
 
     def cursor_page(result):
         key = result["next_key"]
