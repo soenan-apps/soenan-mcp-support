@@ -393,17 +393,13 @@ def test_comments_and_replies_page_over_shared_tree_splits(conversations):
     assert final["next_key"] is None
 
 
-def test_snapshot_excludes_writes_between_kind_pages_and_enforces_budget(conversations):
+def test_snapshot_excludes_writes_between_kind_pages(conversations):
     api, _records, client = conversations
     send(client)
     api.after_snapshot = lambda: client.create_comment("later", comment_value())
     snapshot = client.archive()
     assert snapshot["comments"] == []
     assert client.archive()["comments"][0]["id"] == "later"
-    with pytest.raises(E2eeError, match="conversation_archive_limit"):
-        client.archive(max_records=1)
-    with pytest.raises(E2eeError, match="conversation_archive_limit"):
-        client.archive(max_bytes=1)
 
 
 def test_conflicts_and_cancellation_have_finite_work(conversations):
