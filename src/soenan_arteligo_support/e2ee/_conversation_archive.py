@@ -1,13 +1,15 @@
 from __future__ import annotations
 
-
 from ._conversation_context import FORMAT, number, reference, text
 from ._crypto import E2eeError
 
 
 class ArchiveOperations:
     def archive(self, *, snapshot_cursor=None):
-        """Reconstruct a frozen archive, rejecting an incomplete proof population."""
+        """Explicitly reconstruct a frozen archive, rejecting an incomplete proof population.
+
+        Large exports can consume records.immutable_kind pages directly instead.
+        """
         records = {}
         for kind in ("chat", "comment"):
             after = 0
