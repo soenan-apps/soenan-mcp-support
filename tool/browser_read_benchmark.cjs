@@ -6,11 +6,12 @@ const { parseArgs } = require('node:util');
 
 // This function also runs inside the dedicated browser page. Only metrics and
 // discovery's public scope IDs leave it; response bodies and cookies stay there.
-async function runTrial(options, runtime = {
-  fetch: (...args) => fetch(...args),
-  now: () => performance.now(),
-  timeout: milliseconds => AbortSignal.timeout(milliseconds),
-}) {
+async function runTrial(options) {
+  const runtime = {
+    fetch: (...args) => fetch(...args),
+    now: () => performance.now(),
+    timeout: milliseconds => AbortSignal.timeout(milliseconds),
+  };
   const makeStats = () => ({
     attempts: 0, successful_attempts: 0, failed_attempts: 0,
     status_counts: {}, network_errors: 0, timeouts: 0, invalid_responses: 0,
@@ -230,7 +231,6 @@ async function main(args) {
   }, trials: [] };
   try {
     page = await selectContext(browser.contexts(), options.origin).newPage();
-    await page.route('**/flutter_bootstrap.js', route => route.fulfill({ status: 200, contentType: 'application/javascript', body: '' }));
     await page.goto(options.origin + '/', { waitUntil: 'domcontentloaded', timeout: 30000 });
     if (new URL(page.url()).origin !== options.origin) throw new Error('browser_origin_changed');
     stage = 'discovery';
@@ -272,7 +272,6 @@ async function main(args) {
   }
 }
 
-module.exports = { runTrial, parseOptions, main, failureCode, selectContext };
 if (require.main === module) {
   main(process.argv.slice(2)).then(() => process.exit(0), () => {
     process.stderr.write('{"error":"browser_read_benchmark_failed"}\n');

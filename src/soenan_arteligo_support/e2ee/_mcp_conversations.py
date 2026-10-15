@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Annotated, Any
 
 import anyio
-from anyio import CapacityLimiter, WouldBlock
+
 from pydantic import AfterValidator, BaseModel, Field
 
 from ._conversation_context import MAX_INTEGER
@@ -12,18 +12,25 @@ from ._conversations import EncryptedConversations
 from ._crypto import E2eeError
 from ._records import EncryptedRecords
 
-Identifier = Annotated[str, Field(min_length=1, max_length=120)]
+_WIRE_IDENTIFIER_BYTES = 128
+_IDENTIFIER_PATTERN = r"^[A-Za-z0-9_-]+$"
+Identifier = Annotated[
+    str, Field(min_length=1, max_length=_WIRE_IDENTIFIER_BYTES, pattern=_IDENTIFIER_PATTERN)
+]
 MessageID = Annotated[str, Field(pattern=r"^cmsg_[0-9a-f]{32}$")]
 ChatOperationID = Annotated[
-    str, Field(min_length=16, max_length=128, pattern=r"^[!-~]+$")
+    str, Field(
+        min_length=1, max_length=_WIRE_IDENTIFIER_BYTES - len("cevt_"),
+        pattern=_IDENTIFIER_PATTERN,
+    )
 ]
 Revision = Annotated[int, Field(ge=1, le=MAX_INTEGER)]
 Position = Annotated[int, Field(ge=0, le=MAX_INTEGER)]
-PageLimit = Annotated[int, Field(ge=1, le=100)]
-EventLimit = Annotated[int, Field(ge=1, le=200)]
-Body = Annotated[str, Field(max_length=4096)]
-ChatBody = Annotated[str, Field(max_length=8000)]
-References = Annotated[list[dict[str, Any]], Field(max_length=10)]
+PageLimit = Annotated[int, Field(ge=1)]
+EventLimit = Annotated[int, Field(ge=1)]
+Body = str
+ChatBody = str
+References = list[dict[str, Any]]
 
 
 def timestamp(value):
@@ -32,12 +39,12 @@ def timestamp(value):
 
 
 Timestamp = Annotated[
-    str, Field(min_length=1, max_length=64), AfterValidator(timestamp)
+    str, Field(min_length=1), AfterValidator(timestamp)
 ]
 
 
 class ConversationCursor(BaseModel):
-    name: Annotated[str, Field(min_length=1, max_length=65536)]
+    name: Annotated[str, Field(min_length=1)]
     id: Identifier
 
     def key(self):
@@ -45,19 +52,8 @@ class ConversationCursor(BaseModel):
 
 
 def register_conversation_tools(server, run):
-    worker = CapacityLimiter(1)
-
     async def invoke(operation):
-        try:
-            worker.acquire_nowait()
-        except WouldBlock:
-            from mcp.server.fastmcp.exceptions import ToolError
-
-            raise ToolError("local_operation_busy") from None
-        try:
-            return await anyio.to_thread.run_sync(run, operation)
-        finally:
-            worker.release()
+        return await anyio.to_thread.run_sync(run, operation)
 
     def cursor_page(result):
         key = result["next_key"]

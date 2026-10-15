@@ -17,7 +17,6 @@ from ._crypto import E2eeError
 def valid_body(original, body):
     return (
         isinstance(body, str)
-        and len(body) <= 4096
         and (
             body.strip()
             or (

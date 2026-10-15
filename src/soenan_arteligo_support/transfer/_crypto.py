@@ -47,7 +47,7 @@ CONTENT_KEY_ALGORITHM = "A256GCM"
 WRAP_ALGORITHM = "a256gcm-project-epoch-v1"
 SHARE_ID = "project_file_managed_v1"
 CHUNK_SIZE = 8 * 1024 * 1024
-MAXIMUM_CHUNKS = 1024
+AAD_CHUNK_COUNT_U32_MAX = (1 << 32) - 1
 MAXIMUM_WIRE_INTEGER = 9_007_199_254_740_991
 _TAG_SIZE = 16
 
@@ -209,7 +209,7 @@ def build_preview_encryption_plan(
     if plaintext_size <= 0:
         raise EncryptionContractError("preview plaintext size must be positive")
     count = (plaintext_size + CHUNK_SIZE - 1) // CHUNK_SIZE
-    if count > MAXIMUM_CHUNKS:
+    if count > AAD_CHUNK_COUNT_U32_MAX:
         raise EncryptionContractError("preview exceeds managed chunk limit")
     # Arteligo reserves the nonce base with the preview identity; retries must
     # retain both it and the encoded bytes to avoid reusing a nonce for new text.
@@ -398,7 +398,7 @@ def build_encryption_plan(
     if plaintext_size <= 0:
         raise EncryptionContractError("plaintext size must be positive")
     chunk_count = (plaintext_size + CHUNK_SIZE - 1) // CHUNK_SIZE
-    if not 1 <= chunk_count <= MAXIMUM_CHUNKS:
+    if not 1 <= chunk_count <= AAD_CHUNK_COUNT_U32_MAX:
         raise EncryptionContractError("plaintext exceeds the managed transfer limit")
 
     nonce_base = _replay_stable_nonce_base(
@@ -549,7 +549,7 @@ def parse_decryption_plan(
     chunk_count = _positive_integer(object_value, "chunk_count")
     if (
         epoch < 0
-        or chunk_count > MAXIMUM_CHUNKS
+        or chunk_count > AAD_CHUNK_COUNT_U32_MAX
         or (plaintext_size - 1) // chunk_size + 1 != chunk_count
     ):
         raise EncryptionContractError("invalid managed manifest chunk count")
@@ -666,7 +666,7 @@ def parse_preview_decryption_plan(
         raise EncryptionContractError("preview manifest chunks must be an array")
     chunk_count = len(raw_chunks)
     if (
-        not 1 <= chunk_count <= MAXIMUM_CHUNKS
+        not 1 <= chunk_count <= AAD_CHUNK_COUNT_U32_MAX
         or (plaintext_size - 1) // chunk_size + 1 != chunk_count
     ):
         raise EncryptionContractError("invalid preview manifest chunk count")

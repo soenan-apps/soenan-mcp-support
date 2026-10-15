@@ -68,10 +68,11 @@ def sync_detailed(
     origin: str | Unset = UNSET,
     sec_fetch_site: E2EeReadRecordsSecFetchSite | Unset = UNSET,
 ) -> Response[E2EeReadResponse | ErrorEnvelope]:
-    """Read up to 256 opaque record IDs across at most 32 distinct scopes. This unsigned JSON POST is a
-    read operation. Scope authorization failures are isolated in the corresponding result. The complete
-    encoded response is limited to 8 MiB; remaining_record_ids explicitly identifies deferred reads.
-    Names, paths, parent relationships, and search predicates are not interpreted by this API.
+    """Read caller-selected opaque record IDs across distinct scopes. This unsigned JSON POST is a read
+    operation. Scope authorization failures are isolated in the corresponding result. Selected record
+    rows and all required signed proofs are returned together; key-material size does not defer or
+    reject rows. Names, paths, parent relationships, and search predicates are not interpreted by this
+    API.
 
     Args:
         origin (str | Unset):
@@ -106,10 +107,11 @@ def sync(
     origin: str | Unset = UNSET,
     sec_fetch_site: E2EeReadRecordsSecFetchSite | Unset = UNSET,
 ) -> E2EeReadResponse | ErrorEnvelope | None:
-    """Read up to 256 opaque record IDs across at most 32 distinct scopes. This unsigned JSON POST is a
-    read operation. Scope authorization failures are isolated in the corresponding result. The complete
-    encoded response is limited to 8 MiB; remaining_record_ids explicitly identifies deferred reads.
-    Names, paths, parent relationships, and search predicates are not interpreted by this API.
+    """Read caller-selected opaque record IDs across distinct scopes. This unsigned JSON POST is a read
+    operation. Scope authorization failures are isolated in the corresponding result. Selected record
+    rows and all required signed proofs are returned together; key-material size does not defer or
+    reject rows. Names, paths, parent relationships, and search predicates are not interpreted by this
+    API.
 
     Args:
         origin (str | Unset):
@@ -139,10 +141,11 @@ async def asyncio_detailed(
     origin: str | Unset = UNSET,
     sec_fetch_site: E2EeReadRecordsSecFetchSite | Unset = UNSET,
 ) -> Response[E2EeReadResponse | ErrorEnvelope]:
-    """Read up to 256 opaque record IDs across at most 32 distinct scopes. This unsigned JSON POST is a
-    read operation. Scope authorization failures are isolated in the corresponding result. The complete
-    encoded response is limited to 8 MiB; remaining_record_ids explicitly identifies deferred reads.
-    Names, paths, parent relationships, and search predicates are not interpreted by this API.
+    """Read caller-selected opaque record IDs across distinct scopes. This unsigned JSON POST is a read
+    operation. Scope authorization failures are isolated in the corresponding result. Selected record
+    rows and all required signed proofs are returned together; key-material size does not defer or
+    reject rows. Names, paths, parent relationships, and search predicates are not interpreted by this
+    API.
 
     Args:
         origin (str | Unset):
@@ -175,10 +178,11 @@ async def asyncio(
     origin: str | Unset = UNSET,
     sec_fetch_site: E2EeReadRecordsSecFetchSite | Unset = UNSET,
 ) -> E2EeReadResponse | ErrorEnvelope | None:
-    """Read up to 256 opaque record IDs across at most 32 distinct scopes. This unsigned JSON POST is a
-    read operation. Scope authorization failures are isolated in the corresponding result. The complete
-    encoded response is limited to 8 MiB; remaining_record_ids explicitly identifies deferred reads.
-    Names, paths, parent relationships, and search predicates are not interpreted by this API.
+    """Read caller-selected opaque record IDs across distinct scopes. This unsigned JSON POST is a read
+    operation. Scope authorization failures are isolated in the corresponding result. Selected record
+    rows and all required signed proofs are returned together; key-material size does not defer or
+    reject rows. Names, paths, parent relationships, and search predicates are not interpreted by this
+    API.
 
     Args:
         origin (str | Unset):

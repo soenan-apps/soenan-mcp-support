@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import secrets
 import time
-from typing import Any
+from typing import Any, Literal, TypedDict
 
 from ._crypto import E2eeError, decode, encode, wipe
 from ._session import DeviceSession
@@ -21,6 +21,37 @@ KINDS = frozenset(
         "schedule",
     }
 )
+
+class OpenedRecordMetadata(TypedDict):
+    record_id: str
+    cursor: int
+    kind: str
+    revision: int
+    key_epoch: int
+    immutable: bool
+    author_device_id: str
+    author_subject: str
+
+
+class OpenedContentRecord(OpenedRecordMetadata):
+    payload_type: Literal["content"]
+    deleted: Literal[False]
+    value: dict[str, Any]
+
+
+class OpenedHistoricalDeletionRecord(OpenedRecordMetadata):
+    payload_type: Literal["historical_encrypted_deletion"]
+    deleted: Literal[True]
+    value: dict[str, Any]
+
+
+class OpenedDeletionMarkerRecord(OpenedRecordMetadata):
+    payload_type: Literal["deletion_marker"]
+    deleted: Literal[True]
+
+
+OpenedRecord = OpenedContentRecord | OpenedHistoricalDeletionRecord | OpenedDeletionMarkerRecord
+
 
 
 class EncryptedRecords:
@@ -52,7 +83,6 @@ class EncryptedRecords:
         expected_revision: int,
         key_epoch: int,
         value: dict[str, Any],
-        deleted: bool = False,
         immutable: bool = False,
     ) -> dict[str, Any]:
         if (
@@ -63,7 +93,6 @@ class EncryptedRecords:
         ):
             raise E2eeError("invalid_record")
         key = self.session.scope_key(scope, key_epoch)
-        plaintext = self.crypto.canonical(value)
         key_aad = self._context(
             "arteligo.record-key",
             scope,
@@ -76,22 +105,40 @@ class EncryptedRecords:
             "arteligo.record", scope, record_id, kind, key_epoch, expected_revision + 1
         )
         try:
-            if len(plaintext) > 512 * 1024:
-                raise E2eeError("record_too_large")
             return {
                 "record_id": record_id,
                 "kind": kind,
                 "expected_revision": expected_revision,
                 "key_epoch": key_epoch,
-                "deleted": deleted,
+                "deleted": False,
                 **({"immutable": True} if immutable else {}),
                 "ciphertext": self.crypto.seal_record(
                     key, value, key_aad, payload_aad, kind
                 ),
             }
         finally:
-            for secret in (key, plaintext, key_aad, payload_aad):
+            for secret in (key, key_aad, payload_aad):
                 wipe(secret)
+
+    @staticmethod
+    def deletion_marker(
+        *, record_id: str, kind: str, expected_revision: int, key_epoch: int
+    ) -> dict[str, Any]:
+        if (
+            kind not in KINDS
+            or type(expected_revision) is not int
+            or expected_revision < 0
+            or type(key_epoch) is not int
+            or key_epoch < 1
+        ):
+            raise E2eeError("invalid_record")
+        return {
+            "record_id": record_id,
+            "kind": kind,
+            "expected_revision": expected_revision,
+            "key_epoch": key_epoch,
+            "deleted": True,
+        }
 
     def open(
         self,
@@ -100,7 +147,7 @@ class EncryptedRecords:
         *,
         commands: dict[str, Any] | None = None,
         verified: dict[tuple[str, ...], dict[str, Any]] | None = None,
-    ) -> dict[str, Any]:
+    ) -> OpenedRecord:
         proof = (commands or {}).get(wire.get("command_id"))
         if proof is not None:
             signed = proof["command"]
@@ -143,7 +190,8 @@ class EncryptedRecords:
             match = values[ordinal]
             if match.get("record_id") != wire["record_id"]:
                 raise E2eeError("invalid_record_signature")
-            wire = {**wire, "ciphertext": match["ciphertext"]}
+            if "ciphertext" in match:
+                wire = {**wire, "ciphertext": match["ciphertext"]}
             matches = [match]
         else:
             matches = [
@@ -163,6 +211,24 @@ class EncryptedRecords:
             or match.get("deleted", False) != wire.get("deleted", False)
         ):
             raise E2eeError("invalid_record_signature")
+        metadata = {
+            "record_id": wire["record_id"],
+            "cursor": wire["cursor"],
+            "kind": wire["kind"],
+            "revision": wire["revision"],
+            "key_epoch": wire["key_epoch"],
+            "immutable": match.get("immutable", False) is True,
+            "author_device_id": device["device_id"],
+            "author_subject": device["account_subject"],
+        }
+        if "ciphertext" not in match:
+            if (
+                match.get("deleted") is not True
+                or "ciphertext" in wire
+                or set(match) != {"record_id", "kind", "expected_revision", "key_epoch", "deleted"}
+            ):
+                raise E2eeError("invalid_record")
+            return OpenedDeletionMarkerRecord(**metadata, deleted=True, payload_type="deletion_marker")
         key = self.session.scope_key(scope, wire["key_epoch"])
         key_aad = self._context(
             "arteligo.record-key",
@@ -189,18 +255,11 @@ class EncryptedRecords:
                 if error.code in {"invalid_input", "unsupported_version"}:
                     raise E2eeError("invalid_record") from None
                 raise
-            return {
-                "record_id": wire["record_id"],
-                "cursor": wire["cursor"],
-                "kind": wire["kind"],
-                "revision": wire["revision"],
-                "key_epoch": wire["key_epoch"],
-                "deleted": wire["deleted"],
-                "immutable": match.get("immutable", False) is True,
-                "author_device_id": device["device_id"],
-                "author_subject": device["account_subject"],
-                "value": value,
-            }
+            if wire["deleted"]:
+                return OpenedHistoricalDeletionRecord(
+                    **metadata, deleted=True, payload_type="historical_encrypted_deletion", value=value
+                )
+            return OpenedContentRecord(**metadata, deleted=False, payload_type="content", value=value)
         finally:
             for secret in (key, key_aad, payload_aad):
                 wipe(secret)
@@ -223,17 +282,35 @@ class EncryptedRecords:
             raise E2eeError(result["error"])
         return {record["record_id"]: record for record in result["records"]}
 
+    def committed_record_writes(
+        self, scope: str, marker: OpenedDeletionMarkerRecord,
+    ) -> list[dict[str, Any]]:
+        results, writes = self._read_many(
+            {scope: [marker["record_id"]]}, capture_signed_records=True,
+        )
+        result = results[scope]
+        if "error" in result:
+            raise E2eeError(result["error"])
+        if result["records"] != [marker] or writes is None:
+            raise E2eeError("upload_not_found")
+        return writes
+
     def read_many(self, scopes: dict[str, list[str]]) -> dict[str, dict[str, Any]]:
+        return self._read_many(scopes)[0]
+
+    def _read_many(
+        self, scopes: dict[str, list[str]], *, capture_signed_records: bool = False,
+    ) -> tuple[dict[str, dict[str, Any]], list[dict[str, Any]] | None]:
+        signed_records = None
         self.session.require_approved()
         if (
-            not 1 <= len(scopes) <= 32
-            or sum(map(len, scopes.values())) > 256
+            not scopes
             or any(len(ids) != len(set(ids)) for ids in scopes.values())
         ):
             raise E2eeError("invalid_batch")
         pending = {scope: list(ids) for scope, ids in scopes.items()}
         results = {scope: {"records": [], "missing_record_ids": []} for scope in scopes}
-        for _ in range(257):
+        while pending:
             response = self.session.api.call(
                 "e2eeReadRecords",
                 body={
@@ -285,17 +362,20 @@ class EncryptedRecords:
                 except (ValueError, KeyError, TypeError, AttributeError):
                     results[scope] = {"error": "invalid_record"}
                     continue
+                if capture_signed_records and opened:
+                    if len(verified) != 1:
+                        raise E2eeError("invalid_record_signature")
+                    signed_records = next(iter(verified.values()))["records"]
                 results[scope]["records"].extend(opened)
                 results[scope]["missing_record_ids"].extend(missing)
                 results[scope]["metadata"] = item["metadata"]
                 if remaining:
                     following[scope] = remaining
             if not following:
-                return results
+                return results, signed_records
             if sum(map(len, following.values())) >= sum(map(len, pending.values())):
-                raise E2eeError("read_limit_exceeded")
+                raise E2eeError("invalid_response")
             pending = following
-        raise E2eeError("read_limit_exceeded")
 
     def current(
         self,
@@ -306,7 +386,7 @@ class EncryptedRecords:
         limit: int = 256,
     ) -> dict[str, Any]:
         self.session.require_approved()
-        if not 1 <= limit <= 256 or (kind is not None and kind not in KINDS):
+        if type(limit) is not int or limit <= 0 or (kind is not None and kind not in KINDS):
             raise E2eeError("invalid_cursor")
         parameters: dict[str, Any] = {"scope_id": scope, "limit": limit}
         if kind is not None:
@@ -341,7 +421,7 @@ class EncryptedRecords:
             or type(after) is not int
             or after < 0
             or type(limit) is not int
-            or not 1 <= limit <= 256
+            or limit <= 0
             or (
                 snapshot_cursor is not None
                 and (type(snapshot_cursor) is not int or snapshot_cursor < after)
@@ -380,7 +460,7 @@ class EncryptedRecords:
         self, scope: str, *, after: int = 0, limit: int = 256
     ) -> dict[str, Any]:
         self.session.require_approved()
-        if after < 0 or not 1 <= limit <= 256:
+        if type(after) is not int or after < 0 or type(limit) is not int or limit <= 0:
             raise E2eeError("invalid_cursor")
         page = self.session.api.call(
             "e2eeGetChanges", scope_id=scope, after=after, limit=limit
@@ -391,7 +471,7 @@ class EncryptedRecords:
 
     def page(self, scope: str, *, after: int = 0, limit: int = 128) -> dict[str, Any]:
         self.session.require_approved()
-        if not 1 <= limit <= 256 or after < 0:
+        if type(limit) is not int or limit <= 0 or type(after) is not int or after < 0:
             raise E2eeError("invalid_cursor")
         page = self.session.api.call(
             "e2eeGetRecords", scope_id=scope, after=after, limit=limit
@@ -412,11 +492,21 @@ class EncryptedRecords:
         maintenance: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         self.session.require_approved()
-        if not 1 <= len(records) <= 256 or len(
+        if not records or len(
             {value["record_id"] for value in records}
         ) != len(records):
             raise E2eeError("invalid_batch")
-        writes = [self.seal(scope, key_epoch=key_epoch, **value) for value in records]
+        writes = []
+        for draft in records:
+            if draft.get("deleted") is True:
+                if set(draft) != {"record_id", "kind", "expected_revision", "deleted"}:
+                    raise E2eeError("invalid_record")
+                writes.append(self.deletion_marker(
+                    record_id=draft["record_id"], kind=draft["kind"],
+                    expected_revision=draft["expected_revision"], key_epoch=key_epoch,
+                ))
+            else:
+                writes.append(self.seal(scope, key_epoch=key_epoch, **draft))
         body = {
             "scope_id": scope,
             "records": writes,
@@ -437,7 +527,7 @@ class EncryptedRecords:
         expected = {value["record_id"]: value for value in writes}
         opened: dict[str, dict[str, Any]] = {}
         previous_cursor = -1
-        for page_index in range(16):
+        while True:
             verified_commands: dict[tuple[str, ...], dict[str, Any]] = {}
             for wire in result["records"]:
                 wanted = expected.get(wire["record_id"])
@@ -474,13 +564,10 @@ class EncryptedRecords:
             cursor = result["cursor"]
             if not result["has_more"] or cursor <= previous_cursor:
                 raise E2eeError("incomplete_write_response")
-            if page_index == 15:
-                raise E2eeError("catchup_limit_exceeded")
             previous_cursor = cursor
             result = self.session.api.call(
                 "e2eeGetRecords", scope_id=scope, after=cursor, limit=256
             )
-        raise E2eeError("catchup_limit_exceeded")
 
     def create_project(
         self,
@@ -499,7 +586,7 @@ class EncryptedRecords:
         if (
             not isinstance(scope, str)
             or not scope.startswith("prj_")
-            or not 5 <= len(scope) <= 128
+            or len(scope) < 5
         ):
             raise E2eeError("invalid_project_id")
         key = self.crypto.key()

@@ -10,7 +10,7 @@ from ._directory import _fits, _key
 
 
 class OrderedIndex:
-    """One bounded operation over the shared encrypted format-2 tree."""
+    """One operation over the shared encrypted format-2 tree."""
 
     def __init__(self, read: Callable, mint_id: Callable[[], str], kind: str):
         self.read, self.mint_id, self.kind = read, mint_id, kind
@@ -35,8 +35,6 @@ class OrderedIndex:
             else self.loaded.get(identifier)
         )
         if record is None:
-            if len(self.loaded) >= 256:
-                raise E2eeError("conversation_read_limit")
             record = self.read([identifier]).get(identifier)
             if record is not None:
                 self.loaded[identifier] = record
@@ -55,7 +53,6 @@ class OrderedIndex:
         if (
             not isinstance(items, list)
             or (field == "children" and not items)
-            or not _fits(value)
         ):
             raise E2eeError("invalid_conversation_index")
         try:
@@ -93,13 +90,12 @@ class OrderedIndex:
         self,
         reference,
         after=None,
-        depth=0,
         ancestors=frozenset(),
         expected_first=None,
         before=None,
     ) -> Iterator[dict]:
         node = self.node(reference)["value"]
-        if depth >= 16 or reference["id"] in ancestors:
+        if reference["id"] in ancestors:
             raise E2eeError("invalid_conversation_index")
         self.check_range(node, expected_first, before)
         if node["type"] == "leaf":
@@ -125,14 +121,13 @@ class OrderedIndex:
             yield from self.walk(
                 child["node"],
                 after,
-                depth + 1,
                 ancestors | {reference["id"]},
                 _key(child["first"]),
                 following,
             )
 
     def page(self, root, *, after=None, limit=100):
-        if not 1 <= limit <= 256:
+        if type(limit) is not int or limit < 1:
             raise E2eeError("invalid_cursor")
         entries = []
         if root is not None:
@@ -154,8 +149,6 @@ class OrderedIndex:
             "expected_revision": previous["revision"] if previous else 0,
             "value": value,
         }
-        if len(self.writes) > 256:
-            raise E2eeError("conversation_write_limit")
         return {
             "id": identifier,
             "revision": self.writes[identifier]["expected_revision"] + 1,
@@ -169,8 +162,6 @@ class OrderedIndex:
             for piece in pieces:
                 if _fits({**node, field: piece}):
                     refined.append(piece)
-                elif len(piece) < 2:
-                    raise E2eeError("conversation_entry_too_large")
                 else:
                     middle = len(piece) // 2
                     refined.extend((piece[:middle], piece[middle:]))
@@ -186,8 +177,8 @@ class OrderedIndex:
             )
         return children
 
-    def insert(self, reference, entry, depth=0):
-        if depth >= 16:
+    def insert(self, reference, entry, ancestors=frozenset()):
+        if reference["id"] in ancestors:
             raise E2eeError("invalid_conversation_index")
         record = self.node(reference)
         node = record["value"]
@@ -208,7 +199,7 @@ class OrderedIndex:
             self.node(children[index]["node"])["value"], _key(children[index]["first"])
         )
         children[index : index + 1] = self.insert(
-            children[index]["node"], entry, depth + 1
+            children[index]["node"], entry, ancestors | {reference["id"]}
         )
         return self.store_node(record["record_id"], {**node, "children": children})
 

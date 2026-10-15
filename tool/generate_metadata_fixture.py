@@ -1,4 +1,4 @@
-"""Generate public, cryptographically checked metadata for disposable DB benchmarks."""
+"""Generate signed input data for disposable real API and database journeys."""
 
 from __future__ import annotations
 
@@ -9,41 +9,43 @@ import secrets
 import time
 from pathlib import Path
 
-from soenan_arteligo_support.e2ee import DeviceSession, E2eeCrypto, EncryptedRecords
+from soenan_arteligo_support.e2ee import E2eeCrypto
 from soenan_arteligo_support.e2ee._crypto import decode, wipe
 
 
-class MemoryStore:
-    def __init__(self):
-        self.values = {}
-
-    def read(self, name):
-        return self.values.get(name)
-
-    def write(self, name, value):
-        self.values[name] = value
-
-    def delete(self, name):
-        self.values.pop(name, None)
-
-
-class OfflineAPI:
-    def call(self, *args, **kwargs):
-        raise RuntimeError("metadata fixture must not make network calls")
+def seal_fixture(crypto, key, scope, record_id, value):
+    context = {
+        "v": 1, "scope_id": scope, "record_id": record_id,
+        "kind": "file", "key_epoch": 1, "revision": 1,
+    }
+    key_aad = crypto.canonical({**context, "domain": "arteligo.record-key"})
+    aad = crypto.canonical({**context, "domain": "arteligo.record"})
+    try:
+        ciphertext = crypto.seal_record(key, value, key_aad, aad, "file")
+        if crypto.open_record(key, ciphertext, key_aad, aad, "file") != value:
+            raise RuntimeError("metadata fixture could not be authenticated")
+        return {
+            "record_id": record_id, "kind": "file", "expected_revision": 0,
+            "key_epoch": 1, "deleted": False, "ciphertext": ciphertext,
+        }
+    finally:
+        wipe(key_aad)
+        wipe(aad)
 
 
 def generate(output: Path, *, batches: int, plaintext_bytes: int) -> dict:
     if not 1 <= batches <= 100 or not 128 <= plaintext_bytes <= 512:
         raise ValueError("batches must be 1..100 and plaintext bytes 128..512")
     crypto = E2eeCrypto()
-    session = DeviceSession(OfflineAPI(), crypto, MemoryStore(),
-        origin="https://metadata-fixture.invalid", subject="00000000-0000-4000-8000-000000000001")
-    session._device = {**crypto.keypair(), "device_id": "dev_" + secrets.token_hex(16)}
-    session.state = "approved"
-    public = session.public
-    session._devices[session.device_id] = public
-    session.trust.pin_device(public)
-    records = EncryptedRecords(session)
+    signer = crypto.keypair()
+    device_id = "dev_" + secrets.token_hex(16)
+    public = {
+        "device_id": device_id,
+        "account_subject": "00000000-0000-4000-8000-000000000001",
+        "encryption_public_key": signer["encryption_public_key"],
+        "signing_public_key": signer["signing_public_key"],
+        "state": "approved",
+    }
     statistics = []
     output.parent.mkdir(parents=True, exist_ok=True)
     descriptor = os.open(output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -54,46 +56,48 @@ def generate(output: Path, *, batches: int, plaintext_bytes: int) -> dict:
                     scope = "prj_" + secrets.token_hex(16)
                     key = crypto.key()
                     try:
-                        session._remember(scope, 1, key)
+                        writes = []
+                        for _ in range(size):
+                            value = {"name": "fixture.bin", "padding": ""}
+                            base = crypto.canonical(value)
+                            missing = plaintext_bytes - len(base)
+                            wipe(base)
+                            value["padding"] = secrets.token_hex(missing)[:missing]
+                            writes.append(seal_fixture(
+                                crypto, key, scope, "fil_" + secrets.token_hex(16), value))
+                        command = crypto.sign(signer["signing_secret_key"], "records_write", {
+                            "scope_id": scope, "format_version": 2,
+                            "expires_at": int(time.time()) + 86400,
+                            "records": writes, "preconditions": [],
+                        }, device_id)
+                        crypto.verify(public["signing_public_key"], "records_write", command)
+                        body = decode(command["body_bytes"])
+                        try:
+                            metrics = {
+                                "batch_records": size, "batch": batch,
+                                "plaintext_bytes_per_record": plaintext_bytes,
+                                "body_bytes": len(body),
+                                "ciphertext_text_bytes": sum(len(write["ciphertext"]) for write in writes),
+                                "command_json_bytes": len(json.dumps(command, separators=(",", ":")).encode()),
+                                "authenticated_roundtrip_records": size,
+                            }
+                        finally:
+                            wipe(body)
+                        stream.write(json.dumps({
+                            "scope_id": scope, "operation": "records_write", "device": public,
+                            "command": command, "metrics": metrics,
+                        }, separators=(",", ":")) + "\n")
+                        statistics.append(metrics)
                     finally:
                         wipe(key)
-                    values, writes = [], []
-                    for _ in range(size):
-                        value = {"name": "fixture.bin", "padding": ""}
-                        base = crypto.canonical(value)
-                        missing = plaintext_bytes - len(base)
-                        wipe(base)
-                        value["padding"] = secrets.token_hex(missing)[:missing]
-                        values.append(value)
-                        writes.append(records.seal(scope, record_id="fil_" + secrets.token_hex(16),
-                            kind="file", expected_revision=0, key_epoch=1, value=value))
-                    command = session.sign("records_write", {"scope_id": scope,
-                        "format_version": 2, "expires_at": int(time.time()) + 86400,
-                        "records": writes, "preconditions": []})
-                    crypto.verify(public["signing_public_key"], "records_write", command)
-                    verified = {}
-                    for ordinal, (write, value) in enumerate(zip(writes, values, strict=True)):
-                        opened = records.open(scope, {**write, "revision": 1, "cursor": ordinal + 1,
-                            "signed_command": command, "author_device_id": session.device_id}, verified=verified)
-                        if opened["value"] != value:
-                            raise RuntimeError("metadata fixture did not survive authenticated round trip")
-                    body = decode(command["body_bytes"])
-                    try:
-                        metrics = {"batch_records": size, "batch": batch, "plaintext_bytes_per_record": plaintext_bytes,
-                            "body_bytes": len(body), "ciphertext_text_bytes": sum(len(write["ciphertext"]) for write in writes),
-                            "command_json_bytes": len(json.dumps(command, separators=(",", ":")).encode()),
-                            "authenticated_roundtrip_records": size}
-                    finally:
-                        wipe(body)
-                    stream.write(json.dumps({"scope_id": scope, "operation": "records_write",
-                        "device": public, "command": command, "metrics": metrics}, separators=(",", ":")) + "\n")
-                    statistics.append(metrics)
-                    session._clear_keys()
     finally:
-        session.lock()
-    return {"output": str(output), "batches": len(statistics),
-        "authenticated_records": sum(row["batch_records"] for row in statistics), "samples": statistics,
-        "limitations": "Fixed-size minimal name/padding documents measure cryptographic and batch overhead; they are not full upload manifests or usable file objects. No private keys are exported."}
+        signer.clear()
+    return {
+        "output": str(output), "batches": len(statistics),
+        "authenticated_records": sum(row["batch_records"] for row in statistics),
+        "samples": statistics,
+        "limitations": "Signed input data only. Native cryptography prepares metadata for real API and DB consumers; it does not prove device approval, authorization, persistence, or usable Bucket objects. No private keys are exported.",
+    }
 
 
 def main() -> None:

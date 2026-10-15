@@ -80,8 +80,9 @@ def sync_detailed(
     """Frozen immutable records of one public kind, ordered by creation cursor. The first request captures
     snapshot_cursor; continuations must reuse it and advance after to the returned cursor. Later
     creations are excluded. Existing immutable heads remain readable after ordinary history retention.
-    The complete encoded response is limited to 8 MiB. This endpoint exposes opaque records and
-    signature proofs, never plaintext names or paths.
+    The caller selects the row limit; required signature and key proofs are complete regardless of their
+    aggregate size. This endpoint exposes opaque records and signature proofs, never plaintext names or
+    paths.
 
     Args:
         scope_id (str):
@@ -125,8 +126,9 @@ def sync(
     """Frozen immutable records of one public kind, ordered by creation cursor. The first request captures
     snapshot_cursor; continuations must reuse it and advance after to the returned cursor. Later
     creations are excluded. Existing immutable heads remain readable after ordinary history retention.
-    The complete encoded response is limited to 8 MiB. This endpoint exposes opaque records and
-    signature proofs, never plaintext names or paths.
+    The caller selects the row limit; required signature and key proofs are complete regardless of their
+    aggregate size. This endpoint exposes opaque records and signature proofs, never plaintext names or
+    paths.
 
     Args:
         scope_id (str):
@@ -165,8 +167,9 @@ async def asyncio_detailed(
     """Frozen immutable records of one public kind, ordered by creation cursor. The first request captures
     snapshot_cursor; continuations must reuse it and advance after to the returned cursor. Later
     creations are excluded. Existing immutable heads remain readable after ordinary history retention.
-    The complete encoded response is limited to 8 MiB. This endpoint exposes opaque records and
-    signature proofs, never plaintext names or paths.
+    The caller selects the row limit; required signature and key proofs are complete regardless of their
+    aggregate size. This endpoint exposes opaque records and signature proofs, never plaintext names or
+    paths.
 
     Args:
         scope_id (str):
@@ -208,8 +211,9 @@ async def asyncio(
     """Frozen immutable records of one public kind, ordered by creation cursor. The first request captures
     snapshot_cursor; continuations must reuse it and advance after to the returned cursor. Later
     creations are excluded. Existing immutable heads remain readable after ordinary history retention.
-    The complete encoded response is limited to 8 MiB. This endpoint exposes opaque records and
-    signature proofs, never plaintext names or paths.
+    The caller selects the row limit; required signature and key proofs are complete regardless of their
+    aggregate size. This endpoint exposes opaque records and signature proofs, never plaintext names or
+    paths.
 
     Args:
         scope_id (str):

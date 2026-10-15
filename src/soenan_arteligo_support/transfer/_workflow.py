@@ -62,14 +62,24 @@ def _completed_file_metadata(pending: dict[str, Any], file: dict[str, Any]) -> d
 def _completed_upload(
     records: EncryptedRecords, scope: str, pending: dict[str, Any], upload_id: str
 ) -> dict[str, Any]:
-    identifier = pending["value"].get("file_id")
-    if not isinstance(identifier, str):
+    if pending["payload_type"] == "historical_encrypted_deletion":
+        identifier = pending["value"].get("file_id")
+        if not isinstance(identifier, str):
+            raise E2eeError("upload_not_found")
+        candidates = [identifier]
+    else:
+        writes = records.committed_record_writes(scope, pending)
+        candidates = [value["record_id"] for value in writes
+                      if value["kind"] == "file" and value.get("deleted") is False
+                      and "ciphertext" in value]
+    if not candidates or len(candidates) != len(set(candidates)):
         raise E2eeError("upload_not_found")
-    record = records.read(scope, [identifier]).get(identifier)
-    if (record is None or record["deleted"] or
-            record["value"].get("file", {}).get("encryptedObjectId") != upload_id):
+    matches = [record for record in records.read(scope, candidates).values()
+               if record["payload_type"] == "content"
+               and record["value"].get("file", {}).get("encryptedObjectId") == upload_id]
+    if len(matches) != 1:
         raise E2eeError("upload_not_found")
-    return record
+    return matches[0]
 
 
 def _object(
@@ -134,8 +144,8 @@ def upload_file(
     try:
         with source.open("rb") as stream:
             size = os.fstat(stream.fileno()).st_size
-            if not 0 < size <= 8 * 1024**3 - 1024 * 16:
-                raise E2eeError("file_size_limit")
+            if size <= 0:
+                raise E2eeError('file_size_invalid')
             if pending is None:
                 if upload_id is not None:
                     raise E2eeError("upload_not_found")
@@ -346,7 +356,6 @@ def upload_file(
                 "record_id": pending_id,
                 "kind": "file",
                 "expected_revision": pending["revision"],
-                "value": {"file_id": file_id},
                 "deleted": True,
             },
         ]

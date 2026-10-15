@@ -84,7 +84,7 @@ def create_local_mcp(session_factory: Callable[[], DeviceSession]) -> FastMCP:
 
     @server.tool()
     def arteligo_get_records(project_id: str, record_ids: list[str]) -> dict[str, Any]:
-        """Read and decrypt up to 256 selected opaque record IDs without reading the project."""
+        """Read and decrypt selected opaque record IDs without reading the project."""
         return run(
             lambda session: EncryptedRecords(session).read(project_id, record_ids)
         )
@@ -143,7 +143,6 @@ def create_local_mcp(session_factory: Callable[[], DeviceSession]) -> FastMCP:
         expected_revision: int,
         key_epoch: int,
         value: dict[str, Any],
-        deleted: bool = False,
     ) -> list[dict[str, Any]]:
         """Encrypt and sign a record update; a revision conflict requires rereading the current record."""
         if kind in {"chat", "comment"}:
@@ -158,9 +157,30 @@ def create_local_mcp(session_factory: Callable[[], DeviceSession]) -> FastMCP:
                         "kind": kind,
                         "expected_revision": expected_revision,
                         "value": value,
-                        "deleted": deleted,
                     }
                 ],
+            )
+        )
+
+    @server.tool()
+    def arteligo_delete_record(
+        project_id: str,
+        record_id: str,
+        kind: Literal["project", "directory", "file", "preview", "submission", "stage", "schedule"],
+        expected_revision: int,
+        key_epoch: int,
+    ) -> list[dict[str, Any]]:
+        """Sign a metadata-only deletion marker; no document is encrypted or retained in the marker."""
+        return run(
+            lambda session: EncryptedRecords(session).write(
+                project_id,
+                key_epoch=key_epoch,
+                records=[{
+                    "record_id": record_id,
+                    "kind": kind,
+                    "expected_revision": expected_revision,
+                    "deleted": True,
+                }],
             )
         )
 

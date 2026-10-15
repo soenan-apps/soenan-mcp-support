@@ -77,8 +77,8 @@ def sync_detailed(
     limit: int | Unset = 256,
 ) -> Response[E2EeCurrentPage | ErrorEnvelope]:
     """Bounded current records ordered by opaque record ID. Optional kind is a public record category, not
-    a name or folder search. The complete encoded response is limited to 8 MiB. Continue using
-    next_record_id when has_more.
+    a name or folder search. The caller selects the row limit; required signature and key proofs are
+    complete regardless of their aggregate size. Continue using next_record_id when has_more.
 
     Args:
         scope_id (str):
@@ -117,8 +117,8 @@ def sync(
     limit: int | Unset = 256,
 ) -> E2EeCurrentPage | ErrorEnvelope | None:
     """Bounded current records ordered by opaque record ID. Optional kind is a public record category, not
-    a name or folder search. The complete encoded response is limited to 8 MiB. Continue using
-    next_record_id when has_more.
+    a name or folder search. The caller selects the row limit; required signature and key proofs are
+    complete regardless of their aggregate size. Continue using next_record_id when has_more.
 
     Args:
         scope_id (str):
@@ -152,8 +152,8 @@ async def asyncio_detailed(
     limit: int | Unset = 256,
 ) -> Response[E2EeCurrentPage | ErrorEnvelope]:
     """Bounded current records ordered by opaque record ID. Optional kind is a public record category, not
-    a name or folder search. The complete encoded response is limited to 8 MiB. Continue using
-    next_record_id when has_more.
+    a name or folder search. The caller selects the row limit; required signature and key proofs are
+    complete regardless of their aggregate size. Continue using next_record_id when has_more.
 
     Args:
         scope_id (str):
@@ -190,8 +190,8 @@ async def asyncio(
     limit: int | Unset = 256,
 ) -> E2EeCurrentPage | ErrorEnvelope | None:
     """Bounded current records ordered by opaque record ID. Optional kind is a public record category, not
-    a name or folder search. The complete encoded response is limited to 8 MiB. Continue using
-    next_record_id when has_more.
+    a name or folder search. The caller selects the row limit; required signature and key proofs are
+    complete regardless of their aggregate size. Continue using next_record_id when has_more.
 
     Args:
         scope_id (str):

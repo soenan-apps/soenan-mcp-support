@@ -99,8 +99,6 @@ class GeneratedAPI:
                 except (ValueError, AttributeError):
                     pass
                 raise E2eeError(code)
-            if len(response.content) > 16 * 1024 * 1024:
-                raise E2eeError("limit_exceeded")
             if response.parsed is None:
                 if status in {201, 204}:
                     return {}

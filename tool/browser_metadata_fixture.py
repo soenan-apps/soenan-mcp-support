@@ -379,10 +379,42 @@ def check(session, bridge, manifest):
     directory = EncryptedDirectory(records, manifest["scope_id"])
     measurements = []
     cursor = None
+    offset = 0
     for _ in range(2):
         requests, size = bridge.requests, bridge.response_bytes
         started = time.monotonic()
         page = directory.page(limit=100, cursor=cursor)
+        expected = [
+            {
+                "id": f"ent_fil_{manifest['run_id']}_{sequence:06d}",
+                "fileId": f"fil_{manifest['run_id']}_{sequence:06d}",
+                "kind": "file",
+                "name": f"fixture-{sequence:06d}.txt",
+                "projectId": manifest["scope_id"],
+                "parentFolderId": None,
+            }
+            for sequence in range(offset, min(offset + 100, manifest["entries"]))
+        ]
+        actual = [
+            {field: entry.get(field) for field in ("id", "fileId", "kind", "name", "projectId", "parentFolderId")}
+            for entry in page["entries"]
+        ]
+        if actual != expected:
+            raise E2eeError("fixture_directory_result_mismatch")
+        selected = expected if len(expected) < 2 else [expected[0], expected[-1]]
+        if selected:
+            opened = records.read(manifest["scope_id"], [entry["fileId"] for entry in selected])
+            for entry in selected:
+                value = opened[entry["fileId"]]["value"]
+                if (
+                    value["filename"] != entry["name"]
+                    or value["file"]["fileId"] != entry["fileId"]
+                    or value["file"]["originalPlaintextSize"] != 26
+                ):
+                    raise E2eeError("fixture_file_result_mismatch")
+        offset += len(expected)
+        if page["has_more"] != (offset < manifest["entries"]):
+            raise E2eeError("fixture_directory_continuation_mismatch")
         measurements.append(
             {
                 "entries": len(page["entries"]),
@@ -392,6 +424,8 @@ def check(session, bridge, manifest):
             }
         )
         cursor = page["cursor"]
+        if (cursor is not None) != page["has_more"]:
+            raise E2eeError("fixture_directory_cursor_mismatch")
         if cursor is None:
             break
     return measurements

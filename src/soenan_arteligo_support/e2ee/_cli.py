@@ -14,8 +14,6 @@ from ._storage import SystemSecureStore
 
 def _public_json(path: str) -> dict:
     raw = Path(path).read_bytes()
-    if len(raw) > 512 * 1024:
-        raise E2eeError("limit_exceeded")
     value = json.loads(raw)
     if not isinstance(value, dict):
         raise E2eeError("invalid_input")

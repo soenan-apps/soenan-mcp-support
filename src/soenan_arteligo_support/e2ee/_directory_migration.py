@@ -17,7 +17,7 @@ def migrate_directory(
     records: EncryptedRecords, scope: str, *, maximum_batches: int = 64
 ) -> dict[str, Any]:
     """Advance a durable client-side migration without holding the whole tree in memory."""
-    if not 1 <= maximum_batches <= 1024:
+    if type(maximum_batches) is not int or maximum_batches < 1:
         raise E2eeError("invalid_batch")
     session = records.session
     metadata = session.scope_metadata(scope, refresh=True)
@@ -167,7 +167,6 @@ def migrate_directory(
                         "record_id": source["record_id"],
                         "kind": "directory",
                         "expected_revision": source["revision"],
-                        "value": {},
                         "deleted": True,
                     }
                 )
@@ -265,7 +264,7 @@ def abort_directory_migration(
     records: EncryptedRecords, scope: str, *, maximum_batches: int = 64
 ) -> dict[str, Any]:
     """Remove only staged migration records, retaining the published legacy index."""
-    if not 1 <= maximum_batches <= 1024:
+    if type(maximum_batches) is not int or maximum_batches < 1:
         raise E2eeError("invalid_batch")
     session = records.session
     epoch = session.scope_metadata(scope, refresh=True)["key_epoch"]
@@ -284,8 +283,7 @@ def abort_directory_migration(
         )
         identifiers = page["record_ids"]
         if (
-            len(identifiers) > 128
-            or len(set(identifiers)) != len(identifiers)
+            len(set(identifiers)) != len(identifiers)
             or checkpoint_id in identifiers
         ):
             raise E2eeError("invalid_directory")
@@ -317,7 +315,6 @@ def abort_directory_migration(
                     "record_id": identifier,
                     "kind": "directory",
                     "expected_revision": record["revision"],
-                    "value": {},
                     "deleted": True,
                 }
             )
@@ -327,8 +324,7 @@ def abort_directory_migration(
                 "record_id": checkpoint_id,
                 "kind": "directory",
                 "expected_revision": checkpoint["revision"],
-                "value": {} if final else checkpoint["value"],
-                "deleted": final,
+                **({"deleted": True} if final else {"value": checkpoint["value"]}),
             }
         )
         records.write(

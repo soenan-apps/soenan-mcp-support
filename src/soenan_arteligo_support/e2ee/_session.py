@@ -32,7 +32,7 @@ class DeviceSession:
         self._scope_keys: dict[tuple[str, int], bytearray] = {}
         self._scope_metadata: dict[str, dict[str, Any]] = {}
         self._key_bundles: dict[str, dict[str, Any]] = {}
-        self._key_bundle_sizes: dict[str, int] = {}
+
         self._restoring_recovery: tuple[str, bytearray] | None = None
         self.recovery: dict[str, Any] | None = None
         self.state = "needs_setup"
@@ -290,7 +290,7 @@ class DeviceSession:
                 != value["key_epoch"]
             ):
                 self._key_bundles.pop(scope, None)
-                self._key_bundle_sizes.pop(scope, None)
+
             self._scope_metadata[scope] = value
         return self._scope_metadata[scope]
 
@@ -306,17 +306,7 @@ class DeviceSession:
         self._key_bundles[scope] = {
             field: bundle.get(field, []) for field in ("envelopes", "epochs")
         }
-        self._key_bundle_sizes[scope] = len(
-            json.dumps(self._key_bundles[scope], separators=(",", ":")).encode()
-        )
-        # One read can carry 32 projects and a distinct organization key for each.
-        while (
-            len(self._key_bundles) > 64
-            or sum(self._key_bundle_sizes.values()) > 64 * 1024 * 1024
-        ):
-            oldest = next(iter(self._key_bundles))
-            self._key_bundles.pop(oldest)
-            self._key_bundle_sizes.pop(oldest)
+
 
     def prepare_recovery_replacement(self) -> dict[str, Any]:
         self.require_approved()
@@ -954,8 +944,6 @@ class DeviceSession:
         def fetch(value: str) -> None:
             if value in fetched:
                 return
-            if len(fetched) >= 32:
-                raise E2eeError("untrusted_device")
             fetched.add(value)
             values = self.api.call(
                 "e2eeGetMemberDevices", scope_id=scope, device_id=value
@@ -1025,8 +1013,6 @@ class DeviceSession:
                 recipient_id=recipient,
                 recipient_kind=kind,
             )["envelopes"]
-        if len(values) > 1024:
-            raise E2eeError("limit_exceeded")
         for envelope in values:
             organization_key = bytearray()
             if kind == "organization":
@@ -1172,8 +1158,6 @@ class DeviceSession:
                 recipient_id=recipient,
                 recipient_kind=kind,
             )["envelopes"]
-            if len(history) > 1024:
-                raise E2eeError("limit_exceeded")
             if any(
                 type(item.get("key_epoch")) is not int
                 or not 1 <= item["key_epoch"] <= 2**63 - 1
@@ -1244,8 +1228,6 @@ class DeviceSession:
         return key
 
     def _previous_key(self, scope: str, target: int, current: int) -> bytearray:
-        if current - target > 4096:
-            raise E2eeError("epoch_limit_exceeded")
         links = {
             link["key_epoch"]: link
             for link in self._key_bundles.get(scope, {}).get("epochs", [])
@@ -1253,14 +1235,10 @@ class DeviceSession:
         if not all(epoch in links for epoch in range(target + 1, current + 1)):
             links = {}
             after = target
-            total_bytes = 0
-            for _ in range(4096):
+            while after < current:
                 page = self.api.call(
                     "e2eeGetEpochs", scope_id=scope, after_epoch=after, limit=16
                 )["epochs"]
-                total_bytes += len(json.dumps(page, separators=(",", ":")).encode())
-                if total_bytes > 64 * 1024 * 1024:
-                    raise E2eeError("epoch_limit_exceeded")
                 for link in page:
                     value = link["key_epoch"]
                     if value <= after or value in links:
@@ -1333,5 +1311,5 @@ class DeviceSession:
         self._devices.clear()
         self._scope_metadata.clear()
         self._key_bundles.clear()
-        self._key_bundle_sizes.clear()
+
         self.state = "locked"
