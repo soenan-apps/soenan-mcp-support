@@ -1,4 +1,4 @@
-"""Generate signed input data for disposable real API and database journeys."""
+"""Generate signed input data for disposable PostgreSQL storage measurements."""
 
 from __future__ import annotations
 
@@ -22,8 +22,6 @@ def seal_fixture(crypto, key, scope, record_id, value):
     aad = crypto.canonical({**context, "domain": "arteligo.record"})
     try:
         ciphertext = crypto.seal_record(key, value, key_aad, aad, "file")
-        if crypto.open_record(key, ciphertext, key_aad, aad, "file") != value:
-            raise RuntimeError("metadata fixture could not be authenticated")
         return {
             "record_id": record_id, "kind": "file", "expected_revision": 0,
             "key_epoch": 1, "deleted": False, "ciphertext": ciphertext,
@@ -39,13 +37,6 @@ def generate(output: Path, *, batches: int, plaintext_bytes: int) -> dict:
     crypto = E2eeCrypto()
     signer = crypto.keypair()
     device_id = "dev_" + secrets.token_hex(16)
-    public = {
-        "device_id": device_id,
-        "account_subject": "00000000-0000-4000-8000-000000000001",
-        "encryption_public_key": signer["encryption_public_key"],
-        "signing_public_key": signer["signing_public_key"],
-        "state": "approved",
-    }
     statistics = []
     output.parent.mkdir(parents=True, exist_ok=True)
     descriptor = os.open(output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -70,7 +61,6 @@ def generate(output: Path, *, batches: int, plaintext_bytes: int) -> dict:
                             "expires_at": int(time.time()) + 86400,
                             "records": writes, "preconditions": [],
                         }, device_id)
-                        crypto.verify(public["signing_public_key"], "records_write", command)
                         body = decode(command["body_bytes"])
                         try:
                             metrics = {
@@ -79,12 +69,11 @@ def generate(output: Path, *, batches: int, plaintext_bytes: int) -> dict:
                                 "body_bytes": len(body),
                                 "ciphertext_text_bytes": sum(len(write["ciphertext"]) for write in writes),
                                 "command_json_bytes": len(json.dumps(command, separators=(",", ":")).encode()),
-                                "authenticated_roundtrip_records": size,
                             }
                         finally:
                             wipe(body)
                         stream.write(json.dumps({
-                            "scope_id": scope, "operation": "records_write", "device": public,
+                            "scope_id": scope, "operation": "records_write",
                             "command": command, "metrics": metrics,
                         }, separators=(",", ":")) + "\n")
                         statistics.append(metrics)
@@ -94,9 +83,8 @@ def generate(output: Path, *, batches: int, plaintext_bytes: int) -> dict:
         signer.clear()
     return {
         "output": str(output), "batches": len(statistics),
-        "authenticated_records": sum(row["batch_records"] for row in statistics),
         "samples": statistics,
-        "limitations": "Signed input data only. Native cryptography prepares metadata for real API and DB consumers; it does not prove device approval, authorization, persistence, or usable Bucket objects. No private keys are exported.",
+        "limitations": "Signed input data for PostgreSQL storage measurements only. It does not prove device approval, Account authorization, API acceptance, persistence, or usable Bucket objects. No private keys are exported.",
     }
 
 
