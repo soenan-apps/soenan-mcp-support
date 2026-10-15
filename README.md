@@ -56,7 +56,7 @@ local MCP はプロジェクト一覧、復号した record の読み取り・�
 
 local MCP の汎用 `arteligo_write_record` と `arteligo_delete_record` は chat/comment の直接更新を `conversation_operation_required` で拒否します。会話では `arteligo_chat_send/edit/delete`、`arteligo_comment_create/edit/reply_create/reply_edit/resolution` を使い、origin、head、索引を同じ batch に保存します。読み取りは `arteligo_chat_messages/events/message`、`arteligo_comment_threads/thread/replies/reply`、全履歴の明示検証は `arteligo_chat_message_history` です。コメントのページでは返却された `next_key` をそのまま `after` に渡します。ページ件数は正の整数とし、無効な revision と日時は session を開く前に拒否します。
 
-会話 tool は同時に 1 件だけ実行し、追加の要求は `local_operation_busy` を返します。待機キューは作りません。通信や履歴検証の途中で要求を取り消すと、次の checkpoint で停止して session を lock します。保存が既に確定していた場合は、同じ操作 ID で結果を確認します。
+会話 tool の取消では、次の checkpoint で処理を止めて session を lock します。既に保存が確定した操作は、同じ操作 ID で結果を確認します。同じ profile を使う複数の session や process の OAuth 更新は直列化されません。
 
 内容の書き込みは、chat/comment を含む batch が形式 3、その他が形式 2 です。初回受付の期限と読み取った record の期待 revision を署名に含めます。SDK が設定する期限は作成から 29 日後で、確定結果はサーバーが 30 日間保持します。保存応答が分割された場合は cursor の進行を確認しながら残りを読み取り、送信した全 record の revision、暗号文、署名を検証してから成功を返します。応答を揃えられない場合は更新を再送せず、保存結果が未確認であることを返します。record の平文や署名する command body に、512 KiB や 1 MiB の受付上限は設けません。
 
@@ -94,6 +94,8 @@ try:
 finally:
     session.lock()
 ```
+
+`open_session` が失敗した場合は、作成途中の session を lock して例外を返します。正常に返された session は、呼び出し側が `finally` で lock します。
 
 `read` は指定した record だけを取得・復号します。`read_many` は複数 scope の概要などを一括で取得でき、ある scope の認可・鍵・検証の失敗を他の scope の結果から分離します。同じ署名付き command は応答内で一度検証します。鍵と証明は読み取り応答から受け取り、scope ごとの内容取得で全 project 一覧を読み直しません。
 

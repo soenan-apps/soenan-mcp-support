@@ -59,7 +59,10 @@ class DeviceSession:
         self.state = "pending_approval"
         saved = self.store.read(self._storage_key)
         if saved is not None:
-            self._device = json.loads(saved)
+            device = json.loads(saved)
+            if not isinstance(device, dict):
+                raise TypeError("Stored device must be an object")
+            self._device = device
             derived = self.crypto.execute(
                 {
                     "op": "public_keys",

@@ -31,5 +31,9 @@ def open_session(
     session = DeviceSession(
         api, E2eeCrypto(), protected, origin=oauth.arteligo_origin, subject=subject
     )
-    session.refresh()
+    try:
+        session.refresh()
+    except BaseException:
+        session.lock()
+        raise
     return session
