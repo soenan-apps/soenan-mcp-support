@@ -135,13 +135,11 @@ def node(entries, *, branch=False):
 
 
 def measure_file_cost(records, scope, record, file_count, path):
-    response = records.session.api.call(
-        "e2eeReadRecords",
-        body={
-            "scopes": [{"scope_id": scope, "record_ids": [record["record_id"]]}],
-            "include_keys": False,
-        },
-    )
+    response = records.session.call("e2eeReadRecords",
+    body={
+        "scopes": [{"scope_id": scope, "record_ids": [record["record_id"]]}],
+        "include_keys": False,
+    },)
     reference = response["scopes"][0]["records"][0]
     records.open(scope, reference, commands=response["commands"])
     proof = response["commands"][reference["command_id"]]
@@ -248,13 +246,11 @@ def recover_creation_proof(session, manifest):
     project = records.read(scope, [scope])[scope]
     if project["value"].get("title") != manifest["title"]:
         raise E2eeError("fixture_identity_changed")
-    proof_page = session.api.call(
-        "e2eeReadRecords",
-        body={
-            "scopes": [{"scope_id": scope, "record_ids": [scope]}],
-            "include_keys": False,
-        },
-    )
+    proof_page = session.call("e2eeReadRecords",
+    body={
+        "scopes": [{"scope_id": scope, "record_ids": [scope]}],
+        "include_keys": False,
+    },)
     reference = proof_page["scopes"][0]["records"][0]
     proof = proof_page["commands"][reference["command_id"]]
     if reference["record_id"] != scope or proof["operation"] != "project_create":

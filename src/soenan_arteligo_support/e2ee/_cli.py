@@ -8,7 +8,7 @@ from pathlib import Path
 
 from ._client import open_session
 from ._crypto import E2eeError
-from ._oauth import OAuthSession
+from ._oauth import ProfileVault
 from ._storage import SystemSecureStore
 
 
@@ -53,7 +53,7 @@ def main() -> int:
     session = None
     try:
         store = SystemSecureStore(args.profile)
-        oauth = OAuthSession(
+        oauth = ProfileVault(
             account_origin=args.account_origin,
             arteligo_origin=args.arteligo_origin,
             store=store,
@@ -63,8 +63,11 @@ def main() -> int:
             print("認証できました。status で端末の状態を確認してください。")
             return 0
         if args.command == "logout":
-            oauth.logout()
-            print("認証情報を破棄しました。")
+            outcome = oauth.logout()
+            if outcome.known_family_revoked:
+                print("このプロファイルからサインアウトし、保存されていた認証系列を失効させました。")
+            else:
+                print("このプロファイルはサインアウトしています。")
             return 0
 
         def connect():
@@ -140,7 +143,13 @@ def main() -> int:
             print("この端末を新しい鍵で復旧しました。")
         return 0
     except E2eeError as error:
-        print(json.dumps({"error": error.code}), file=sys.stderr)
+        failure = {"error": error.code}
+        if error.code == "authentication_login_uncertain":
+            failure["message"] = (
+                "認証コードの交換結果を確認できません。"
+                "新しい認証系列が作成された可能性があり、その系列の失効は確認できません。"
+            )
+        print(json.dumps(failure), file=sys.stderr)
         return 1
     except (ValueError, TypeError, KeyError, OSError):
         print('{"error":"invalid_input_or_local_state"}', file=sys.stderr)

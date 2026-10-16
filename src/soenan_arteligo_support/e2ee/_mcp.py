@@ -44,7 +44,7 @@ def create_local_mcp(session_factory: Callable[[], DeviceSession]) -> FastMCP:
     @server.tool()
     def arteligo_list_projects() -> dict[str, Any]:
         """List project IDs, authorization, and key epochs available to this account."""
-        return run(lambda session: session.api.call("e2eeListProjects"))
+        return run(lambda session: session.call("e2eeListProjects"))
 
     @server.tool()
     def arteligo_read_records(

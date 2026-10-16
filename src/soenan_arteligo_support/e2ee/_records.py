@@ -6,7 +6,7 @@ import time
 from typing import Any, Literal, TypedDict
 
 from ._crypto import E2eeError, decode, encode, wipe
-from ._session import DeviceSession
+from ._session import DeviceSession, _ScopeResponse
 
 KINDS = frozenset(
     {
@@ -264,12 +264,12 @@ class EncryptedRecords:
             for secret in (key, key_aad, payload_aad):
                 wipe(secret)
 
-    def _open_page(self, scope: str, page: dict[str, Any]) -> list[dict[str, Any]]:
+    def _open_page(self, scope: str, page: _ScopeResponse) -> list[dict[str, Any]]:
         context = page.get("key_context")
         if context is not None:
             for bundle in context.get("key_scopes", []) + context.get("scopes", []):
                 if "error" not in bundle:
-                    self.session.receive_read_bundle(bundle)
+                    self.session.receive_read_bundle(bundle, page)
         verified: dict[tuple[str, ...], dict[str, Any]] = {}
         return [
             self.open(scope, wire, commands=page.get("commands"), verified=verified)
@@ -311,24 +311,26 @@ class EncryptedRecords:
         pending = {scope: list(ids) for scope, ids in scopes.items()}
         results = {scope: {"records": [], "missing_record_ids": []} for scope in scopes}
         while pending:
-            response = self.session.api.call(
-                "e2eeReadRecords",
-                body={
-                    "scopes": [
-                        {"scope_id": scope, "record_ids": ids}
-                        for scope, ids in pending.items()
-                    ],
-                    "include_keys": True,
-                },
-            )
+            response = self.session.call("e2eeReadRecords",
+            body={
+                "scopes": [
+                    {"scope_id": scope, "record_ids": ids}
+                    for scope, ids in pending.items()
+                ],
+                "include_keys": True,
+            },)
             returned = response["scopes"]
             if {value["scope_id"] for value in returned} != set(pending) or len(
                 returned
             ) != len(pending):
                 raise E2eeError("invalid_response")
+            denied = {
+                item["scope_id"] for item in returned
+                if item.get("error") == "project_access_denied"
+            }
             for bundle in response.get("key_scopes", []):
-                if "error" not in bundle:
-                    self.session.receive_read_bundle(bundle)
+                if "error" not in bundle and bundle["scope_id"] not in denied:
+                    self.session.receive_read_bundle(bundle, response)
             verified: dict[tuple[str, ...], dict[str, Any]] = {}
             following = {}
             for item in returned:
@@ -346,7 +348,7 @@ class EncryptedRecords:
                 ):
                     raise E2eeError("invalid_response")
                 try:
-                    self.session.receive_read_bundle(item)
+                    self.session.receive_read_bundle(item, response)
                     opened = [
                         self.open(
                             scope,
@@ -393,7 +395,7 @@ class EncryptedRecords:
             parameters["kind"] = kind
         if after_record_id is not None:
             parameters["after_record_id"] = after_record_id
-        page = self.session.api.call("e2eeGetCurrent", **parameters)
+        page = self.session.call("e2eeGetCurrent", **parameters)
         opened = self._open_page(scope, page)
         ids = [record["record_id"] for record in opened]
         if ids != sorted(set(ids)) or any(
@@ -431,7 +433,7 @@ class EncryptedRecords:
         parameters = {"scope_id": scope, "kind": kind, "after": after, "limit": limit}
         if snapshot_cursor is not None:
             parameters["snapshot_cursor"] = snapshot_cursor
-        page = self.session.api.call("e2eeGetImmutable", **parameters)
+        page = self.session.call("e2eeGetImmutable", **parameters)
         opened = self._open_page(scope, page)
         snapshot, cursor = page["snapshot_cursor"], page["cursor"]
         cursors = [record["cursor"] for record in opened]
@@ -462,9 +464,7 @@ class EncryptedRecords:
         self.session.require_approved()
         if type(after) is not int or after < 0 or type(limit) is not int or limit <= 0:
             raise E2eeError("invalid_cursor")
-        page = self.session.api.call(
-            "e2eeGetChanges", scope_id=scope, after=after, limit=limit
-        )
+        page = self.session.call("e2eeGetChanges", scope_id=scope, after=after, limit=limit)
         if page["cursor"] < after or (page["has_more"] and page["cursor"] <= after):
             raise E2eeError("invalid_cursor")
         return page
@@ -473,9 +473,7 @@ class EncryptedRecords:
         self.session.require_approved()
         if type(limit) is not int or limit <= 0 or type(after) is not int or after < 0:
             raise E2eeError("invalid_cursor")
-        page = self.session.api.call(
-            "e2eeGetRecords", scope_id=scope, after=after, limit=limit
-        )
+        page = self.session.call("e2eeGetRecords", scope_id=scope, after=after, limit=limit)
         opened = self._open_page(scope, page)
         cursor = page["cursor"]
         if cursor < after or (page["has_more"] and cursor <= after):
@@ -565,9 +563,7 @@ class EncryptedRecords:
             if not result["has_more"] or cursor <= previous_cursor:
                 raise E2eeError("incomplete_write_response")
             previous_cursor = cursor
-            result = self.session.api.call(
-                "e2eeGetRecords", scope_id=scope, after=cursor, limit=256
-            )
+            result = self.session.call("e2eeGetRecords", scope_id=scope, after=cursor, limit=256)
 
     def create_project(
         self,
@@ -589,9 +585,10 @@ class EncryptedRecords:
             or len(scope) < 5
         ):
             raise E2eeError("invalid_project_id")
+        owner = self.session._scope_owner(scope)
         key = self.crypto.key()
         try:
-            self.session._remember(scope, 1, key)
+            self.session._remember(scope, 1, key, owner=owner)
             recipients = [
                 (
                     self.session.device_id,

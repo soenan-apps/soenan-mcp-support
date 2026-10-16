@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import errno
 import mimetypes
 import os
 import secrets
 import struct
+import sys
 import tempfile
 import time
 import uuid
@@ -237,9 +239,7 @@ def upload_file(
                 if completed is not None and completed["record_id"] != file_id:
                     raise E2eeError("invalid_object_context")
             if completed is not None:
-                descriptor = session.api.call(
-                    "e2eeGetObject", scope_id=project_id, object_id=identifier
-                )
+                descriptor = session.call("e2eeGetObject", scope_id=project_id, object_id=identifier)
             else:
                 descriptor = session.command(
                     "e2eeBeginObject",
@@ -412,22 +412,29 @@ def download_file(
             wrapped_nonce=bytes(decode(wrapped["nonceB64u"])),
             wrapped_data_key=bytes(decode(wrapped["ciphertextB64u"])),
         )
-        descriptor = session.api.call(
-            "e2eeGetObject", scope_id=project_id, object_id=plan.object_id
-        )
+        descriptor = session.call("e2eeGetObject", scope_id=project_id, object_id=plan.object_id)
         if descriptor.get("state") != "ready":
             raise E2eeError("object_not_ready")
-        handle, temporary = tempfile.mkstemp(
-            prefix=".arteligo-", dir=destination.parent
-        )
-        with os.fdopen(handle, "wb") as output:
+        output_file = None
+        if sys.platform == "linux":
+            try:
+                handle = os.open(destination.parent, os.O_TMPFILE | os.O_RDWR, 0o600)
+            except OSError as error:
+                if error.errno not in {errno.EOPNOTSUPP, errno.EINVAL, errno.EISDIR, errno.ENOSYS}:
+                    raise
+            else:
+                output_file = os.fdopen(handle, "w+b")
+        if output_file is None:
+            handle, temporary = tempfile.mkstemp(
+                prefix=".arteligo-", dir=destination.parent
+            )
+            output_file = os.fdopen(handle, "wb")
+        with output_file as output:
             for chunk in plan.chunks:
-                capability = session.api.call(
-                    "e2eeGetObjectCapability",
-                    scope_id=project_id,
-                    object_id=plan.object_id,
-                    index=chunk.index,
-                )
+                capability = session.call("e2eeGetObjectCapability",
+                scope_id=project_id,
+                object_id=plan.object_id,
+                index=chunk.index,)
                 url, headers = _capability(capability, "GET", chunk.ciphertext_size)
                 encrypted = get_ciphertext(
                     url,
@@ -443,7 +450,15 @@ def download_file(
                     wipe(clear)
             output.flush()
             os.fsync(output.fileno())
-        os.link(temporary, destination)
+            if temporary is None:
+                os.link(
+                    f"/proc/self/fd/{output.fileno()}",
+                    destination,
+                    src_dir_fd=0,
+                    follow_symlinks=True,
+                )
+            else:
+                os.link(temporary, destination)
         return plan.plaintext_size
     except FileExistsError:
         raise E2eeError("destination_exists") from None

@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from ._api import GeneratedAPI
 from ._crypto import E2eeCrypto, E2eeError
-from ._oauth import OAuthSession
+from ._oauth import ProfileVault
 from ._session import DeviceSession
-from ._storage import SecureStore, SystemSecureStore
+from ._storage import ProfileSecureStore, SystemSecureStore
 
 
 def open_session(
@@ -12,13 +12,14 @@ def open_session(
     account_origin: str,
     arteligo_origin: str,
     profile: str = "default",
-    store: SecureStore | None = None,
+    store: ProfileSecureStore | None = None,
 ) -> DeviceSession:
     protected = store or SystemSecureStore(profile)
-    oauth = OAuthSession(
+    vault = ProfileVault(
         account_origin=account_origin, arteligo_origin=arteligo_origin, store=protected
     )
-    api = GeneratedAPI(oauth)
+    credentials = vault.bind()
+    api = GeneratedAPI(credentials)
     response = api.call("getProductSession")
     if (
         response.get("kind") != "authenticated"
@@ -28,8 +29,10 @@ def open_session(
     subject = response.get("user", {}).get("id")
     if not isinstance(subject, str) or not subject:
         raise E2eeError("invalid_account_session")
+    credentials.check_current()
     session = DeviceSession(
-        api, E2eeCrypto(), protected, origin=oauth.arteligo_origin, subject=subject
+        api, E2eeCrypto(), protected, origin=credentials.arteligo_origin,
+        subject=subject,
     )
     try:
         session.refresh()

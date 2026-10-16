@@ -22,10 +22,12 @@ def migrate_directory(
     session = records.session
     metadata = session.scope_metadata(scope, refresh=True)
     epoch = metadata["key_epoch"]
-    status = session.api.call("e2eeGetMigration", scope_id=scope)["migration"] or {}
+    status = session.call("e2eeGetMigration", scope_id=scope)["migration"] or {}
     checkpoint_id = status.get("checkpoint_record_id")
     if checkpoint_id is None or status.get("state") == "aborted":
         project = records.read(scope, [scope])[scope]
+        if project["deleted"]:
+            raise E2eeError("not_found")
         if project["value"].get("directory", {}).get("format") == 2:
             return {"phase": "done", "complete": True}
         root, writes = initial_directory()
@@ -48,22 +50,34 @@ def migrate_directory(
                 "value": value,
             }
         )
-        records.write(
-            scope,
-            key_epoch=epoch,
-            records=writes,
-            maintenance={
-                "action": "begin",
-                "migration_id": migration_id,
-                "expected_checkpoint_revision": 0,
-                "checkpoint_record_id": checkpoint_id,
-                "created_record_ids": [
-                    item["record_id"]
-                    for item in writes
-                    if item["record_id"] != checkpoint_id
-                ],
-            },
-        )
+        try:
+            records.write(
+                scope,
+                key_epoch=epoch,
+                records=writes,
+                preconditions=[{
+                    "record_id": scope,
+                    "expected_revision": project["revision"],
+                    "require_live": True,
+                }],
+                maintenance={
+                    "action": "begin",
+                    "migration_id": migration_id,
+                    "expected_checkpoint_revision": 0,
+                    "checkpoint_record_id": checkpoint_id,
+                    "created_record_ids": [
+                        item["record_id"]
+                        for item in writes
+                        if item["record_id"] != checkpoint_id
+                    ],
+                },
+            )
+        except E2eeError as error:
+            if error.code == "revision_conflict":
+                current = records.read(scope, [scope]).get(scope)
+                if current is not None and current["deleted"]:
+                    raise E2eeError("not_found") from error
+            raise
     else:
         migration_id = status["migration_id"]
         if status.get("state") == "aborting":
@@ -119,7 +133,7 @@ def migrate_directory(
                 }[phase]
                 if phase == "entries":
                     status = (
-                        session.api.call("e2eeGetMigration", scope_id=scope)[
+                        session.call("e2eeGetMigration", scope_id=scope)[
                             "migration"
                         ]
                         or {}
@@ -269,18 +283,16 @@ def abort_directory_migration(
     session = records.session
     epoch = session.scope_metadata(scope, refresh=True)["key_epoch"]
     for _ in range(maximum_batches):
-        status = session.api.call("e2eeGetMigration", scope_id=scope)["migration"]
+        status = session.call("e2eeGetMigration", scope_id=scope)["migration"]
         if status is None or status["state"] == "aborted":
             return {"phase": "aborted", "complete": True}
         if status["state"] == "complete":
             raise E2eeError("migration_already_published")
         checkpoint_id = status["checkpoint_record_id"]
-        page = session.api.call(
-            "e2eeGetMigrationCreated",
-            scope_id=scope,
-            migration_id=status["migration_id"],
-            limit=128,
-        )
+        page = session.call("e2eeGetMigrationCreated",
+        scope_id=scope,
+        migration_id=status["migration_id"],
+        limit=128,)
         identifiers = page["record_ids"]
         if (
             len(set(identifiers)) != len(identifiers)

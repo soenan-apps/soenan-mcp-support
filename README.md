@@ -6,7 +6,7 @@ Account が本人確認と OAuth を管理し、Arteligo が端末の承認状�
 
 ## 開発環境への導入
 
-Python 3.10 以降と Rust toolchain が必要です。macOS Keychain、Windows Credential Manager、Linux Secret Service のいずれかを使います。平文ファイルへ保存する keyring backend へは切り替えません。
+Python 3.10 以降と Rust toolchain が必要です。資格情報の保存には、package が依存する `keyring>=25.5` と、macOS Keychain、Windows Credential Manager、Linux Secret Service のいずれかを使います。平文ファイルへ保存する keyring backend へは切り替えません。
 
 ワークスペースのルートから、二つのローカル package を同時に導入します。
 
@@ -27,6 +27,12 @@ arteligo --account-origin ACCOUNT_ORIGIN --arteligo-origin ARTELIGO_ORIGIN statu
 ```
 
 `login` はブラウザーで Account の承認を開き、PKCE を使って loopback callback を受け取ります。ブラウザーへの認証情報入力は利用者が行います。CLI は固定の `arteligo-native-cli` public client と `arteligo:app` scope を使います。
+
+同じ profile の資格情報は、session や process ごとのコピーではなく、OS の保護領域にある一つの項目で管理します。refresh はその profile の process 間で調整し、単回利用の proof を送る前に保留状態を保存します。応答や最終保存の結果が不明な場合は、古い proof を再送しません。保護ストアが使えない場合も、平文ファイルやメモリーだけの保存へ切り替えません。
+
+ブラウザーの操作待ちでは資格情報の lock を保持しません。同時に `login` を始めた場合は、最後に始めた操作だけが新しい資格情報を採用できます。code 交換の結果が不明なときは、以前の利用可能な資格情報を保持します。`logout` は先に古い操作を無効にし、既知の family の失効が保留中なら、それを解消するまで新しい login で上書きしません。同じ profile を古い SDK と同時に操作しないでください。旧形式の有効な access token は利用できても、refresh 可能な新形式へ自動昇格はしないため、再度 `login` が必要です。
+
+session の置換を検出したら、その session が保持する署名・復旧・scope の鍵を利用できなくします。既に受付済みの要求まで取り消されたことにはせず、保存が確定した結果は保持します。project の読取り権限を失ったことが明示された場合は、その scope だけを回収します。一般の認証エラー、利用権の不足、見つからない応答を、project 全体の権限喪失とは扱いません。
 
 最初の端末では `setup` を実行します。端末内で 256 bit の復旧コードと独立した復旧鍵を生成し、コードで暗号化した復旧 bundle だけを送信します。画面に表示された復旧コードを安全な場所へ保存し、保存したコードを入力すると初期設定が完了します。コードを command argument、環境変数、MCP tool に渡しません。
 
@@ -56,7 +62,7 @@ local MCP はプロジェクト一覧、復号した record の読み取り・�
 
 local MCP の汎用 `arteligo_write_record` と `arteligo_delete_record` は chat/comment の直接更新を `conversation_operation_required` で拒否します。会話では `arteligo_chat_send/edit/delete`、`arteligo_comment_create/edit/reply_create/reply_edit/resolution` を使い、origin、head、索引を同じ batch に保存します。読み取りは `arteligo_chat_messages/events/message`、`arteligo_comment_threads/thread/replies/reply`、全履歴の明示検証は `arteligo_chat_message_history` です。コメントのページでは返却された `next_key` をそのまま `after` に渡します。ページ件数は正の整数とし、無効な revision と日時は session を開く前に拒否します。
 
-会話 tool の取消では、次の checkpoint で処理を止めて session を lock します。既に保存が確定した操作は、同じ操作 ID で結果を確認します。同じ profile を使う複数の session や process の OAuth 更新は直列化されません。
+会話 tool の取消では、次の checkpoint で処理を止めて session を lock します。既に保存が確定した操作は、同じ操作 ID で結果を確認します。
 
 内容の書き込みは、chat/comment を含む batch が形式 3、その他が形式 2 です。初回受付の期限と読み取った record の期待 revision を署名に含めます。SDK が設定する期限は作成から 29 日後で、確定結果はサーバーが 30 日間保持します。保存応答が分割された場合は cursor の進行を確認しながら残りを読み取り、送信した全 record の revision、暗号文、署名を検証してから成功を返します。応答を揃えられない場合は更新を再送せず、保存結果が未確認であることを返します。record の平文や署名する command body に、512 KiB や 1 MiB の受付上限は設けません。
 
@@ -140,6 +146,8 @@ conversation.write_chat(
 `EncryptedRecords.immutable_kind(scope, kind, after=..., snapshot_cursor=..., limit=256)` は immutable record を cursor 順で取得します。`limit` は正の件数で、256 は既定の処理単位です。最初のページの `snapshot_cursor` を後続の全ページと kind に渡すと、途中で追加された record を除外できます。`archive` はこの経路から会話を再構成し、固定の件数や平文 byte 数では拒否しません。欠けた証明や変化した snapshot は拒否します。個別に進捗や取消を管理する export は `immutable_kind` のページを直接処理でき、通常の画面表示から archive は呼びません。
 
 旧 directory 形式は `migrate_directory(records, scope, maximum_batches=64)` または local MCP の `arteligo_migrate_directory` で変換します。移行中は通常の内容更新を止め、暗号化した checkpoint から再開します。新しい root を公開するまで旧 directory を保持し、公開後に旧 record を回収します。返り値の `complete` が `false` なら、同じ project を指定して続きを実行します。既存 file ID と Bucket object は変わりません。
+
+移行開始時にはproject rootを読み直し、そのlive状態とrevisionをBEGINの条件へ含めます。競合後に削除を確認した場合は、存在しないdirectoryのエラーを返します。liveのrevisionが変わった場合も、新しい移行IDや署名を作って自動再試行せず、`revision_conflict` を返します。確定済みの同じ署名commandのreceipt再送と、未確定の移行を新しく始め直す操作は区別してください。
 
 公開前の移行を取り消す場合は `abort_directory_migration` または local MCP の `arteligo_abort_directory_migration` を使います。移行で作った node だけを最大 128 件ずつ回収し、最後に checkpoint を最小の tombstone に置き換えて通常更新を再開します。取消の途中も同じ操作で再開でき、旧 directory と file は保持します。公開済みの root はこの操作では取り消せません。
 

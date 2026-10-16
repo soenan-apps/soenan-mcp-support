@@ -209,7 +209,7 @@ def build_preview_encryption_plan(
     if plaintext_size <= 0:
         raise EncryptionContractError("preview plaintext size must be positive")
     count = (plaintext_size + CHUNK_SIZE - 1) // CHUNK_SIZE
-    if count > AAD_CHUNK_COUNT_U32_MAX:
+    if count > AAD_CHUNK_COUNT_U32_MAX or plaintext_size + count * _TAG_SIZE > MAXIMUM_WIRE_INTEGER:
         raise EncryptionContractError("preview exceeds managed chunk limit")
     # Arteligo reserves the nonce base with the preview identity; retries must
     # retain both it and the encoded bytes to avoid reusing a nonce for new text.
@@ -398,7 +398,10 @@ def build_encryption_plan(
     if plaintext_size <= 0:
         raise EncryptionContractError("plaintext size must be positive")
     chunk_count = (plaintext_size + CHUNK_SIZE - 1) // CHUNK_SIZE
-    if not 1 <= chunk_count <= AAD_CHUNK_COUNT_U32_MAX:
+    if (
+        not 1 <= chunk_count <= AAD_CHUNK_COUNT_U32_MAX
+        or plaintext_size + chunk_count * _TAG_SIZE > MAXIMUM_WIRE_INTEGER
+    ):
         raise EncryptionContractError("plaintext exceeds the managed transfer limit")
 
     nonce_base = _replay_stable_nonce_base(
