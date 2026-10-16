@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import math
+import os
 import re
 import shutil
 import subprocess
@@ -18,12 +19,10 @@ from typing import BinaryIO, Iterator
 
 from ._http import TransferError, TransferSizeMismatch, TransferTimeoutError
 
-_PREVIEW_LIMIT = 512 * 1024 * 1024
 _DISK_RESERVE = 256 * 1024 * 1024
 _COPY_SIZE = 256 * 1024
 _CHILD_ENV = {"PATH": "/usr/bin:/bin", "LANG": "C"}
 _LOUDNORM_RESULT = re.compile(rb"\{\s*\"input_i\"\s*:.*?\}", re.DOTALL)
-_HEADER_SCAN_LIMIT = 1024 * 1024
 _SURROUND_WEIGHT = 0.7071067811865476
 _SURROUND_MASKS = frozenset({0x7, 0x33, 0x37, 0x607, 0x3F, 0x60F, 0x63F})
 _WAVE_SUBFORMAT_TAIL = bytes.fromhex("00001000800000aa00389b71")
@@ -50,14 +49,24 @@ class OpusPreview:
 
 
 @contextmanager
+def _preview_file() -> Iterator[tuple[Path, tuple[int, ...]]]:
+    if os.name == "posix":
+        with tempfile.TemporaryFile(mode="w+b") as output:
+            descriptor = output.fileno()
+            yield Path(f"/dev/fd/{descriptor}"), (descriptor,)
+    else:
+        with tempfile.TemporaryDirectory(prefix="arteligo-opus-") as temporary:
+            yield Path(temporary) / "preview.webm", ()
+
+
+@contextmanager
 def prepare_opus_preview(
     source: BinaryIO, *, source_size: int, timeout: float
 ) -> Iterator[OpusPreview]:
     """Encode a seekable WAV stream locally without exposing its path to child processes."""
-    with tempfile.TemporaryDirectory(prefix="arteligo-opus-") as temporary:
-        output = Path(temporary) / "preview.webm"
-        available = shutil.disk_usage(temporary).free - _DISK_RESERVE
-        output_limit = min(_PREVIEW_LIMIT, available)
+    with _preview_file() as (output, descriptors):
+        available = shutil.disk_usage(tempfile.gettempdir()).free - _DISK_RESERVE
+        output_limit = available
         if output_limit <= 0:
             raise TransferError("local preview disk space is insufficient")
         start = source.tell()
@@ -75,15 +84,16 @@ def prepare_opus_preview(
                 output,
                 _remaining(deadline),
                 output_limit,
+                descriptors,
             )
             size = output.stat().st_size
             if not 0 < size <= output_limit:
                 raise TransferError("encoded preview exceeds the local size limit")
-            duration, channels = _verify_encoded_media(output, _remaining(deadline))
+            duration, channels = _verify_encoded_media(output, _remaining(deadline), descriptors)
             bitrate = math.floor(size * 8 / duration + 0.5)
             if not 0 < bitrate <= 2_147_483_647:
                 raise TransferError("encoded preview effective bitrate is unsupported")
-            integrated, peak, loudness_range = _analyze(output, _remaining(deadline))
+            integrated, peak, loudness_range = _analyze(output, _remaining(deadline), descriptors)
             source.seek(start)
             yield OpusPreview(
                 output,
@@ -128,7 +138,7 @@ def preflight_wav_preview(source: BinaryIO, source_size: int) -> None:
         byte_rate: int | None = None
         rf64_data_size: int | None = None
         block_align: int | None = None
-        while offset + 8 <= min(source_size, _HEADER_SCAN_LIMIT):
+        while offset + 8 <= source_size:
             source.seek(start + offset)
             chunk_id, chunk_size = struct.unpack("<4sI", _read_header(source, 8))
             offset += 8
@@ -145,16 +155,13 @@ def preflight_wav_preview(source: BinaryIO, source_size: int) -> None:
                 ):
                     raise TransferError("WAV data size is invalid")
                 duration = chunk_size / byte_rate
-                if duration <= 0 or duration > 86400:
+                if duration <= 0:
                     raise TransferError("WAV preview duration is unsupported")
                 source.seek(start)
                 _wav_pan_filter(source, source_size)
                 return
-            if (
-                chunk_size > _HEADER_SCAN_LIMIT - offset
-                or offset + chunk_size > source_size
-            ):
-                raise TransferError("WAV header exceeds the local scan limit")
+            if offset + chunk_size + (chunk_size & 1) > source_size:
+                raise TransferError("WAV chunk extends beyond the source")
             if chunk_id == b"ds64" and chunk_size >= 16:
                 source.seek(start + offset + 8)
                 rf64_data_size = struct.unpack("<Q", _read_header(source, 8))[0]
@@ -182,17 +189,14 @@ def _wav_pan_filter(source: BinaryIO, source_size: int) -> str | None:
         if header[:4] not in (b"RIFF", b"RF64", b"BW64") or header[8:] != b"WAVE":
             raise TransferError("preview source is not a WAV file")
         offset = 12
-        while offset + 8 <= min(source_size, _HEADER_SCAN_LIMIT):
+        while offset + 8 <= source_size:
             source.seek(start + offset)
             chunk_id, chunk_size = struct.unpack("<4sI", _read_header(source, 8))
             offset += 8
             if chunk_id == b"data":
                 break
-            if (
-                chunk_size > _HEADER_SCAN_LIMIT - offset
-                or offset + chunk_size > source_size
-            ):
-                raise TransferError("WAV format header exceeds the local scan limit")
+            if offset + chunk_size + (chunk_size & 1) > source_size:
+                raise TransferError("WAV chunk extends beyond the source")
             if chunk_id == b"fmt ":
                 if chunk_size < 16:
                     raise TransferError("WAV format header is incomplete")
@@ -257,6 +261,7 @@ def _encode(
     output: Path,
     timeout: float,
     output_limit: int,
+    descriptors: tuple[int, ...] = (),
 ) -> bytes:
     pan_filter = _wav_pan_filter(source, source_size)
     command = [
@@ -305,6 +310,7 @@ def _encode(
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             close_fds=True,
+            pass_fds=descriptors,
             env=_CHILD_ENV,
         )
     except OSError:
@@ -354,10 +360,12 @@ def _encode(
         if process.poll() is None:
             process.kill()
         process.wait()
-        feeder.join(timeout=1)
+        feeder.join()
 
 
-def _verify_encoded_media(output: Path, timeout: float) -> tuple[float, int]:
+def _verify_encoded_media(
+    output: Path, timeout: float, descriptors: tuple[int, ...] = ()
+) -> tuple[float, int]:
     try:
         result = subprocess.run(
             [
@@ -376,6 +384,7 @@ def _verify_encoded_media(output: Path, timeout: float) -> tuple[float, int]:
             timeout=timeout,
             check=False,
             close_fds=True,
+            pass_fds=descriptors,
             env=_CHILD_ENV,
         )
     except (OSError, subprocess.TimeoutExpired):
@@ -395,14 +404,16 @@ def _verify_encoded_media(output: Path, timeout: float) -> tuple[float, int]:
         ):
             raise ValueError
         duration = float(metadata["format"]["duration"])
-        if not math.isfinite(duration) or not 0 < duration <= 86400:
+        if not math.isfinite(duration) or duration <= 0:
             raise ValueError
         return duration, streams[0]["channels"]
     except (KeyError, TypeError, ValueError):
         raise TransferError("encoded preview is not WebM/Opus audio") from None
 
 
-def _analyze(output: Path, timeout: float) -> tuple[int | None, int | None, int | None]:
+def _analyze(
+    output: Path, timeout: float, descriptors: tuple[int, ...] = ()
+) -> tuple[int | None, int | None, int | None]:
     command = [
         _binary("ffmpeg"),
         "-hide_banner",
@@ -431,6 +442,7 @@ def _analyze(output: Path, timeout: float) -> tuple[int | None, int | None, int 
                 timeout=timeout,
                 check=False,
                 close_fds=True,
+                pass_fds=descriptors,
                 env=_CHILD_ENV,
             )
         except subprocess.TimeoutExpired:

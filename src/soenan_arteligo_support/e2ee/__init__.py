@@ -7,9 +7,11 @@ from ._directory import EncryptedDirectory
 from ._directory_migration import abort_directory_migration, migrate_directory
 from ._records import EncryptedRecords
 from ._session import DeviceSession
-from ._storage import SecureStore, SystemSecureStore
+from ._storage import CredentialItem, ProfileSecureStore, SecureStore, SystemSecureStore
 
 __all__ = [
+    "CredentialItem",
+    "ProfileSecureStore",
     "DeviceSession",
     "E2eeCrypto",
     "E2eeError",

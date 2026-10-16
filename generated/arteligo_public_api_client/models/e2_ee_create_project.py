@@ -7,8 +7,8 @@ from attrs import define as _attrs_define
 from typing_extensions import Self
 
 if TYPE_CHECKING:
+    from ..models.e2_ee_content_record_write import E2EeContentRecordWrite
     from ..models.e2_ee_envelope import E2EeEnvelope
-    from ..models.e2_ee_record_write import E2EeRecordWrite
 
 
 T = TypeVar("T", bound="E2EeCreateProject")
@@ -22,14 +22,14 @@ class E2EeCreateProject:
         owner_org (str):
         participation_policy (str):
         envelopes (list[E2EeEnvelope]):
-        records (list[E2EeRecordWrite]):
+        records (list[E2EeContentRecordWrite]):
     """
 
     project_id: str
     owner_org: str
     participation_policy: str
     envelopes: list[E2EeEnvelope]
-    records: list[E2EeRecordWrite]
+    records: list[E2EeContentRecordWrite]
 
     def to_dict(self) -> dict[str, Any]:
         project_id = self.project_id
@@ -64,8 +64,8 @@ class E2EeCreateProject:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.e2_ee_content_record_write import E2EeContentRecordWrite
         from ..models.e2_ee_envelope import E2EeEnvelope
-        from ..models.e2_ee_record_write import E2EeRecordWrite
 
         d = dict(src_dict)
         project_id = d.pop("project_id")
@@ -84,7 +84,7 @@ class E2EeCreateProject:
         records = []
         _records = d.pop("records")
         for records_item_data in _records:
-            records_item = E2EeRecordWrite.from_dict(records_item_data)
+            records_item = E2EeContentRecordWrite.from_dict(records_item_data)
 
             records.append(records_item)
 

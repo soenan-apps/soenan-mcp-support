@@ -12,7 +12,7 @@ authors = [{ name = "Soenan" }]
 dependencies = [
   "attrs>=22.2.0",
   "arteligo-e2ee-native==0.2.0",
-  "keyring>=25.0,<26",
+  "keyring>=25.5.0,<26",
   "mcp>=1.26,<2",
   "pydantic>=2.8,<3",
   "anyio>=4.5,<5",

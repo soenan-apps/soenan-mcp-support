@@ -69,7 +69,7 @@ def sync_detailed(
 ) -> Response[E2EeChangesPage | ErrorEnvelope]:
     """Invalidation metadata without content or signatures. Observation cursors are not verified record
     revisions. Complete transactions are returned; the first transaction may exceed the requested soft
-    limit, up to 256 changes. A cursor outside the retained range returns revision_conflict.
+    limit. A cursor outside the retained range returns revision_conflict.
 
     Args:
         scope_id (str):
@@ -106,7 +106,7 @@ def sync(
 ) -> E2EeChangesPage | ErrorEnvelope | None:
     """Invalidation metadata without content or signatures. Observation cursors are not verified record
     revisions. Complete transactions are returned; the first transaction may exceed the requested soft
-    limit, up to 256 changes. A cursor outside the retained range returns revision_conflict.
+    limit. A cursor outside the retained range returns revision_conflict.
 
     Args:
         scope_id (str):
@@ -138,7 +138,7 @@ async def asyncio_detailed(
 ) -> Response[E2EeChangesPage | ErrorEnvelope]:
     """Invalidation metadata without content or signatures. Observation cursors are not verified record
     revisions. Complete transactions are returned; the first transaction may exceed the requested soft
-    limit, up to 256 changes. A cursor outside the retained range returns revision_conflict.
+    limit. A cursor outside the retained range returns revision_conflict.
 
     Args:
         scope_id (str):
@@ -173,7 +173,7 @@ async def asyncio(
 ) -> E2EeChangesPage | ErrorEnvelope | None:
     """Invalidation metadata without content or signatures. Observation cursors are not verified record
     revisions. Complete transactions are returned; the first transaction may exceed the requested soft
-    limit, up to 256 changes. A cursor outside the retained range returns revision_conflict.
+    limit. A cursor outside the retained range returns revision_conflict.
 
     Args:
         scope_id (str):

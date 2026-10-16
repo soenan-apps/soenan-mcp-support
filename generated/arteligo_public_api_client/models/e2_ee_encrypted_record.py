@@ -12,22 +12,25 @@ if TYPE_CHECKING:
     from ..models.e2_ee_signed_command import E2EeSignedCommand
 
 
-T = TypeVar("T", bound="E2EeRecord")
+T = TypeVar("T", bound="E2EeEncryptedRecord")
 
 
 @_attrs_define
-class E2EeRecord:
-    """
-    Attributes:
-        record_id (str):
-        kind (E2EeRecordKind):
-        revision (int):
-        cursor (int):
-        key_epoch (int):
-        ciphertext (str):
-        deleted (bool):
-        author_device_id (str):
-        signed_command (E2EeSignedCommand):
+class E2EeEncryptedRecord:
+    """Encrypted live content or a stored historical encrypted deletion (deleted true). Authenticate and open its actual
+    AEAD document using the original signed command. This read representation is not permission to submit a new
+    encrypted deletion.
+
+        Attributes:
+            record_id (str):
+            kind (E2EeRecordKind):
+            revision (int):
+            cursor (int):
+            key_epoch (int):
+            ciphertext (str):
+            deleted (bool):
+            author_device_id (str):
+            signed_command (E2EeSignedCommand):
     """
 
     record_id: str
@@ -100,7 +103,7 @@ class E2EeRecord:
 
         signed_command = E2EeSignedCommand.from_dict(d.pop("signed_command"))
 
-        e2_ee_record = cls(
+        e2_ee_encrypted_record = cls(
             record_id=record_id,
             kind=kind,
             revision=revision,
@@ -112,4 +115,4 @@ class E2EeRecord:
             signed_command=signed_command,
         )
 
-        return e2_ee_record
+        return e2_ee_encrypted_record

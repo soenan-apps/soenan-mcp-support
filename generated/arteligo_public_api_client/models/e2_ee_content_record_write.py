@@ -9,11 +9,11 @@ from typing_extensions import Self
 from ..models.e2_ee_record_kind import E2EeRecordKind
 from ..types import UNSET, Unset
 
-T = TypeVar("T", bound="E2EeRecordWrite")
+T = TypeVar("T", bound="E2EeContentRecordWrite")
 
 
 @_attrs_define
-class E2EeRecordWrite:
+class E2EeContentRecordWrite:
     """
     Attributes:
         record_id (str):
@@ -84,7 +84,7 @@ class E2EeRecordWrite:
 
         immutable = d.pop("immutable", UNSET)
 
-        e2_ee_record_write = cls(
+        e2_ee_content_record_write = cls(
             record_id=record_id,
             kind=kind,
             expected_revision=expected_revision,
@@ -94,4 +94,4 @@ class E2EeRecordWrite:
             immutable=immutable,
         )
 
-        return e2_ee_record_write
+        return e2_ee_content_record_write

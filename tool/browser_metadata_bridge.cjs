@@ -10,9 +10,6 @@ async function main() {
     .find(candidate => candidate.url().startsWith(origin + '/'));
   if (!authenticated) throw new Error('browser_page_missing');
   const page = await authenticated.context().newPage();
-  await page.route('**/flutter_bootstrap.js', route => route.fulfill({
-    status: 200, contentType: 'application/javascript', body: '',
-  }));
   await page.goto(origin + '/', { waitUntil: 'domcontentloaded', timeout: 30000 });
   const input = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
   for await (const line of input) {

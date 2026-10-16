@@ -131,7 +131,7 @@ class CommentOperations:
 
     @conflict_retry
     def comment_threads(self, *, anchor=None, after=None, limit=100):
-        if type(limit) is not int or not 1 <= limit <= 100:
+        if type(limit) is not int or limit < 1:
             raise E2eeError("invalid_cursor")
         header = self._load_header(COMMENT_HEADER, "comment", "comment_header")
         key = anchor_key(anchor) if anchor is not None else None
@@ -165,7 +165,6 @@ class CommentOperations:
             ):
                 raise E2eeError("invalid_conversation_index")
             threads.append(self._thread_view(context))
-        self._page_size(threads)
         self._same_records([header])
         self._check_thread_heads(contexts.values())
         return {
@@ -175,7 +174,7 @@ class CommentOperations:
 
     @conflict_retry
     def comment_replies(self, parent_id, *, after=None, limit=100):
-        if type(limit) is not int or not 1 <= limit <= 100:
+        if type(limit) is not int or limit < 1:
             raise E2eeError("invalid_cursor")
         context = self._thread_contexts({parent_id})[parent_id]
         total = number(context["head"]["value"]["replyCount"])
@@ -208,7 +207,6 @@ class CommentOperations:
             following is not None and sequence == total
         ):
             raise E2eeError("invalid_conversation_index")
-        self._page_size(replies)
         self._check_thread_heads([context])
         self._same_records([value["head"] for value in contexts.values()])
         return {"replies": replies, "next_key": following, "total_count": total}

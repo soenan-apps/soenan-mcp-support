@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
 import os
 import re
@@ -32,6 +33,31 @@ class MemoryStore:
         self.values.pop(name, None)
 
 
+@dataclass(frozen=True)
+class BrowserCredentials:
+    bridge: BrowserBridge
+    subject: str
+
+    @property
+    def arteligo_origin(self):
+        return self.bridge.arteligo_origin
+
+    def check_current(self):
+        self.bridge.check_current()
+        response = self.bridge.handle_request(
+            httpx.Request("GET", self.arteligo_origin + "/api/session")
+        )
+        if response.status_code != 200:
+            raise E2eeError("authentication_superseded")
+        product = json.loads(response.read())
+        if product.get("kind") != "authenticated" or product.get("user", {}).get("id") != self.subject:
+            raise E2eeError("authentication_superseded")
+
+    def access_token(self):
+        self.check_current()
+        return self.bridge.access_token()
+
+
 class BrowserBridge(httpx.BaseTransport):
     def __init__(self, args):
         self.arteligo_origin = args.origin.rstrip("/")
@@ -53,8 +79,13 @@ class BrowserBridge(httpx.BaseTransport):
         os.set_blocking(self.process.stdin.fileno(), False)
 
     def access_token(self):
+        self.check_current()
         # The transport uses browser cookies and never forwards this placeholder.
         return "browser-cookie-transport"
+
+    def check_current(self):
+        if self.process.poll() is not None or self.process.stdin.closed:
+            raise E2eeError("authentication_superseded")
 
     def call(self, command):
         deadline = time.monotonic() + 40
@@ -172,6 +203,9 @@ def connect(bridge):
     if product.get("kind") != "authenticated":
         raise E2eeError("authentication_required")
     subject = product["user"]["id"]
+    credentials = BrowserCredentials(bridge, subject)
+    credentials.check_current()
+    api = GeneratedAPI(credentials, transport=bridge)
     protected = bridge.call({"action": "device", "subject": subject})
     if protected is None:
         raise E2eeError("device_approval_required")
@@ -183,7 +217,7 @@ def connect(bridge):
     store.write(session._storage_key, protected)
     for pinned in device.get("pins", {}).values():
         session.trust.pin_device(pinned)
-    recovery = api.call("e2eeGetRecovery")
+    recovery = session.call("e2eeGetRecovery")
     recovery_id = recovery["recovery_id"]
     roots = device.get("recovery_roots", {})
     encryption = device.get("recovery_encryption_pins", {})

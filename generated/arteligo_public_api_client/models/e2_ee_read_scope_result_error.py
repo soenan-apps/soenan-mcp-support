@@ -6,6 +6,7 @@ class E2EeReadScopeResultError(str, Enum):
     AUTHORIZATION_UNAVAILABLE = "authorization_unavailable"
     LIMIT_EXCEEDED = "limit_exceeded"
     NOT_FOUND = "not_found"
+    PROJECT_ACCESS_DENIED = "project_access_denied"
 
     def __str__(self) -> str:
         return str(self.value)

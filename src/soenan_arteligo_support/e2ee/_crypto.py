@@ -76,9 +76,6 @@ class E2eeCrypto:
             )
         except (TypeError, ValueError):
             raise E2eeError("invalid_input") from None
-        if len(raw) > 24 * 1024 * 1024:
-            wipe(raw)
-            raise E2eeError("limit_exceeded")
         input_buffer = (ctypes.c_uint8 * len(raw)).from_buffer(raw)
         pointer = ctypes.POINTER(ctypes.c_uint8)()
         length = ctypes.c_size_t()
@@ -136,8 +133,6 @@ class E2eeCrypto:
         body = self.canonical(document)
         signed = bytearray(f"arteligo-e2ee-v1\n{operation}\n".encode()) + body
         try:
-            if len(body) > 1024 * 1024:
-                raise E2eeError("command_too_large")
             signature = self.execute(
                 {"op": "sign_bytes", "secret_key": secret_key, "bytes": encode(signed)}
             )["signature"]
@@ -156,8 +151,6 @@ class E2eeCrypto:
         body = decode(signed.get("body_bytes"))
         message = bytearray(f"arteligo-e2ee-v1\n{operation}\n".encode()) + body
         try:
-            if len(body) > 1024 * 1024:
-                raise E2eeError("command_too_large")
             self.execute(
                 {
                     "op": "verify_bytes",
