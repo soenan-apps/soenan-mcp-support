@@ -171,12 +171,6 @@ HTTP 契約の正本は Arteligo の `contracts/openapi/arteligo-public.yaml` �
 bin/soenan arteligo contract generate
 ```
 
-`MemoryAPI`、fake HTTP、関数差し替え、暗号・codec 単体を使う旧 pytest suite は削除しました。SDK の業務検証には、配布 package と Rust crypto runtime、実際の Account・Arteligo・PostgreSQL・Valkey・Bucket を使います。端末承認・復旧・失効とファイル転送には、使い捨て利用者、実 OAuth と OS の保護ストア、独立して内容を確認できる保存先が必要です。これらを模擬処理で代用しません。このリポジトリには、その全経路を自動検証する standalone suite はありません。
+SDKの業務検証には、配布packageとRust crypto runtime、実際のAccount・Arteligo・PostgreSQL・Bucketを使います。通常構成にValkeyはありません。通常クライアントでOAuthのブラウザー認証、OSの保護ストアへの保存、端末設定を行い、実際のファイルを保存・取得して内容を確認します。[workspaceの利用者フロー](../docs/local-development.md#利用者フローの確認)を参照してください。
 
-ローカルスタックのブラウザー性能検証には、ワークスペースの `bin/soenan local acceptance arteligo-browser-metadata prepare` を使います。`--cdp-url` で承認済み端末を持つブラウザー、`--origin` でローカル Arteligo、`--entries` で件数、`--manifest` で公開情報だけの検証記録を指定します。既存のブラウザー認証と保護済み端末情報をメモリー内だけで使い、専用プロジェクトに署名・暗号化した file metadata とフォルダー索引を作ります。既定では概要一覧の測定用に空のプロジェクトも 49 件作り、各プロジェクトの削除用 manifest を親の `overview_fixture_manifests` から参照します。既存プロジェクトは変更しません。
-
-この fixture は Bucket object を作らないため、ファイルのダウンロードは検証できません。中断した場合も manifest に残る `scope_id` が削除対象になります。検証後はワークスペース側でその専用 scope を削除します。`check` は保存済み manifest と先頭・続きの各 100 件の名前、file ID、順序、続きの有無を照合し、各ページの端の file record を実 API から復号して照合します。HTTP 回数、応答バイト数、所要時間も記録します。測定専用ページも通常の Flutter 起動を使い、応答を差し替えません。
-
-作成要求の前に公開情報だけの manifest を保存します。作成応答を失った場合は、`archive` が対象 scope の署名付き作成証明を読み直して回収を続けます。作成が確認できない場合は manifest を残し、完了扱いにしません。`archive` 後の `cleanup` はワークスペース側で作成証明と所有者を検査し、専用 scope のメタデータと利用量を回収します。
-
-同じ入口の `benchmark` は、認証済みプロジェクト一覧、先頭 32 project の一括概要取得、fixture の file metadata 先頭 100 件を測定します。既定は同時接続数 1・8・16、各 30 秒、各 3 回です。`--output` へ応答件数、HTTP status、失敗、認証更新回数、応答バイト数、p50・p95 を保存します。Cookie はブラウザー内の要求だけに使い、端末鍵は読み取りません。負荷測定は UI の時間測定や大量データ生成と分けて実行します。
+micro・mock・fakeのsuite、大量metadataの生成・測定driver、専用DBus・keyring・native library環境、identity・source hash・証跡台帳を使うacceptance helperは削除しました。このリポジトリには、通常の認証からファイル転送までを自動確認するstandalone suiteはありません。
