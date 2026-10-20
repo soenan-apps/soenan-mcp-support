@@ -19,7 +19,6 @@ from ._crypto import E2eeError
 def valid_chat_body(body):
     return (
         isinstance(body, str)
-        and len(body) <= 8000
         and all(
             character in "\t\n\r" or (ord(character) >= 32 and ord(character) != 127)
             for character in body
@@ -28,7 +27,7 @@ def valid_chat_body(body):
 
 
 def valid_chat_references(references):
-    if not isinstance(references, list) or len(references) > 10:
+    if not isinstance(references, list):
         return False
     keys = {
         "file": "fileId",
@@ -220,7 +219,7 @@ class ChatOperations:
 
     @conflict_retry
     def chat_messages(self, *, before_sequence=None, limit=100):
-        if type(limit) is not int or not 1 <= limit <= 100:
+        if type(limit) is not int or limit < 1:
             raise E2eeError("invalid_cursor")
         if before_sequence is not None:
             number(before_sequence, 1)
@@ -267,7 +266,6 @@ class ChatOperations:
                     "sentAt": origin["committedAt"],
                 }
             )
-        self._page_size(messages)
         self._check_chat_header(header)
         return {
             "messages": messages,
@@ -299,7 +297,7 @@ class ChatOperations:
     @conflict_retry
     def chat_events(self, *, after=0, limit=200):
         number(after)
-        if type(limit) is not int or not 1 <= limit <= 200:
+        if type(limit) is not int or limit < 1:
             raise E2eeError("invalid_cursor")
         header = self._load_header(CHAT_HEADER, "chat", "chat_header")
         latest = number(header["value"].get("sequence"))
@@ -344,7 +342,6 @@ class ChatOperations:
             self._verify_endpoint(contexts[event["value"]["messageId"]], event)
             for event in events
         ]
-        self._page_size(values)
         self._check_chat_header(header)
         return {
             "events": values,
@@ -393,13 +390,12 @@ class ChatOperations:
         expected_revision=None,
     ):
         references = [] if references is None else references
-        text(message_id)
-        text(operation_id)
         if (
             type not in {"sent", "edited", "deleted"}
+            or not isinstance(message_id, str)
             or re.fullmatch(r"cmsg_[0-9a-f]{32}", message_id) is None
-            or not 16 <= len(operation_id) <= 128
-            or any(not 33 <= ord(character) <= 126 for character in operation_id)
+            or not isinstance(operation_id, str)
+            or re.fullmatch(r"[A-Za-z0-9_-]{1,123}", operation_id) is None
             or ((type == "deleted") != (body is None))
             or (type != "deleted" and not valid_chat_body(body))
             or not valid_chat_references(references)

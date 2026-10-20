@@ -1,27 +1,16 @@
 from __future__ import annotations
 
-import json
-
 from ._conversation_context import FORMAT, number, reference, text
 from ._crypto import E2eeError
 
 
 class ArchiveOperations:
-    def archive(
-        self, *, snapshot_cursor=None, max_records=100_000, max_bytes=64 * 1024 * 1024
-    ):
+    def archive(self, *, snapshot_cursor=None):
         """Explicitly reconstruct a frozen archive, rejecting an incomplete proof population.
 
         Large exports can consume records.immutable_kind pages directly instead.
         """
-        if (
-            type(max_records) is not int
-            or max_records < 1
-            or type(max_bytes) is not int
-            or max_bytes < 1
-        ):
-            raise E2eeError("invalid_request")
-        records, size = {}, 0
+        records = {}
         for kind in ("chat", "comment"):
             after = 0
             while True:
@@ -34,13 +23,6 @@ class ArchiveOperations:
                     identifier = record["record_id"]
                     if identifier in records:
                         raise E2eeError("invalid_conversation_archive")
-                    size += len(
-                        json.dumps(
-                            record["value"], ensure_ascii=False, separators=(",", ":")
-                        ).encode()
-                    )
-                    if len(records) >= max_records or size > max_bytes:
-                        raise E2eeError("conversation_archive_limit")
                     records[identifier] = record
                 if not page["has_more"]:
                     break

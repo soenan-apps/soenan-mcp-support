@@ -22,6 +22,7 @@ from .e2_ee_content_maintenance_action import E2EeContentMaintenanceAction
 from .e2_ee_content_maintenance_created_page import E2EeContentMaintenanceCreatedPage
 from .e2_ee_content_maintenance_response import E2EeContentMaintenanceResponse
 from .e2_ee_content_maintenance_status import E2EeContentMaintenanceStatus
+from .e2_ee_content_record_write import E2EeContentRecordWrite
 from .e2_ee_create_invitation import E2EeCreateInvitation
 from .e2_ee_create_invitation_sec_fetch_site import E2EeCreateInvitationSecFetchSite
 from .e2_ee_create_organization_sec_fetch_site import E2EeCreateOrganizationSecFetchSite
@@ -30,12 +31,15 @@ from .e2_ee_create_project_sec_fetch_site import E2EeCreateProjectSecFetchSite
 from .e2_ee_current_page import E2EeCurrentPage
 from .e2_ee_current_page_commands import E2EeCurrentPageCommands
 from .e2_ee_delete_object_sec_fetch_site import E2EeDeleteObjectSecFetchSite
+from .e2_ee_deletion_marker import E2EeDeletionMarker
+from .e2_ee_deletion_marker_record import E2EeDeletionMarkerRecord
 from .e2_ee_device import E2EeDevice
 from .e2_ee_device_approval import E2EeDeviceApproval
 from .e2_ee_device_certificate import E2EeDeviceCertificate
 from .e2_ee_device_revoke import E2EeDeviceRevoke
 from .e2_ee_device_root_proof import E2EeDeviceRootProof
 from .e2_ee_devices import E2EeDevices
+from .e2_ee_encrypted_record import E2EeEncryptedRecord
 from .e2_ee_enroll_device_sec_fetch_site import E2EeEnrollDeviceSecFetchSite
 from .e2_ee_envelope import E2EeEnvelope
 from .e2_ee_envelopes import E2EeEnvelopes
@@ -78,7 +82,6 @@ from .e2_ee_realtime_event_type_1_reason import E2EeRealtimeEventType1Reason
 from .e2_ee_realtime_event_type_1_type import E2EeRealtimeEventType1Type
 from .e2_ee_recipient_kind import E2EeRecipientKind
 from .e2_ee_recipients import E2EeRecipients
-from .e2_ee_record import E2EeRecord
 from .e2_ee_record_batch import E2EeRecordBatch
 from .e2_ee_record_batch_format_version import E2EeRecordBatchFormatVersion
 from .e2_ee_record_change import E2EeRecordChange
@@ -86,7 +89,6 @@ from .e2_ee_record_kind import E2EeRecordKind
 from .e2_ee_record_page import E2EeRecordPage
 from .e2_ee_record_precondition import E2EeRecordPrecondition
 from .e2_ee_record_reference import E2EeRecordReference
-from .e2_ee_record_write import E2EeRecordWrite
 from .e2_ee_recovery_bundle import E2EeRecoveryBundle
 from .e2_ee_recovery_public import E2EeRecoveryPublic
 from .e2_ee_recovery_restore import E2EeRecoveryRestore
@@ -152,6 +154,7 @@ __all__ = (
     "E2EeContentMaintenanceCreatedPage",
     "E2EeContentMaintenanceResponse",
     "E2EeContentMaintenanceStatus",
+    "E2EeContentRecordWrite",
     "E2EeCreateInvitation",
     "E2EeCreateInvitationSecFetchSite",
     "E2EeCreateOrganizationSecFetchSite",
@@ -160,12 +163,15 @@ __all__ = (
     "E2EeCurrentPage",
     "E2EeCurrentPageCommands",
     "E2EeDeleteObjectSecFetchSite",
+    "E2EeDeletionMarker",
+    "E2EeDeletionMarkerRecord",
     "E2EeDevice",
     "E2EeDeviceApproval",
     "E2EeDeviceCertificate",
     "E2EeDeviceRevoke",
     "E2EeDeviceRootProof",
     "E2EeDevices",
+    "E2EeEncryptedRecord",
     "E2EeEnrollDeviceSecFetchSite",
     "E2EeEnvelope",
     "E2EeEnvelopes",
@@ -206,7 +212,6 @@ __all__ = (
     "E2EeRealtimeEventType1Type",
     "E2EeRecipientKind",
     "E2EeRecipients",
-    "E2EeRecord",
     "E2EeRecordBatch",
     "E2EeRecordBatchFormatVersion",
     "E2EeRecordChange",
@@ -214,7 +219,6 @@ __all__ = (
     "E2EeRecordPage",
     "E2EeRecordPrecondition",
     "E2EeRecordReference",
-    "E2EeRecordWrite",
     "E2EeRecoveryBundle",
     "E2EeRecoveryPublic",
     "E2EeRecoveryRestore",

@@ -17,15 +17,17 @@ def migrate_directory(
     records: EncryptedRecords, scope: str, *, maximum_batches: int = 64
 ) -> dict[str, Any]:
     """Advance a durable client-side migration without holding the whole tree in memory."""
-    if not 1 <= maximum_batches <= 1024:
+    if type(maximum_batches) is not int or maximum_batches < 1:
         raise E2eeError("invalid_batch")
     session = records.session
     metadata = session.scope_metadata(scope, refresh=True)
     epoch = metadata["key_epoch"]
-    status = session.api.call("e2eeGetMigration", scope_id=scope)["migration"] or {}
+    status = session.call("e2eeGetMigration", scope_id=scope)["migration"] or {}
     checkpoint_id = status.get("checkpoint_record_id")
     if checkpoint_id is None or status.get("state") == "aborted":
         project = records.read(scope, [scope])[scope]
+        if project["deleted"]:
+            raise E2eeError("not_found")
         if project["value"].get("directory", {}).get("format") == 2:
             return {"phase": "done", "complete": True}
         root, writes = initial_directory()
@@ -48,22 +50,34 @@ def migrate_directory(
                 "value": value,
             }
         )
-        records.write(
-            scope,
-            key_epoch=epoch,
-            records=writes,
-            maintenance={
-                "action": "begin",
-                "migration_id": migration_id,
-                "expected_checkpoint_revision": 0,
-                "checkpoint_record_id": checkpoint_id,
-                "created_record_ids": [
-                    item["record_id"]
-                    for item in writes
-                    if item["record_id"] != checkpoint_id
-                ],
-            },
-        )
+        try:
+            records.write(
+                scope,
+                key_epoch=epoch,
+                records=writes,
+                preconditions=[{
+                    "record_id": scope,
+                    "expected_revision": project["revision"],
+                    "require_live": True,
+                }],
+                maintenance={
+                    "action": "begin",
+                    "migration_id": migration_id,
+                    "expected_checkpoint_revision": 0,
+                    "checkpoint_record_id": checkpoint_id,
+                    "created_record_ids": [
+                        item["record_id"]
+                        for item in writes
+                        if item["record_id"] != checkpoint_id
+                    ],
+                },
+            )
+        except E2eeError as error:
+            if error.code == "revision_conflict":
+                current = records.read(scope, [scope]).get(scope)
+                if current is not None and current["deleted"]:
+                    raise E2eeError("not_found") from error
+            raise
     else:
         migration_id = status["migration_id"]
         if status.get("state") == "aborting":
@@ -119,7 +133,7 @@ def migrate_directory(
                 }[phase]
                 if phase == "entries":
                     status = (
-                        session.api.call("e2eeGetMigration", scope_id=scope)[
+                        session.call("e2eeGetMigration", scope_id=scope)[
                             "migration"
                         ]
                         or {}
@@ -167,7 +181,6 @@ def migrate_directory(
                         "record_id": source["record_id"],
                         "kind": "directory",
                         "expected_revision": source["revision"],
-                        "value": {},
                         "deleted": True,
                     }
                 )
@@ -265,27 +278,24 @@ def abort_directory_migration(
     records: EncryptedRecords, scope: str, *, maximum_batches: int = 64
 ) -> dict[str, Any]:
     """Remove only staged migration records, retaining the published legacy index."""
-    if not 1 <= maximum_batches <= 1024:
+    if type(maximum_batches) is not int or maximum_batches < 1:
         raise E2eeError("invalid_batch")
     session = records.session
     epoch = session.scope_metadata(scope, refresh=True)["key_epoch"]
     for _ in range(maximum_batches):
-        status = session.api.call("e2eeGetMigration", scope_id=scope)["migration"]
+        status = session.call("e2eeGetMigration", scope_id=scope)["migration"]
         if status is None or status["state"] == "aborted":
             return {"phase": "aborted", "complete": True}
         if status["state"] == "complete":
             raise E2eeError("migration_already_published")
         checkpoint_id = status["checkpoint_record_id"]
-        page = session.api.call(
-            "e2eeGetMigrationCreated",
-            scope_id=scope,
-            migration_id=status["migration_id"],
-            limit=128,
-        )
+        page = session.call("e2eeGetMigrationCreated",
+        scope_id=scope,
+        migration_id=status["migration_id"],
+        limit=128,)
         identifiers = page["record_ids"]
         if (
-            len(identifiers) > 128
-            or len(set(identifiers)) != len(identifiers)
+            len(set(identifiers)) != len(identifiers)
             or checkpoint_id in identifiers
         ):
             raise E2eeError("invalid_directory")
@@ -317,7 +327,6 @@ def abort_directory_migration(
                     "record_id": identifier,
                     "kind": "directory",
                     "expected_revision": record["revision"],
-                    "value": {},
                     "deleted": True,
                 }
             )
@@ -327,8 +336,7 @@ def abort_directory_migration(
                 "record_id": checkpoint_id,
                 "kind": "directory",
                 "expected_revision": checkpoint["revision"],
-                "value": {} if final else checkpoint["value"],
-                "deleted": final,
+                **({"deleted": True} if final else {"value": checkpoint["value"]}),
             }
         )
         records.write(

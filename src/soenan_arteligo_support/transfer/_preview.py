@@ -118,9 +118,7 @@ def upload_wav_preview(
                 )
                 if pending["state"] == "waiting":
                     try:
-                        descriptor = session.api.call(
-                            "e2eeGetObject", scope_id=project_id, object_id=identifier
-                        )
+                        descriptor = session.call("e2eeGetObject", scope_id=project_id, object_id=identifier)
                     except E2eeError as error:
                         if error.code != "not_found":
                             raise

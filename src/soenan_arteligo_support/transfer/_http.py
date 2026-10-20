@@ -138,8 +138,8 @@ def put_ciphertext(
     watchdog: threading.Timer | None = None
     try:
         connection = _connection(parsed, timeouts, deadline, transport)
-        watchdog = _deadline_watchdog(connection, deadline)
         connection.connect()
+        watchdog = _deadline_watchdog(connection, deadline)
         _set_socket_timeout(connection, timeouts, deadline)
         connection.putrequest(
             "PUT", _request_target(parsed), skip_host=True, skip_accept_encoding=True
@@ -159,6 +159,7 @@ def put_ciphertext(
             if response.status not in (200, 204):
                 raise TransferHTTPError(response.status)
             response.read(1)
+            _remaining(deadline)
         finally:
             response.close()
     except TransferError:
@@ -172,6 +173,7 @@ def put_ciphertext(
     finally:
         if watchdog is not None:
             watchdog.cancel()
+            watchdog.join()
         if connection is not None:
             connection.close()
 
@@ -192,8 +194,8 @@ def get_ciphertext(
     watchdog: threading.Timer | None = None
     try:
         connection = _connection(parsed, timeouts, deadline, transport)
-        watchdog = _deadline_watchdog(connection, deadline)
         connection.connect()
+        watchdog = _deadline_watchdog(connection, deadline)
         _set_socket_timeout(connection, timeouts, deadline)
         connection.putrequest(
             "GET", _request_target(parsed), skip_host=True, skip_accept_encoding=True
@@ -217,6 +219,7 @@ def get_ciphertext(
             ):
                 raise TransferSizeMismatch()
             ciphertext = response.read(expected_length + 1)
+            _remaining(deadline)
             if len(ciphertext) != expected_length:
                 raise TransferSizeMismatch()
             return ciphertext
@@ -233,12 +236,13 @@ def get_ciphertext(
     finally:
         if watchdog is not None:
             watchdog.cancel()
+            watchdog.join()
         if connection is not None:
             connection.close()
 
 
 def _parse_url(url: str, transport: TransferTransport) -> SplitResult:
-    if not isinstance(url, str) or not url or len(url) > 8192 or "#" in url:
+    if not isinstance(url, str) or not url or "#" in url:
         raise TransferError("Bucket capability URL is invalid")
     try:
         parsed = urlsplit(url)
@@ -286,7 +290,6 @@ def _validated_headers(headers: Mapping[str, str]) -> dict[str, str]:
             raise TransferError("Bucket capability headers are invalid")
         if (
             not raw_value
-            or len(raw_value) > 1024
             or any(character in raw_value for character in ("\r", "\n", "\x00"))
         ):
             raise TransferError("Bucket capability headers are invalid")
@@ -381,7 +384,13 @@ def _remaining(deadline: float) -> float:
 def _deadline_watchdog(
     connection: http.client.HTTPConnection, deadline: float
 ) -> threading.Timer:
+    connected_socket = connection.sock
     def expire() -> None:
+        if connected_socket is not None:
+            try:
+                connected_socket.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
         connection.close()
 
     timer = threading.Timer(max(0.0, deadline - time.monotonic()), expire)

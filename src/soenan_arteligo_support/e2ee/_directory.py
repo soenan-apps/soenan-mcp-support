@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import secrets
 from bisect import bisect_right
 from collections.abc import Iterator
@@ -20,11 +19,7 @@ def _key(entry: dict[str, Any]) -> tuple[bytes, bytes]:
 
 def _fits(value: dict[str, Any]) -> bool:
     items = value.get("entries", value.get("children", []))
-    return (
-        len(items) <= 64
-        and len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode())
-        <= 65536
-    )
+    return len(items) <= 64
 
 
 def initial_directory() -> tuple[str, list[dict[str, Any]]]:
@@ -103,7 +98,7 @@ class EncryptedDirectory:
         if record["kind"] != "directory" or record["value"].get("format") != 2:
             raise E2eeError("invalid_directory")
         value = record["value"]
-        if value.get("type") not in {"branch", "leaf"} or not _fits(value):
+        if value.get("type") not in {"branch", "leaf"}:
             raise E2eeError("invalid_directory")
         items = (
             value["entries"]
@@ -119,9 +114,9 @@ class EncryptedDirectory:
         self,
         reference: dict[str, Any],
         after: tuple[bytes, bytes] | None,
-        depth: int = 0,
+        ancestors: frozenset[str] = frozenset(),
     ) -> Iterator[dict[str, Any]]:
-        if depth >= 32:
+        if reference["id"] in ancestors:
             raise E2eeError("invalid_directory")
         node = self._node(reference)["value"]
         if node["type"] == "leaf":
@@ -138,7 +133,7 @@ class EncryptedDirectory:
             else 0
         )
         for child in children[start:]:
-            yield from self._entries(child["node"], after, depth + 1)
+            yield from self._entries(child["node"], after, ancestors | {reference["id"]})
 
     def page(
         self,
@@ -162,7 +157,7 @@ class EncryptedDirectory:
     def _page(
         self, *, folder_id: str | None, limit: int, cursor: dict[str, Any] | None
     ) -> dict[str, Any]:
-        if not 1 <= limit <= 200:
+        if type(limit) is not int or limit < 1:
             raise E2eeError("invalid_cursor")
         self._loaded.clear()
         folder = self._folder(folder_id)
@@ -228,8 +223,6 @@ class EncryptedDirectory:
             for piece in pieces:
                 if _fits({**node, field: piece}):
                     refined.append(piece)
-                elif len(piece) < 2:
-                    raise E2eeError("directory_entry_too_large")
                 else:
                     middle = len(piece) // 2
                     refined.extend((piece[:middle], piece[middle:]))
@@ -246,9 +239,9 @@ class EncryptedDirectory:
         return children
 
     def _insert(
-        self, reference: dict[str, Any], entry: dict[str, Any], depth: int = 0
+        self, reference: dict[str, Any], entry: dict[str, Any], ancestors: frozenset[str] = frozenset()
     ) -> list[dict[str, Any]]:
-        if depth >= 32:
+        if reference["id"] in ancestors:
             raise E2eeError("invalid_directory")
         record = self._node(reference)
         node = record["value"]
@@ -269,7 +262,7 @@ class EncryptedDirectory:
             bisect_right([_key(child["first"]) for child in children], _key(entry)) - 1,
         )
         children[index : index + 1] = self._insert(
-            children[index]["node"], entry, depth + 1
+            children[index]["node"], entry, ancestors | {reference["id"]}
         )
         return self._store_node(record["record_id"], {**node, "children": children})
 
@@ -287,7 +280,6 @@ class EncryptedDirectory:
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         if (
             not entries
-            or len(entries) > 64
             or len({entry.get("parentFolderId") for entry in entries}) != 1
         ):
             raise E2eeError("invalid_batch")
@@ -299,7 +291,7 @@ class EncryptedDirectory:
         seen = set()
         while True:
             identifier = ancestor["record_id"]
-            if identifier in seen or len(seen) >= 512:
+            if identifier in seen:
                 raise E2eeError("invalid_directory")
             seen.add(identifier)
             preconditions.append(

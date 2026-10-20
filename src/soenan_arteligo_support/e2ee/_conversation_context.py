@@ -136,8 +136,6 @@ class ConversationContext:
 
     def _read(self, ids: Iterable[str]):
         wanted = list(dict.fromkeys(ids))
-        if len(wanted) > 512:
-            raise E2eeError("conversation_read_limit")
         result = {}
         for start in range(0, len(wanted), 256):
             self.checkpoint()
@@ -153,7 +151,7 @@ class ConversationContext:
 
     def _write(self, writes, preconditions=None):
         self.checkpoint()
-        if not writes or len(writes) > 256:
+        if not writes:
             raise E2eeError("conversation_write_limit")
         epoch = self.records.session.scope_metadata(self.scope)["key_epoch"]
         self.records.write(
@@ -221,12 +219,6 @@ class ConversationContext:
 
         return OrderedIndex(read, self.mint_id, kind)
 
-    def _page_size(self, values):
-        if (
-            len(json.dumps(values, ensure_ascii=False, separators=(",", ":")).encode())
-            > 8 * 1024 * 1024
-        ):
-            raise E2eeError("conversation_page_byte_limit")
 
     def _same_records(self, before):
         current = self._read(record["record_id"] for record in before)

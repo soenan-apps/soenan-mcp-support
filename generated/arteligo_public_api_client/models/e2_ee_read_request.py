@@ -19,7 +19,7 @@ T = TypeVar("T", bound="E2EeReadRequest")
 class E2EeReadRequest:
     """
     Attributes:
-        scopes (list[E2EeReadScope]): Distinct scope IDs with at most 256 record IDs across all scopes.
+        scopes (list[E2EeReadScope]): Distinct scope IDs and caller-selected record IDs.
         include_keys (bool | Unset):  Default: True.
     """
 

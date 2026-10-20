@@ -67,8 +67,8 @@ def sync_detailed(
     after_epoch: int | Unset = UNSET,
     limit: int | Unset = UNSET,
 ) -> Response[E2EeEpochs | ErrorEnvelope]:
-    """Returns an ordered prefix bounded by limit and 8 MiB. A short page can have a continuation; advance
-    after_epoch to the last returned epoch until the required epoch is reached.
+    """Returns an ordered prefix bounded by the caller-selected limit. A short page can have a
+    continuation; advance after_epoch to the last returned epoch until the required epoch is reached.
 
     Args:
         scope_id (str):
@@ -103,8 +103,8 @@ def sync(
     after_epoch: int | Unset = UNSET,
     limit: int | Unset = UNSET,
 ) -> E2EeEpochs | ErrorEnvelope | None:
-    """Returns an ordered prefix bounded by limit and 8 MiB. A short page can have a continuation; advance
-    after_epoch to the last returned epoch until the required epoch is reached.
+    """Returns an ordered prefix bounded by the caller-selected limit. A short page can have a
+    continuation; advance after_epoch to the last returned epoch until the required epoch is reached.
 
     Args:
         scope_id (str):
@@ -134,8 +134,8 @@ async def asyncio_detailed(
     after_epoch: int | Unset = UNSET,
     limit: int | Unset = UNSET,
 ) -> Response[E2EeEpochs | ErrorEnvelope]:
-    """Returns an ordered prefix bounded by limit and 8 MiB. A short page can have a continuation; advance
-    after_epoch to the last returned epoch until the required epoch is reached.
+    """Returns an ordered prefix bounded by the caller-selected limit. A short page can have a
+    continuation; advance after_epoch to the last returned epoch until the required epoch is reached.
 
     Args:
         scope_id (str):
@@ -168,8 +168,8 @@ async def asyncio(
     after_epoch: int | Unset = UNSET,
     limit: int | Unset = UNSET,
 ) -> E2EeEpochs | ErrorEnvelope | None:
-    """Returns an ordered prefix bounded by limit and 8 MiB. A short page can have a continuation; advance
-    after_epoch to the last returned epoch until the required epoch is reached.
+    """Returns an ordered prefix bounded by the caller-selected limit. A short page can have a
+    continuation; advance after_epoch to the last returned epoch until the required epoch is reached.
 
     Args:
         scope_id (str):

@@ -9,10 +9,11 @@ from typing import Any, Protocol, get_args, get_type_hints
 import httpx
 
 from ._crypto import E2eeError
-from ._oauth import OAuthSession
+from ._oauth import BoundCredentials
 
 
 class E2eeAPI(Protocol):
+    credentials: BoundCredentials
     def call(
         self, operation: str, *, body: dict[str, Any] | None = None, **parameters: Any
     ) -> dict[str, Any]: ...
@@ -22,9 +23,9 @@ class GeneratedAPI:
     """Transport adapter over the product-owned, generated public API client."""
 
     def __init__(
-        self, oauth: OAuthSession, *, transport: httpx.BaseTransport | None = None
+        self, credentials: BoundCredentials, *, transport: httpx.BaseTransport | None = None
     ):
-        self.oauth = oauth
+        self.credentials = credentials
         self.transport = transport
 
     def call(
@@ -62,8 +63,8 @@ class GeneratedAPI:
                 model = hints["body"]
                 parameters["body"] = model.from_dict(body)
             client = AuthenticatedClient(
-                base_url=self.oauth.arteligo_origin,
-                token=self.oauth.access_token(),
+                base_url=self.credentials.arteligo_origin,
+                token=self.credentials.access_token(),
                 timeout=httpx.Timeout(30),
                 follow_redirects=False,
                 raise_on_unexpected_status=False,
@@ -92,15 +93,14 @@ class GeneratedAPI:
                         "quota_exceeded",
                         "rekey_required",
                         "device_revoked",
+                        "project_access_denied",
                         "service_terms_acceptance_required",
                         "content_format_update_required",
-                    }:
+                    } and (detail != "project_access_denied" or status == 403):
                         code = detail
                 except (ValueError, AttributeError):
                     pass
                 raise E2eeError(code)
-            if len(response.content) > 16 * 1024 * 1024:
-                raise E2eeError("limit_exceeded")
             if response.parsed is None:
                 if status in {201, 204}:
                     return {}

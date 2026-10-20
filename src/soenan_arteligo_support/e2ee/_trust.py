@@ -43,8 +43,6 @@ class KeyTrust:
         self._endorsements: list[dict[str, Any]] = []
 
     def set_endorsements(self, statements: list[dict[str, Any]]) -> None:
-        if len(statements) > 1024:
-            raise E2eeError("trust_limit_exceeded")
         self._endorsements = statements
 
     def _endorsed(
@@ -156,11 +154,7 @@ class KeyTrust:
         visiting: frozenset[str] = frozenset(),
     ) -> dict[str, Any]:
         identifier = device.get("device_id")
-        if (
-            not isinstance(identifier, str)
-            or identifier in visiting
-            or len(visiting) >= 32
-        ):
+        if not isinstance(identifier, str) or identifier in visiting:
             raise E2eeError("untrusted_device")
         previous = self._load("devices", identifier)
         if previous is not None:
