@@ -9,10 +9,13 @@ import sys
 import tempfile
 import time
 import uuid
+from base64 import b64encode
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlsplit
 
 from ..e2ee._crypto import E2eeError, decode, encode, wipe
 from ..e2ee._directory import EncryptedDirectory
@@ -53,10 +56,21 @@ def _file_metadata_for_write(value: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def _completed_file_metadata(pending: dict[str, Any], file: dict[str, Any]) -> dict[str, Any]:
+def _completed_file_metadata(
+    pending: dict[str, Any], file: dict[str, Any]
+) -> dict[str, Any]:
     value = _file_metadata_for_write(pending)
-    for key in ("uploadId", "keyEpoch", "sourceState", "entryIntent", "filename", "mimeType",
-                "originalFilename", "originalPlaintextSize", "fileKind"):
+    for key in (
+        "uploadId",
+        "keyEpoch",
+        "sourceState",
+        "entryIntent",
+        "filename",
+        "mimeType",
+        "originalFilename",
+        "originalPlaintextSize",
+        "fileKind",
+    ):
         value.pop(key, None)
     return {**value, "file": file}
 
@@ -71,14 +85,21 @@ def _completed_upload(
         candidates = [identifier]
     else:
         writes = records.committed_record_writes(scope, pending)
-        candidates = [value["record_id"] for value in writes
-                      if value["kind"] == "file" and value.get("deleted") is False
-                      and "ciphertext" in value]
+        candidates = [
+            value["record_id"]
+            for value in writes
+            if value["kind"] == "file"
+            and value.get("deleted") is False
+            and "ciphertext" in value
+        ]
     if not candidates or len(candidates) != len(set(candidates)):
         raise E2eeError("upload_not_found")
-    matches = [record for record in records.read(scope, candidates).values()
-               if record["payload_type"] == "content"
-               and record["value"].get("file", {}).get("encryptedObjectId") == upload_id]
+    matches = [
+        record
+        for record in records.read(scope, candidates).values()
+        if record["payload_type"] == "content"
+        and record["value"].get("file", {}).get("encryptedObjectId") == upload_id
+    ]
     if len(matches) != 1:
         raise E2eeError("upload_not_found")
     return matches[0]
@@ -106,18 +127,120 @@ def _object(
 
 
 def _capability(
-    value: dict[str, Any], method: str, length: int
+    value: dict[str, Any],
+    *,
+    method: str,
+    scope: str,
+    object_id: str,
+    index: int,
+    length: int,
+    ciphertext: bytes | None = None,
 ) -> tuple[str, dict[str, str]]:
+    if not isinstance(value, dict) or method not in {"GET", "PUT"}:
+        raise E2eeError("invalid_capability")
+    for identifier in (scope, object_id):
+        if (
+            not isinstance(identifier, str)
+            or not 1 <= len(identifier) <= 128
+            or not all(
+                character.isascii() and (character.isalnum() or character in "-_")
+                for character in identifier
+            )
+        ):
+            raise E2eeError("invalid_capability")
     if (
-        value.get("method") != method
-        or not isinstance(value.get("expires_at"), int)
-        or value["expires_at"] <= time.time()
-        or value.get("content_length", length) not in {None, length}
-        or not isinstance(value.get("url"), str)
-        or not isinstance(value.get("headers"), dict)
+        isinstance(index, bool)
+        or not isinstance(index, int)
+        or not 0 <= index <= 4_294_967_294
+        or isinstance(length, bool)
+        or not isinstance(length, int)
+        or length <= 0
     ):
         raise E2eeError("invalid_capability")
-    return value["url"], value["headers"]
+    expires_at = value.get("expires_at")
+    if (
+        isinstance(expires_at, bool)
+        or not isinstance(expires_at, int)
+        or expires_at <= time.time()
+        or value.get("method") != method
+    ):
+        raise E2eeError("invalid_capability")
+    url = value.get("url")
+    if (
+        not isinstance(url, str)
+        or url != url.strip()
+        or any(
+            character.isspace()
+            or ord(character) < 0x20
+            or ord(character) == 0x7F
+            or character == "\\"
+            for character in url
+        )
+    ):
+        raise E2eeError("invalid_capability")
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        raise E2eeError("invalid_capability") from None
+    if (
+        parsed.scheme.lower() not in {"http", "https"}
+        or not parsed.netloc
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.fragment
+    ):
+        raise E2eeError("invalid_capability")
+    path = unquote(parsed.path)
+    if (
+        "%" in path
+        or "\\" in path
+        or "//" in path
+        or any(segment in {".", ".."} for segment in path.split("/"))
+        or any(ord(character) < 0x20 or ord(character) == 0x7F for character in path)
+        or not path.endswith(
+            f"/projects/{scope}/encrypted-objects/{object_id}/chunks/{index}.bin"
+        )
+    ):
+        raise E2eeError("invalid_capability")
+    headers = value.get("headers")
+    if not isinstance(headers, Mapping) or any(
+        not isinstance(name, str)
+        or not isinstance(header, str)
+        or name != name.lower()
+        or not header
+        or any(character in header for character in ("\r", "\n", "\x00"))
+        for name, header in headers.items()
+    ):
+        raise E2eeError("invalid_capability")
+    content_length = value.get("content_length")
+    if method == "PUT":
+        if (
+            not headers.keys() <= {"content-type", "x-amz-checksum-sha256"}
+            or headers.get("content-type", "application/octet-stream")
+            != "application/octet-stream"
+            or isinstance(content_length, bool)
+            or not isinstance(content_length, int)
+            or content_length != length
+            or not isinstance(ciphertext, (bytes, bytearray))
+            or len(ciphertext) != length
+            or headers.get("x-amz-checksum-sha256")
+            != b64encode(sha256(ciphertext).digest()).decode("ascii")
+        ):
+            raise E2eeError("invalid_capability")
+    elif (
+        headers
+        or ciphertext is not None
+        or (
+            "content_length" in value
+            and (
+                isinstance(content_length, bool)
+                or not isinstance(content_length, int)
+                or content_length != length
+            )
+        )
+    ):
+        raise E2eeError("invalid_capability")
+    return url, dict(headers)
 
 
 def upload_file(
@@ -147,7 +270,7 @@ def upload_file(
         with source.open("rb") as stream:
             size = os.fstat(stream.fileno()).st_size
             if size <= 0:
-                raise E2eeError('file_size_invalid')
+                raise E2eeError("file_size_invalid")
             if pending is None:
                 if upload_id is not None:
                     raise E2eeError("upload_not_found")
@@ -194,7 +317,12 @@ def upload_file(
                 )[0]
             else:
                 private = (completed or pending)["value"]
-                if private.get("uploadId", private.get("file", {}).get("encryptedObjectId")) != identifier:
+                if (
+                    private.get(
+                        "uploadId", private.get("file", {}).get("encryptedObjectId")
+                    )
+                    != identifier
+                ):
                     raise E2eeError("upload_not_found")
                 manifest = private["source"]
                 object_value = manifest["object"]
@@ -239,7 +367,9 @@ def upload_file(
                 if completed is not None and completed["record_id"] != file_id:
                     raise E2eeError("invalid_object_context")
             if completed is not None:
-                descriptor = session.call("e2eeGetObject", scope_id=project_id, object_id=identifier)
+                descriptor = session.call(
+                    "e2eeGetObject", scope_id=project_id, object_id=identifier
+                )
             else:
                 descriptor = session.command(
                     "e2eeBeginObject",
@@ -277,7 +407,15 @@ def upload_file(
                         capability = _object(
                             session, project_id, identifier, "put", chunk.index
                         )
-                        url, headers = _capability(capability, "PUT", len(ciphertext))
+                        url, headers = _capability(
+                            capability,
+                            method="PUT",
+                            scope=project_id,
+                            object_id=identifier,
+                            index=chunk.index,
+                            length=chunk.ciphertext_size,
+                            ciphertext=ciphertext,
+                        )
                         put_ciphertext(
                             url,
                             headers,
@@ -301,7 +439,8 @@ def upload_file(
             if (
                 committed is not None
                 and not committed["deleted"]
-                and committed["value"].get("file", {}).get("encryptedObjectId") == identifier
+                and committed["value"].get("file", {}).get("encryptedObjectId")
+                == identifier
             ):
                 return result
             raise E2eeError("upload_not_found")
@@ -342,10 +481,20 @@ def upload_file(
             "breadcrumbs": [],
         }
         writes = [
-            {"record_id": "floc_" + file_id, "kind": "directory", "expected_revision": 0,
-             "value": {"format": 2, "type": "file_locator", "fileId": file_id,
-                       "entryId": entry_id, "name": entry["name"],
-                       "parentFolderId": entry["parentFolderId"], "entryRevision": 1}},
+            {
+                "record_id": "floc_" + file_id,
+                "kind": "directory",
+                "expected_revision": 0,
+                "value": {
+                    "format": 2,
+                    "type": "file_locator",
+                    "fileId": file_id,
+                    "entryId": entry_id,
+                    "name": entry["name"],
+                    "parentFolderId": entry["parentFolderId"],
+                    "entryRevision": 1,
+                },
+            },
             {
                 "record_id": file_id,
                 "kind": "file",
@@ -412,7 +561,9 @@ def download_file(
             wrapped_nonce=bytes(decode(wrapped["nonceB64u"])),
             wrapped_data_key=bytes(decode(wrapped["ciphertextB64u"])),
         )
-        descriptor = session.call("e2eeGetObject", scope_id=project_id, object_id=plan.object_id)
+        descriptor = session.call(
+            "e2eeGetObject", scope_id=project_id, object_id=plan.object_id
+        )
         if descriptor.get("state") != "ready":
             raise E2eeError("object_not_ready")
         output_file = None
@@ -420,7 +571,12 @@ def download_file(
             try:
                 handle = os.open(destination.parent, os.O_TMPFILE | os.O_RDWR, 0o600)
             except OSError as error:
-                if error.errno not in {errno.EOPNOTSUPP, errno.EINVAL, errno.EISDIR, errno.ENOSYS}:
+                if error.errno not in {
+                    errno.EOPNOTSUPP,
+                    errno.EINVAL,
+                    errno.EISDIR,
+                    errno.ENOSYS,
+                }:
                     raise
             else:
                 output_file = os.fdopen(handle, "w+b")
@@ -431,11 +587,20 @@ def download_file(
             output_file = os.fdopen(handle, "wb")
         with output_file as output:
             for chunk in plan.chunks:
-                capability = session.call("e2eeGetObjectCapability",
-                scope_id=project_id,
-                object_id=plan.object_id,
-                index=chunk.index,)
-                url, headers = _capability(capability, "GET", chunk.ciphertext_size)
+                capability = session.call(
+                    "e2eeGetObjectCapability",
+                    scope_id=project_id,
+                    object_id=plan.object_id,
+                    index=chunk.index,
+                )
+                url, headers = _capability(
+                    capability,
+                    method="GET",
+                    scope=project_id,
+                    object_id=plan.object_id,
+                    index=chunk.index,
+                    length=chunk.ciphertext_size,
+                )
                 encrypted = get_ciphertext(
                     url,
                     headers,

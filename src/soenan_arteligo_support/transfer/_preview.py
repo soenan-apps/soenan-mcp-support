@@ -118,7 +118,9 @@ def upload_wav_preview(
                 )
                 if pending["state"] == "waiting":
                     try:
-                        descriptor = session.call("e2eeGetObject", scope_id=project_id, object_id=identifier)
+                        descriptor = session.call(
+                            "e2eeGetObject", scope_id=project_id, object_id=identifier
+                        )
                     except E2eeError as error:
                         if error.code != "not_found":
                             raise
@@ -274,8 +276,12 @@ def upload_wav_preview(
                                 _object(
                                     session, project_id, identifier, "put", chunk.index
                                 ),
-                                "PUT",
-                                len(ciphertext),
+                                method="PUT",
+                                scope=project_id,
+                                object_id=identifier,
+                                index=chunk.index,
+                                length=len(ciphertext),
+                                ciphertext=ciphertext,
                             )
                             put_ciphertext(
                                 url,
