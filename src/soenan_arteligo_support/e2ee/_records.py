@@ -487,7 +487,6 @@ class EncryptedRecords:
         key_epoch: int,
         records: list[dict[str, Any]],
         preconditions: list[dict[str, Any]] | None = None,
-        maintenance: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         self.session.require_approved()
         if not records or len(
@@ -514,8 +513,6 @@ class EncryptedRecords:
             "expires_at": int(time.time()) + 29 * 86400,
             "preconditions": preconditions or [],
         }
-        if maintenance is not None:
-            body["maintenance"] = maintenance
         result = self.session.command(
             "e2eeWriteRecords",
             "records_write",
@@ -585,6 +582,7 @@ class EncryptedRecords:
             or len(scope) < 5
         ):
             raise E2eeError("invalid_project_id")
+        devices = self.session.approved_self_devices()
         owner = self.session._scope_owner(scope)
         key = self.crypto.key()
         try:
@@ -601,6 +599,11 @@ class EncryptedRecords:
                     self.session.recovery["encryption_public_key"],
                 ),
             ]
+            recipients.extend(
+                (device["device_id"], "device", device["encryption_public_key"])
+                for device in devices
+                if device["device_id"] != self.session.device_id
+            )
             envelopes = [
                 self.session.wrap_key(
                     scope,

@@ -10,7 +10,6 @@ from ..models.e2_ee_record_batch_format_version import E2EeRecordBatchFormatVers
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
-    from ..models.e2_ee_content_maintenance import E2EeContentMaintenance
     from ..models.e2_ee_content_record_write import E2EeContentRecordWrite
     from ..models.e2_ee_deletion_marker import E2EeDeletionMarker
     from ..models.e2_ee_record_precondition import E2EeRecordPrecondition
@@ -22,10 +21,11 @@ T = TypeVar("T", bound="E2EeRecordBatch")
 @_attrs_define
 class E2EeRecordBatch:
     """A newly accepted batch containing any metadata-only deletion marker must be RFC 8785 canonical JSON with the
-    complete closed schema below; unknown fields, opaque marker payloads and noncanonical bytes are rejected. The server
-    never normalizes or resigns the command. Existing content-only first acceptance, stored historical evidence and
-    successful receipt replay preserve their original signed bytes. Deletion markers commit no content usage; prior
-    charged content retires through the existing atomic usage/outbox transaction.
+    complete closed schema below; unknown fields, opaque marker payloads and noncanonical bytes are rejected. The
+    retired maintenance member is rejected on first acceptance. The server never normalizes or resigns the command.
+    Existing content-only first acceptance, stored historical evidence and successful receipt replay preserve their
+    original signed bytes. Deletion markers commit no content usage; prior charged content retires through the existing
+    atomic usage/outbox transaction.
 
         Attributes:
             format_version (E2EeRecordBatchFormatVersion): Version 3 is required when any record has kind chat or comment,
@@ -37,7 +37,6 @@ class E2EeRecordBatch:
             records (list[E2EeContentRecordWrite | E2EeDeletionMarker]):
             deleted_objects (list[str] | Unset):
             preconditions (list[E2EeRecordPrecondition] | Unset):
-            maintenance (E2EeContentMaintenance | Unset):
     """
 
     format_version: E2EeRecordBatchFormatVersion
@@ -46,7 +45,6 @@ class E2EeRecordBatch:
     records: list[E2EeContentRecordWrite | E2EeDeletionMarker]
     deleted_objects: list[str] | Unset = UNSET
     preconditions: list[E2EeRecordPrecondition] | Unset = UNSET
-    maintenance: E2EeContentMaintenance | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.e2_ee_content_record_write import E2EeContentRecordWrite
@@ -78,10 +76,6 @@ class E2EeRecordBatch:
                 preconditions_item = preconditions_item_data.to_dict()
                 preconditions.append(preconditions_item)
 
-        maintenance: dict[str, Any] | Unset = UNSET
-        if not isinstance(self.maintenance, Unset):
-            maintenance = self.maintenance.to_dict()
-
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -96,14 +90,11 @@ class E2EeRecordBatch:
             field_dict["deleted_objects"] = deleted_objects
         if preconditions is not UNSET:
             field_dict["preconditions"] = preconditions
-        if maintenance is not UNSET:
-            field_dict["maintenance"] = maintenance
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.e2_ee_content_maintenance import E2EeContentMaintenance
         from ..models.e2_ee_content_record_write import E2EeContentRecordWrite
         from ..models.e2_ee_deletion_marker import E2EeDeletionMarker
         from ..models.e2_ee_record_precondition import E2EeRecordPrecondition
@@ -157,13 +148,6 @@ class E2EeRecordBatch:
 
                 preconditions.append(preconditions_item)
 
-        _maintenance = d.pop("maintenance", UNSET)
-        maintenance: E2EeContentMaintenance | Unset
-        if isinstance(_maintenance, Unset):
-            maintenance = UNSET
-        else:
-            maintenance = E2EeContentMaintenance.from_dict(_maintenance)
-
         e2_ee_record_batch = cls(
             format_version=format_version,
             expires_at=expires_at,
@@ -171,7 +155,6 @@ class E2EeRecordBatch:
             records=records,
             deleted_objects=deleted_objects,
             preconditions=preconditions,
-            maintenance=maintenance,
         )
 
         return e2_ee_record_batch

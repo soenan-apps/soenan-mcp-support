@@ -1053,14 +1053,43 @@ class DeviceSession:
         finally:
             wipe(context)
 
-    def device(self, scope: str, identifier: str) -> dict[str, Any]:
+    def approved_self_devices(self) -> list[dict[str, Any]]:
+        self.require_approved()
+        devices = self.call("e2eeListDevices")["devices"]
+        self._check_current()
+        owned = [
+            device
+            for device in devices
+            if device.get("account_subject") == self.subject
+        ]
+        self._devices.update({device["device_id"]: device for device in owned})
+        approved = []
+        for device in owned:
+            if device.get("state") != "approved":
+                continue
+            expected = public_device(device)
+            checked = self.device(None, expected["device_id"])
+            if public_device(checked) != expected:
+                raise E2eeError("device_key_changed")
+            approved.append(checked)
+            self.require_approved()
+        self.require_approved()
+        return approved
+
+    def device(self, scope: str | None, identifier: str) -> dict[str, Any]:
         fetched: set[str] = set()
 
         def fetch(value: str) -> None:
             if value in fetched:
                 return
             fetched.add(value)
-            values = self.call("e2eeGetMemberDevices", scope_id=scope, device_id=value)["devices"]
+            values = (
+                self.call("e2eeListDevices", device_id=value)
+                if scope is None
+                else self.call(
+                    "e2eeGetMemberDevices", scope_id=scope, device_id=value
+                )
+            )["devices"]
             for item in values:
                 if item["device_id"] == value:
                     self._devices[value] = item

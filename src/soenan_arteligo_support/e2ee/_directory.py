@@ -49,11 +49,8 @@ def initial_directory() -> tuple[str, list[dict[str, Any]]]:
 class EncryptedDirectory:
     """Read and update only the encrypted paths of one folder index."""
 
-    def __init__(
-        self, records: EncryptedRecords, scope: str, *, root_id: str | None = None
-    ):
+    def __init__(self, records: EncryptedRecords, scope: str):
         self.records, self.scope = records, scope
-        self.root_id = root_id
         self._loaded: dict[str, dict[str, Any]] = {}
         self._writes: dict[str, dict[str, Any]] = {}
 
@@ -75,14 +72,11 @@ class EncryptedDirectory:
 
     def _folder(self, folder_id: str | None) -> dict[str, Any]:
         if folder_id is None:
-            if self.root_id is not None:
-                folder_id = self.root_id
-            else:
-                project = self._load(self.scope)
-                directory = project["value"].get("directory", {})
-                if directory.get("format") != 2:
-                    raise E2eeError("directory_migration_required")
-                folder_id = directory["root"]
+            project = self._load(self.scope)
+            directory = project["value"].get("directory")
+            if not isinstance(directory, dict) or directory.get("format") != 2:
+                raise E2eeError("invalid_directory")
+            folder_id = directory["root"]
         folder = self._load(folder_id)
         value = folder["value"]
         if (

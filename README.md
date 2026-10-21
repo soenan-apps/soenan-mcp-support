@@ -8,6 +8,8 @@ Account が本人確認と OAuth を管理し、Arteligo が端末の承認状�
 
 Python 3.10 以降と Rust toolchain が必要です。資格情報の保存には、package が依存する `keyring>=25.5` と、macOS Keychain、Windows Credential Manager、Linux Secret Service のいずれかを使います。平文ファイルへ保存する keyring backend へは切り替えません。
 
+Linux では通常の user D-Bus と、利用可能な既定 collection を持つ Secret Service が必要です。SSH・TTY から使う場合も既存の user bus に接続し、本人の通常 keyring を先に解除します。GUI prompt を利用できない環境で別の bus・collection や平文 backend を作って代用しません。保護ストアを利用できない場合、`login` は OAuth 開始前に `secure_store_unavailable` で停止します。
+
 ワークスペースのルートから、二つのローカル package を同時に導入します。
 
 ```sh
@@ -109,6 +111,8 @@ finally:
 
 フォルダーは暗号化した header と B+tree を端末で解釈します。`EncryptedDirectory.page` は正の `limit` 件まで名前順で返し、既定の処理単位は 100 件です。続きは返却された `cursor` を渡します。folder の revision が変わると `revision_conflict` になるため、その folder の先頭から取り直します。アップロードは対象 folder の索引の枝と file record を一つの batch で更新し、他の folder の内容を読みません。
 
+新規projectの鍵は作成中の一端末だけでなく、検証済みの承認済み自己端末と現行の復旧先へ同じcommandで配ります。現在の端末状態と署名証明を区別し、初期配布の完全性・組織envelope・確定済み再送は[鍵配布契約](../arteligo/docs/E2EE.md)に従います。
+
 ### 会話 API
 
 `EncryptedConversations(records, scope, checkpoint=...)` は Flutter と同じ会話形式 3 を読み書きします。新規 project は、空の会話 header 2 個と folder の索引を project 作成と同じ command で保存します。header がない project の通常操作は `content_format_update_required` を返します。`initialize()` は空の検証用 scope に header を明示作成する操作です。既存の会話を変換する機能はありません。
@@ -144,12 +148,6 @@ conversation.write_chat(
 応答を失った操作をやり直すときは、同じ message/comment/reply ID と `operation_id` を使います。確定済みの不変レコードを検証して結果を返し、暗号文の再生成や新しいイベントの追加を行いません。`checkpoint` は読み取り batch、保存の前後、検証ページの境界で呼びます。例外を投げると処理を止めます。保存後の取消は確定済みの操作を取り消さないため、同じ操作 ID で結果を確認します。
 
 `EncryptedRecords.immutable_kind(scope, kind, after=..., snapshot_cursor=..., limit=256)` は immutable record を cursor 順で取得します。`limit` は正の件数で、256 は既定の処理単位です。最初のページの `snapshot_cursor` を後続の全ページと kind に渡すと、途中で追加された record を除外できます。`archive` はこの経路から会話を再構成し、固定の件数や平文 byte 数では拒否しません。欠けた証明や変化した snapshot は拒否します。個別に進捗や取消を管理する export は `immutable_kind` のページを直接処理でき、通常の画面表示から archive は呼びません。
-
-旧 directory 形式は `migrate_directory(records, scope, maximum_batches=64)` または local MCP の `arteligo_migrate_directory` で変換します。移行中は通常の内容更新を止め、暗号化した checkpoint から再開します。新しい root を公開するまで旧 directory を保持し、公開後に旧 record を回収します。返り値の `complete` が `false` なら、同じ project を指定して続きを実行します。既存 file ID と Bucket object は変わりません。
-
-移行開始時にはproject rootを読み直し、そのlive状態とrevisionをBEGINの条件へ含めます。競合後に削除を確認した場合は、存在しないdirectoryのエラーを返します。liveのrevisionが変わった場合も、新しい移行IDや署名を作って自動再試行せず、`revision_conflict` を返します。確定済みの同じ署名commandのreceipt再送と、未確定の移行を新しく始め直す操作は区別してください。
-
-公開前の移行を取り消す場合は `abort_directory_migration` または local MCP の `arteligo_abort_directory_migration` を使います。移行で作った node だけを最大 128 件ずつ回収し、最後に checkpoint を最小の tombstone に置き換えて通常更新を再開します。取消の途中も同じ操作で再開でき、旧 directory と file は保持します。公開済みの root はこの操作では取り消せません。
 
 ファイル名の検索・並べ替えはクライアントの処理です。サーバーへ名前、パス、検索文字列を渡す経路はありません。未取得の範囲を検索するアプリケーションは、通常の上限付き取得を使い、範囲・進捗・取消を管理します。SDK はプロジェクト全体の自動取得を行いません。
 
