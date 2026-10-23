@@ -6,6 +6,7 @@ import math
 import os
 import re
 import shutil
+import stat
 import subprocess
 import struct
 import tempfile
@@ -111,10 +112,19 @@ def prepare_opus_preview(
 
 
 def _binary(name: str) -> str:
-    executable = shutil.which(name)
+    if os.name != "posix" or name not in {"ffmpeg", "ffprobe"}:
+        raise TransferError("trusted local media tools are unavailable")
+    executable = shutil.which(name, path=_CHILD_ENV["PATH"])
     if executable is None:
-        raise TransferError("local media tools are unavailable")
-    return executable
+        raise TransferError("trusted local media tools are unavailable")
+    resolved = Path(executable).resolve(strict=True)
+    for component in (resolved, *resolved.parents):
+        metadata = component.stat()
+        if metadata.st_uid != 0 or metadata.st_mode & 0o022:
+            raise TransferError("local media tools must be administrator-installed")
+    if not stat.S_ISREG(resolved.stat().st_mode):
+        raise TransferError("trusted local media tools are unavailable")
+    return str(resolved)
 
 
 def _read_header(stream: BinaryIO, length: int) -> bytes:
@@ -275,6 +285,10 @@ def _encode(
         "2",
         "-filter_threads",
         "2",
+        "-protocol_whitelist",
+        "pipe",
+        "-f",
+        "wav",
         "-i",
         "pipe:0",
         "-map",
@@ -372,6 +386,8 @@ def _verify_encoded_media(
                 _binary("ffprobe"),
                 "-v",
                 "error",
+                "-protocol_whitelist",
+                "file,pipe",
                 "-show_entries",
                 "format=format_name,duration:stream=codec_type,codec_name,sample_rate,channels",
                 "-of",
@@ -422,6 +438,8 @@ def _analyze(
         "2",
         "-filter_threads",
         "2",
+        "-protocol_whitelist",
+        "file,pipe",
         "-i",
         str(output),
         "-map",

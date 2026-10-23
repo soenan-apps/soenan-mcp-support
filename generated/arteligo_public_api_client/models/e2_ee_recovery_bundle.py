@@ -12,6 +12,8 @@ if TYPE_CHECKING:
     from ..models.e2_ee_device_certificate import E2EeDeviceCertificate
     from ..models.e2_ee_device_root_proof import E2EeDeviceRootProof
     from ..models.e2_ee_envelope import E2EeEnvelope
+    from ..models.e2_ee_owner_binding_reference import E2EeOwnerBindingReference
+    from ..models.e2_ee_owner_capsule import E2EeOwnerCapsule
     from ..models.e2_ee_signed_command import E2EeSignedCommand
 
 
@@ -32,6 +34,12 @@ class E2EeRecoveryBundle:
         device_roots (list[E2EeDeviceRootProof] | Unset):
         envelopes (list[E2EeEnvelope] | Unset): Current readable scope keys sealed to the replacement recovery root.
             Required for recovery_rotate and saved atomically with the root; omitted from stored recovery responses.
+        owner_access_snapshot (E2EeOwnerCapsule | Unset):
+        owner_access_snapshot_command (E2EeSignedCommand | Unset):
+        owner_access_history (list[E2EeOwnerBindingReference] | Unset): All immutable Account-selected binding
+            references originally owned by the authenticated subject, including retired selections and organizations the
+            subject has left. These references grant only historical public proof and own custody-backup access, never
+            current project content or envelopes.
     """
 
     recovery_id: str
@@ -43,6 +51,9 @@ class E2EeRecoveryBundle:
     certificates: list[E2EeDeviceCertificate] | Unset = UNSET
     device_roots: list[E2EeDeviceRootProof] | Unset = UNSET
     envelopes: list[E2EeEnvelope] | Unset = UNSET
+    owner_access_snapshot: E2EeOwnerCapsule | Unset = UNSET
+    owner_access_snapshot_command: E2EeSignedCommand | Unset = UNSET
+    owner_access_history: list[E2EeOwnerBindingReference] | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         recovery_id = self.recovery_id
@@ -78,6 +89,21 @@ class E2EeRecoveryBundle:
                 envelopes_item = envelopes_item_data.to_dict()
                 envelopes.append(envelopes_item)
 
+        owner_access_snapshot: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.owner_access_snapshot, Unset):
+            owner_access_snapshot = self.owner_access_snapshot.to_dict()
+
+        owner_access_snapshot_command: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.owner_access_snapshot_command, Unset):
+            owner_access_snapshot_command = self.owner_access_snapshot_command.to_dict()
+
+        owner_access_history: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.owner_access_history, Unset):
+            owner_access_history = []
+            for owner_access_history_item_data in self.owner_access_history:
+                owner_access_history_item = owner_access_history_item_data.to_dict()
+                owner_access_history.append(owner_access_history_item)
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -96,6 +122,12 @@ class E2EeRecoveryBundle:
             field_dict["device_roots"] = device_roots
         if envelopes is not UNSET:
             field_dict["envelopes"] = envelopes
+        if owner_access_snapshot is not UNSET:
+            field_dict["owner_access_snapshot"] = owner_access_snapshot
+        if owner_access_snapshot_command is not UNSET:
+            field_dict["owner_access_snapshot_command"] = owner_access_snapshot_command
+        if owner_access_history is not UNSET:
+            field_dict["owner_access_history"] = owner_access_history
 
         return field_dict
 
@@ -104,6 +136,8 @@ class E2EeRecoveryBundle:
         from ..models.e2_ee_device_certificate import E2EeDeviceCertificate
         from ..models.e2_ee_device_root_proof import E2EeDeviceRootProof
         from ..models.e2_ee_envelope import E2EeEnvelope
+        from ..models.e2_ee_owner_binding_reference import E2EeOwnerBindingReference
+        from ..models.e2_ee_owner_capsule import E2EeOwnerCapsule
         from ..models.e2_ee_signed_command import E2EeSignedCommand
 
         d = dict(src_dict)
@@ -150,6 +184,33 @@ class E2EeRecoveryBundle:
 
                 envelopes.append(envelopes_item)
 
+        _owner_access_snapshot = d.pop("owner_access_snapshot", UNSET)
+        owner_access_snapshot: E2EeOwnerCapsule | Unset
+        if isinstance(_owner_access_snapshot, Unset):
+            owner_access_snapshot = UNSET
+        else:
+            owner_access_snapshot = E2EeOwnerCapsule.from_dict(_owner_access_snapshot)
+
+        _owner_access_snapshot_command = d.pop("owner_access_snapshot_command", UNSET)
+        owner_access_snapshot_command: E2EeSignedCommand | Unset
+        if isinstance(_owner_access_snapshot_command, Unset):
+            owner_access_snapshot_command = UNSET
+        else:
+            owner_access_snapshot_command = E2EeSignedCommand.from_dict(
+                _owner_access_snapshot_command
+            )
+
+        _owner_access_history = d.pop("owner_access_history", UNSET)
+        owner_access_history: list[E2EeOwnerBindingReference] | Unset = UNSET
+        if _owner_access_history is not UNSET:
+            owner_access_history = []
+            for owner_access_history_item_data in _owner_access_history:
+                owner_access_history_item = E2EeOwnerBindingReference.from_dict(
+                    owner_access_history_item_data
+                )
+
+                owner_access_history.append(owner_access_history_item)
+
         e2_ee_recovery_bundle = cls(
             recovery_id=recovery_id,
             encryption_public_key=encryption_public_key,
@@ -160,6 +221,9 @@ class E2EeRecoveryBundle:
             certificates=certificates,
             device_roots=device_roots,
             envelopes=envelopes,
+            owner_access_snapshot=owner_access_snapshot,
+            owner_access_snapshot_command=owner_access_snapshot_command,
+            owner_access_history=owner_access_history,
         )
 
         return e2_ee_recovery_bundle

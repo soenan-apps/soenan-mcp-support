@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import secrets
 import uuid
+from contextlib import nullcontext
 from hashlib import sha256
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 from ..e2ee._crypto import E2eeError, decode, encode, wipe
 from ..e2ee._records import EncryptedRecords
@@ -32,12 +33,14 @@ def upload_wav_preview(
     project_id: str,
     file_id: str,
     source: str | Path,
+    source_stream: BinaryIO | None = None,
     timeouts: TransferTimeouts = DEFAULT_TIMEOUTS,
     transport: TransferTransport = DEFAULT_TRANSPORT,
 ) -> dict[str, str]:
     """Encode the authenticated source locally and publish an encrypted Opus preview."""
     session.require_approved()
     records = EncryptedRecords(session)
+    records.resume_write_for(project_id, {file_id})
     record = EncryptedRecords(session).read(project_id, [file_id]).get(file_id)
     if record is None or record["deleted"] or record["kind"] != "file":
         raise E2eeError("not_found")
@@ -78,7 +81,7 @@ def upload_wav_preview(
             bytes(decode(wrapped_source["ciphertextB64u"])),
             parsed.chunks,
         )
-        with Path(source).open("rb") as stream:
+        with (nullcontext(source_stream) if source_stream is not None else Path(source).open("rb")) as stream:
             digest = sha256()
             for chunk in authenticated.chunks:
                 clear = bytearray(stream.read(chunk.plaintext_size))
@@ -108,7 +111,9 @@ def upload_wav_preview(
                 epoch = pending["epoch"]
                 identifier = pending["previewId"]
                 nonce_base = bytes(decode(pending["nonceBaseB64u"]))
-                project_key = session.scope_key(project_id, epoch)
+                publication = session.owner_access.publications.key(project_id, epoch)
+                project_key = publication.key
+                publication.validate_checkpoint(pending.get("owner_generation"))
                 wrapped = {
                     "nonce": pending["wrappedDataKey"]["nonceB64u"],
                     "ciphertext": pending["wrappedDataKey"]["ciphertextB64u"],
@@ -131,7 +136,8 @@ def upload_wav_preview(
                             )
             else:
                 epoch = _epoch(session, project_id)
-                project_key = session.scope_key(project_id, epoch)
+                publication = session.owner_access.publications.key(project_id, epoch)
+                project_key = publication.key
                 data_key = session.crypto.key()
                 identifier = str(uuid.uuid4())
                 nonce_base = secrets.token_bytes(8)
@@ -205,6 +211,7 @@ def upload_wav_preview(
                         "processingId": identifier,
                         "jobId": identifier,
                         "epoch": epoch,
+                        "owner_generation": publication.generation.document() if publication.generation is not None else None,
                         "nonceBaseB64u": encode(nonce_base),
                         "wrappedDataKey": {
                             "nonceB64u": wrapped["nonce"],
@@ -229,7 +236,8 @@ def upload_wav_preview(
                     else:
                         records.write(
                             project_id,
-                            key_epoch=_epoch(session, project_id),
+                            key_epoch=epoch,
+                            publication=publication,
                             records=[
                                 {
                                     "record_id": file_id,
@@ -303,6 +311,8 @@ def upload_wav_preview(
 def _publish_preview(
     session: DeviceSession, project_id: str, file_id: str, preview: dict[str, Any]
 ) -> dict[str, str]:
+    records = EncryptedRecords(session)
+    records.resume_write_for(project_id, {file_id})
     current = EncryptedRecords(session).read(project_id, [file_id]).get(file_id)
     if (
         current is None
@@ -324,21 +334,27 @@ def _publish_preview(
     ):
         raise E2eeError("revision_conflict")
     if saved.get("state") != "ready":
-        EncryptedRecords(session).write(
-            project_id,
-            key_epoch=_epoch(session, project_id),
-            records=[
-                {
-                    "record_id": file_id,
-                    "kind": "file",
-                    "expected_revision": current["revision"],
-                    "value": {
-                        **_file_metadata_for_write(current["value"]),
-                        "preview": {**saved, "state": "ready"},
-                    },
-                }
-            ],
-        )
+        epoch = _epoch(session, project_id)
+        if epoch != preview["epoch"]:
+            raise E2eeError("upload_owner_epoch_changed")
+        with session.owner_access.publications.key(project_id, epoch) as publication:
+            publication.validate_checkpoint(preview.get("owner_generation"))
+            records.write(
+                project_id,
+                key_epoch=epoch,
+                publication=publication,
+                records=[
+                    {
+                        "record_id": file_id,
+                        "kind": "file",
+                        "expected_revision": current["revision"],
+                        "value": {
+                            **_file_metadata_for_write(current["value"]),
+                            "preview": {**saved, "state": "ready"},
+                        },
+                    }
+                ],
+            )
     return {"file_id": file_id, "preview_id": preview["previewId"], "state": "ready"}
 
 

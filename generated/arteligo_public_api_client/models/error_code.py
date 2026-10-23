@@ -27,6 +27,7 @@ class ErrorCode(str, Enum):
     NOT_AUTHOR = "not_author"
     NOT_FOUND = "not_found"
     ORIGIN_NOT_ALLOWED = "origin_not_allowed"
+    OWNER_KEY_PROOF_REQUIRED = "owner_key_proof_required"
     PREVIEW_MANIFEST_CONFLICT = "preview_manifest_conflict"
     PREVIEW_REQUIRED = "preview_required"
     PRODUCT_ACCESS_REQUIRED = "product_access_required"

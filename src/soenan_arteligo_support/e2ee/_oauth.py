@@ -40,6 +40,8 @@ def origin(raw: str) -> str:
 
 class BoundCredentials(Protocol):
     @property
+    def account_origin(self) -> str: ...
+    @property
     def arteligo_origin(self) -> str: ...
     def access_token(self) -> str: ...
     def check_current(self) -> None: ...
@@ -157,6 +159,10 @@ class CredentialRecord:
 class ProfileContext:
     vault: ProfileVault
     identity: str
+
+    @property
+    def account_origin(self) -> str:
+        return self.vault.account_origin
 
     @property
     def arteligo_origin(self) -> str:
