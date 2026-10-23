@@ -22,7 +22,10 @@ from ..e2ee._crypto import E2eeError, decode, encode, wipe
 from ..e2ee._directory import EncryptedDirectory
 from ..e2ee._records import EncryptedRecords
 from ..e2ee._session import DeviceSession
-from ._crypto import EncryptionPlan, build_encryption_plan, parse_decryption_plan
+from ._crypto import (
+    MANIFEST_FIELDS, MAXIMUM_WIRE_INTEGER, EncryptionContractError, EncryptionPlan,
+    build_encryption_plan, parse_decryption_plan,
+)
 from ._http import (
     DEFAULT_TIMEOUTS,
     DEFAULT_TRANSPORT,
@@ -55,6 +58,34 @@ def _file_metadata_for_write(value: dict[str, Any]) -> dict[str, Any]:
     result = dict(value)
     result.pop("directoryEntry", None)
     return result
+
+
+def _file_source(
+    session: DeviceSession, project_id: str, metadata: Mapping[str, Any],
+) -> tuple[Mapping[str, Any], Any]:
+    manifest = metadata.get("source")
+    if not isinstance(manifest, Mapping):
+        raise EncryptionContractError("manifest must be an object")
+    if set(manifest) - {"owner_generation"} != MANIFEST_FIELDS:
+        raise EncryptionContractError("manifest fields do not match managed contract")
+    checkpoint = metadata.get("owner_generation")
+    if "owner_generation" not in manifest:
+        return manifest, checkpoint
+    embedded = manifest["owner_generation"]
+    if ("owner_generation" in metadata and checkpoint != embedded
+            or not isinstance(embedded, Mapping) or type(embedded.get("key_epoch")) is not int):
+        raise E2eeError("owner_key_generation_stale")
+    object_value = manifest["object"]
+    if not isinstance(object_value, Mapping):
+        raise EncryptionContractError("manifest object must be an object")
+    epoch = object_value.get("epoch")
+    if (object_value.get("project_id") != project_id or type(epoch) is not int
+            or not 1 <= epoch <= MAXIMUM_WIRE_INTEGER):
+        raise E2eeError("invalid_object_context")
+    generation = session.owner_access.publications.generation(project_id, epoch)
+    if embedded != generation.document():
+        raise E2eeError("owner_key_generation_stale")
+    return {name: manifest[name] for name in MANIFEST_FIELDS}, embedded
 
 
 def _completed_file_metadata(
@@ -317,11 +348,13 @@ def upload_file(
                     wrapped_data_key=bytes(decode(wrapped["ciphertext"])),
                     plaintext_size=size,
                 )
+                manifest = plan.manifest()
+                checkpoint = publication.generation.document() if publication.generation is not None else None
                 private = {
                     "uploadId": identifier,
                     "keyEpoch": epoch,
-                    "owner_generation": publication.generation.document() if publication.generation is not None else None,
-                    "source": plan.manifest(),
+                    "owner_generation": checkpoint,
+                    "source": manifest,
                     "sourceState": "uploading",
                     "entryIntent": {
                         "parentFolderId": parent_folder_id,
@@ -348,7 +381,7 @@ def upload_file(
                 private = pending["value"]
                 if private.get("uploadId") != identifier:
                     raise E2eeError("upload_not_found")
-                manifest = private["source"]
+                manifest, checkpoint = _file_source(session, project_id, private)
                 object_value = manifest["object"]
                 if (
                     object_value["project_id"] != project_id
@@ -358,7 +391,7 @@ def upload_file(
                 epoch = object_value["epoch"]
                 publication = session.owner_access.publications.key(project_id, epoch)
                 project_key = publication.key
-                publication.validate_checkpoint(private.get("owner_generation"))
+                publication.validate_checkpoint(checkpoint)
                 wrapped = manifest["encryption"]["wrapped_data_key"]
                 data_key = session.crypto.open(
                     project_key,
@@ -471,7 +504,7 @@ def upload_file(
             )
             if (
                 completed["record_id"] != file_id
-                or completed["value"]["source"] != private["source"]
+                or _file_source(session, project_id, completed["value"]) != (manifest, checkpoint)
             ):
                 raise E2eeError("invalid_object_context")
             return result
@@ -536,7 +569,9 @@ def upload_file(
                 "record_id": file_id,
                 "kind": "file",
                 "expected_revision": 0,
-                "value": _completed_file_metadata(private, file),
+                "value": _completed_file_metadata({
+                    **private, "source": manifest, "owner_generation": checkpoint,
+                }, file),
             },
             {
                 "record_id": pending_id,
@@ -546,7 +581,7 @@ def upload_file(
             },
         ]
         with session.owner_access.publications.key(project_id, epoch) as publication:
-            publication.validate_checkpoint(private.get("owner_generation"))
+            publication.validate_checkpoint(checkpoint)
             EncryptedDirectory(records, project_id).insert(
                 entry, key_epoch=epoch, additional_records=writes, publication=publication
             )
@@ -639,7 +674,7 @@ def _download_to_stream(
         or "file" not in record["value"]
     ):
         raise E2eeError("not_found")
-    manifest = record["value"]["source"]
+    manifest, _ = _file_source(session, project_id, record["value"])
     value = manifest["object"]
     if value["project_id"] != project_id or value["file_id"] != file_id:
         raise E2eeError("invalid_object_context")

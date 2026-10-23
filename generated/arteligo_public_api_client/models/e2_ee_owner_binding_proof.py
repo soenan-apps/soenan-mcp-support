@@ -12,6 +12,9 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.e2_ee_device import E2EeDevice
     from ..models.e2_ee_owner_authority import E2EeOwnerAuthority
+    from ..models.e2_ee_owner_committed_export_reference import (
+        E2EeOwnerCommittedExportReference,
+    )
     from ..models.e2_ee_owner_issuer_evidence import E2EeOwnerIssuerEvidence
     from ..models.e2_ee_owner_transfer_decision import E2EeOwnerTransferDecision
     from ..models.e2_ee_recovery_public import E2EeRecoveryPublic
@@ -35,6 +38,9 @@ class E2EeOwnerBindingProof:
                 Account witnesses, plus the corresponding public recovery checkpoints. This is not a current device directory
                 and grants no content or key-distribution authority. Fetch on demand; retain references rather than embedding
                 full certificate wrappers in private history.
+            exported_sources (list[E2EeOwnerCommittedExportReference]): Exact committed exports made by this selected
+                binding's immutable subject. Populated only for that subject's authenticated request; all other readers receive
+                an empty array. Discovery only, not proof of absence or authorization for later exports.
             signed_binding (E2EeSignedCommand | Unset):
             operation (E2EeOwnerBindingProofOperation | Unset):
             device (E2EeDevice | Unset):
@@ -46,6 +52,7 @@ class E2EeOwnerBindingProof:
 
     owner_authority: E2EeOwnerAuthority
     issuer_evidence: E2EeOwnerIssuerEvidence
+    exported_sources: list[E2EeOwnerCommittedExportReference]
     signed_binding: E2EeSignedCommand | Unset = UNSET
     operation: E2EeOwnerBindingProofOperation | Unset = UNSET
     device: E2EeDevice | Unset = UNSET
@@ -58,6 +65,11 @@ class E2EeOwnerBindingProof:
         owner_authority = self.owner_authority.to_dict()
 
         issuer_evidence = self.issuer_evidence.to_dict()
+
+        exported_sources = []
+        for exported_sources_item_data in self.exported_sources:
+            exported_sources_item = exported_sources_item_data.to_dict()
+            exported_sources.append(exported_sources_item)
 
         signed_binding: dict[str, Any] | Unset = UNSET
         if not isinstance(self.signed_binding, Unset):
@@ -93,6 +105,7 @@ class E2EeOwnerBindingProof:
             {
                 "owner_authority": owner_authority,
                 "issuer_evidence": issuer_evidence,
+                "exported_sources": exported_sources,
             }
         )
         if signed_binding is not UNSET:
@@ -116,6 +129,9 @@ class E2EeOwnerBindingProof:
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.e2_ee_device import E2EeDevice
         from ..models.e2_ee_owner_authority import E2EeOwnerAuthority
+        from ..models.e2_ee_owner_committed_export_reference import (
+            E2EeOwnerCommittedExportReference,
+        )
         from ..models.e2_ee_owner_issuer_evidence import E2EeOwnerIssuerEvidence
         from ..models.e2_ee_owner_transfer_decision import E2EeOwnerTransferDecision
         from ..models.e2_ee_recovery_public import E2EeRecoveryPublic
@@ -125,6 +141,15 @@ class E2EeOwnerBindingProof:
         owner_authority = E2EeOwnerAuthority.from_dict(d.pop("owner_authority"))
 
         issuer_evidence = E2EeOwnerIssuerEvidence.from_dict(d.pop("issuer_evidence"))
+
+        exported_sources = []
+        _exported_sources = d.pop("exported_sources")
+        for exported_sources_item_data in _exported_sources:
+            exported_sources_item = E2EeOwnerCommittedExportReference.from_dict(
+                exported_sources_item_data
+            )
+
+            exported_sources.append(exported_sources_item)
 
         _signed_binding = d.pop("signed_binding", UNSET)
         signed_binding: E2EeSignedCommand | Unset
@@ -178,6 +203,7 @@ class E2EeOwnerBindingProof:
         e2_ee_owner_binding_proof = cls(
             owner_authority=owner_authority,
             issuer_evidence=issuer_evidence,
+            exported_sources=exported_sources,
             signed_binding=signed_binding,
             operation=operation,
             device=device,

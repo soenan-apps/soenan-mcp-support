@@ -9,7 +9,7 @@ from arteligo_public_api_client.models.e2_ee_owner_issuer_evidence import E2EeOw
 
 from ._crypto import E2eeCrypto, E2eeError
 from ._owner_protocol import OwnerManifest, SignedEvidence, bytes32, object_value, parse_model
-from ._owner_state import SourceAnchor
+from ._owner_state import ManifestOrigin, SourceAnchor
 from ._trust import _RootIdentity
 
 
@@ -18,25 +18,39 @@ class OwnerStoredManifestReference:
     manifest: OwnerManifest
     preparation: SignedEvidence | None
     decision: OwnerTransferDecision | None
+    issuer_evidence: OwnerIssuerEvidence | None = None
+    origin: ManifestOrigin = ManifestOrigin.DATA
 
     @classmethod
     def parse(cls, crypto: E2eeCrypto, value: Any, organization: str) -> OwnerStoredManifestReference:
         value = object_value(value)
         required = {"signed_command", "manifest_digest", "documents"}
         selected = {"selected_preparation", "selected_decision"}
-        if set(value) not in (required, required | selected):
+        if set(value) - {"issuer_evidence", "origin"} not in (required, required | selected):
             raise E2eeError("owner_source_manifest_mismatch")
         manifest = OwnerManifest.parse(crypto, value["signed_command"], value["documents"])
         manifest.require_documents()
         if manifest.digest != value["manifest_digest"] or manifest.body.organization_id != organization:
             raise E2eeError("owner_source_manifest_mismatch")
+        try:
+            origin = ManifestOrigin(value.get("origin", ManifestOrigin.DATA.value))
+        except (TypeError, ValueError):
+            raise E2eeError("owner_source_manifest_mismatch") from None
+        evidence = OwnerIssuerEvidence.parse(value["issuer_evidence"]) if "issuer_evidence" in value else None
+        if evidence is None:
+            origin = ManifestOrigin.DATA
         return cls(manifest,
             SignedEvidence.parse(value["selected_preparation"]) if selected <= value.keys() else None,
-            parse_model(OwnerTransferDecision.from_dict, value["selected_decision"]) if selected <= value.keys() else None)
+            parse_model(OwnerTransferDecision.from_dict, value["selected_decision"]) if selected <= value.keys() else None,
+            evidence,
+            origin)
 
     def document(self) -> dict[str, Any]:
         result = {"signed_command": self.manifest.command.document(), "manifest_digest": self.manifest.digest,
-                  "documents": [item.document() for item in self.manifest.require_documents()]}
+                  "documents": [item.document() for item in self.manifest.require_documents()],
+                  "origin": self.origin.value if self.issuer_evidence is not None else ManifestOrigin.DATA.value}
+        if self.issuer_evidence is not None:
+            result["issuer_evidence"] = self.issuer_evidence.document()
         if self.preparation is not None and self.decision is not None:
             result.update(selected_preparation=self.preparation.document(), selected_decision=self.decision.to_dict())
         return result
@@ -128,6 +142,9 @@ class OwnerIssuerEvidence:
             raise E2eeError("invalid_owner_evidence")
         return cls(devices, roots)
 
+    def document(self) -> dict[str, Any]:
+        return {"devices": list(self.devices.values()), "recoveries": list(self.recoveries.values())}
+
     def device(self, identifier: str) -> dict[str, Any]:
         if identifier not in self.devices:
             raise E2eeError("owner_device_proof_missing")
@@ -151,7 +168,7 @@ class OwnerSourceEvidence:
     root_snapshot_digest: str | None = None
 
     @classmethod
-    def parse(cls, crypto: E2eeCrypto, value: Any, organization: str) -> OwnerSourceEvidence:
+    def parse(cls, crypto: E2eeCrypto, value: Any, organization: str, *, origin: str) -> OwnerSourceEvidence:
         value = object_value(value)
         lists = {"self_roots", "confirmed_sources", "manifests", "receipts", "key_bindings"}
         required = lists | {"issuer_admission"}
@@ -161,8 +178,8 @@ class OwnerSourceEvidence:
             raise E2eeError("invalid_owner_source_evidence")
         if "root_snapshot_digest" in value:
             bytes32(value["root_snapshot_digest"])
-        anchor = SourceAnchor.parse(value["source_anchor"]) if "source_anchor" in value else None
-        confirmations = tuple(SourceAnchor.parse(item) for item in value["confirmed_sources"])
+        anchor = SourceAnchor.parse(value["source_anchor"], origin=origin) if "source_anchor" in value else None
+        confirmations = tuple(SourceAnchor.parse(item, origin=origin) for item in value["confirmed_sources"])
         for statement in (*confirmations, *((anchor,) if anchor is not None else ())):
             if not isinstance(statement.command.body.get("scope_id"), str):
                 raise E2eeError("invalid_owner_source_evidence")
@@ -175,7 +192,7 @@ class OwnerSourceEvidence:
             item = object_value(item)
             if set(item) != {"origin", "account_subject", "recovery_id", "generation", "encryption_public_key", "signing_public_key"}:
                 raise E2eeError("invalid_owner_source_evidence")
-            roots.append(_RootIdentity.parse(item["origin"], item["account_subject"], item))
+            roots.append(_RootIdentity.parse(origin, item["account_subject"], item))
         bindings = []
         for item in value["key_bindings"]:
             item = object_value(item)

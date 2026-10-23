@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Mapping
 
 
@@ -71,12 +71,15 @@ class OwnerRootHistory:
         return [root.document() for root in sorted(roots.values(), key=lambda value: (value.generation, value.identifier))]
 
     def qualified(self) -> VerifiedCurrentDevice | None:
-        organizations = {scope.get("owner_org") for scope in self.session.scopes() if scope.get("owner_org")}
-        organizations.update(self.owner.store.organizations())
+        organizations = {
+            scope["owner_org"] for scope in self.session.scopes()
+            if scope.get("owner_org") and scope["key_epoch"] > 0
+            and scope["key_state"] in {"ready", "rekey_required"}
+            and scope["lifecycle"] in {"active", "archived"}
+        }
         for reference in (self.session.recovery or {}).get("owner_access_history", []):
             organization, digest = reference["organization_id"], reference["binding_digest"]
             self.selected(organization, digest)
-            organizations.add(organization)
         if not organizations:
             return None
         organization = sorted(organizations)[0]
@@ -193,10 +196,10 @@ class OwnerRootHistory:
             raise E2eeError("invalid_owner_custody_backup")
         admission = OriginalIssuerAdmission.parse(payload["issuer_admission"])
         target = {"account_subject": self.session.subject, **{name: root[name] for name in ROOT_FIELDS}}
-        verified = self.owner.current.historical_event("recovery_public", public, target, admission.root,
-            known_roots=tuple(value for value in own_roots if value.generation < root["generation"]))
+        verified = self.owner.current.historical_event("recovery_public", public, target, admission.root)
         if OriginalIssuerAdmission.parse(verified.evidence.issuer_admission.to_dict()) != admission:
             raise E2eeError("owner_custody_evidence_mismatch")
+        trusted, provisional = RootProvenance(own_roots).partition(verified.authenticated_roots)
         staged, organizations = [], set()
         for item in payload["organizations"]:
             value = object_value(item)
@@ -209,7 +212,12 @@ class OwnerRootHistory:
             keys = [OwnerKey.parse(key, organization, self.owner.capsules) for key in value["keys"]]
             if len({key.key_id for key in keys}) != len(keys) or len({key.key_epoch for key in keys}) != len(keys):
                 raise E2eeError("owner_keyring_mismatch")
-            sources = OwnerSourceEvidence.parse(self.crypto, value["source_evidence"], organization)
+            sources = OwnerSourceEvidence.parse(self.crypto, value["source_evidence"], organization,
+                origin=self.session.trust.origin)
+            source_roots, source_provisional = RootProvenance(sources.self_roots).partition(verified.authenticated_roots)
+            sources = replace(sources, self_roots=source_roots)
+            trusted += source_roots
+            provisional += source_provisional
             if [key.public_binding() for key in keys] != [reference.to_dict() for reference in sources.key_bindings]:
                 raise E2eeError("owner_keyring_mismatch")
             for key in keys:
@@ -225,13 +233,14 @@ class OwnerRootHistory:
             raise E2eeError("account_mismatch")
         signed.verify(self.crypto, issuer["signing_public_key"], "recovery_rotate")
         public.verify(self.crypto, issuer["signing_public_key"], "recovery_public")
+        self.owner.store.retain_roots(trusted)
         for organization, keys, sources in staged:
             self.recovery.restore_frozen_sources(organization, sources, admission.root.document())
             for key in keys:
                 selected, proof = self.selected(organization, key.binding_digest)
                 self.owner.verifier.binding(organization, proof, selected.head, sources=sources)
             self.owner.keyring.merge(organization, keys)
-        self.owner.store.retain_roots(own_roots)
+        self.recovery._retain_provisional_roots(provisional)
         self.session._device["root_scope_generations"] = {"root": self._root(root),
             "operation": "recovery_rotate", "evidence_digest": signed.digest(self.crypto, "recovery_rotate"),
             "references": [reference.document() for reference in references]}

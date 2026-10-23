@@ -12,6 +12,7 @@ from account_public_api_client.models.owner_handoff_gate import OwnerHandoffGate
 from account_public_api_client.models.owner_transfer_decision import OwnerTransferDecision
 from account_public_api_client.models.owner_transfer_decision_state import OwnerTransferDecisionState
 from arteligo_public_api_client.models.e2_ee_owner_candidate_offer import E2EeOwnerCandidateOffer
+from arteligo_public_api_client.models.e2_ee_owner_committed_export_reference import E2EeOwnerCommittedExportReference
 from arteligo_public_api_client.models.e2_ee_owner_custody import E2EeOwnerCustody
 from arteligo_public_api_client.models.e2_ee_owner_key_registration import E2EeOwnerKeyRegistration
 from arteligo_public_api_client.models.e2_ee_owner_preparation import E2EeOwnerPreparation
@@ -367,6 +368,26 @@ def committed_decision(value: OwnerTransferDecision, organization: str) -> Owner
         raise E2eeError("owner_receipt_mismatch")
     authority_head(value.head.to_dict(), organization)
     return value
+
+
+def committed_export_references(value: Any) -> tuple[E2EeOwnerCommittedExportReference, ...]:
+    if not isinstance(value, list):
+        raise E2eeError("owner_export_discovery_unavailable")
+    references = []
+    operations = set()
+    fields = {"operation_id", "successor_binding_digest", "source_manifest_id", "source_manifest_digest"}
+    for item in value:
+        item = object_value(item)
+        if set(item) != fields or any(not isinstance(field, str) or not field for field in item.values()):
+            raise E2eeError("invalid_owner_evidence")
+        bytes32(item["successor_binding_digest"])
+        bytes32(item["source_manifest_digest"])
+        reference = parse_model(E2EeOwnerCommittedExportReference.from_dict, item)
+        if reference.operation_id in operations:
+            raise E2eeError("invalid_owner_evidence")
+        operations.add(reference.operation_id)
+        references.append(reference)
+    return tuple(references)
 
 
 class OwnerCapsuleCrypto:

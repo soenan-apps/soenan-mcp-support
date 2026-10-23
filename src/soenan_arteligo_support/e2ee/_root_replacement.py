@@ -11,7 +11,7 @@ from ._owner_root_history import ScopeGenerationReference
 from ._owner_sources import OriginalIssuerAdmission
 from ._root_admission import RootAdmissionProof, open_recovery_code
 from ._signed_commands import RejectedCommand, SavedCommand, UncertainCommand
-from ._trust import _RootIdentity
+from ._trust import _DEVICE_ROOT_DOMAIN, _RootIdentity
 
 if TYPE_CHECKING:
     from ._session import DeviceSession
@@ -77,7 +77,7 @@ class RootReplacements:
                 raise E2eeError("account_mismatch")
             checked = session.trust.verify_device(device, lookup,
                 recovery_lookup=lambda identifier: session._recovery_material(None, identifier))
-            message = bytearray(b"arteligo-e2ee-device-root-v1\n") + self.crypto.canonical(checked)
+            message = bytearray(_DEVICE_ROOT_DOMAIN) + self.crypto.canonical(checked)
             try:
                 signature = self.crypto.execute({"op": "sign_bytes", "secret_key": keys["signing_secret_key"],
                                                  "bytes": encode(message)})["signature"]
@@ -201,8 +201,7 @@ class RootReplacements:
             admission = OriginalIssuerAdmission.parse(fact.issuer_admission.to_dict())
             owner.current.historical_event("recovery_public", command, {
                 "account_subject": session.subject, **{name: current[name] for name in ROOT_FIELDS}},
-                admission.root, known_roots=tuple(owner.verifier.root(value, session.subject)
-                    for value in owner.recovery.root_history.roots()))
+                admission.root)
             break
         else:
             raise E2eeError("owner_root_proof_missing")

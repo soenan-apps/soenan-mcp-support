@@ -87,10 +87,10 @@ class SavedCommand:
             case RejectedCommand(code=code):
                 outcome = {"state": "rejected", "code": code}
         value = {"operation": self.operation, "command": self.command.document(), "outcome": outcome}
-        for field in ("intent", "key", "epoch"):
-            item = getattr(self, field)
+        for attribute_name in ("intent", "key", "epoch"):
+            item = getattr(self, attribute_name)
             if item is not None:
-                value[field] = item
+                value[attribute_name] = item
         if self.source_documents is not None:
             value["source_documents"] = list(self.source_documents)
         return value

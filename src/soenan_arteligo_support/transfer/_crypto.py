@@ -41,6 +41,7 @@ class AESGCM:
 
 MANIFEST_VERSION = 1
 MANIFEST_TYPE = "audaligo.managed-encrypted-object-manifest"
+MANIFEST_FIELDS = {"v", "type", "suite_id", "encryption", "object"}
 SUITE_ID = "aes-256-gcm-audaligo-v1"
 ENCRYPTION_MODE = "managed-project-key"
 CONTENT_KEY_ALGORITHM = "A256GCM"
@@ -480,8 +481,8 @@ def parse_decryption_plan(
 ) -> DecryptionPlan:
     _require_fields(
         manifest,
-        required={"v", "type", "suite_id", "encryption", "object"},
-        allowed={"v", "type", "suite_id", "encryption", "object"},
+        required=MANIFEST_FIELDS,
+        allowed=MANIFEST_FIELDS,
         label="manifest",
     )
     if (

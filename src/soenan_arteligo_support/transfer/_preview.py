@@ -24,7 +24,7 @@ from ._http import (
     put_ciphertext,
 )
 from ._opus import prepare_opus_preview
-from ._workflow import _capability, _epoch, _file_metadata_for_write, _object, key_aad
+from ._workflow import _capability, _epoch, _file_metadata_for_write, _file_source, _object, key_aad
 
 
 def upload_wav_preview(
@@ -46,7 +46,7 @@ def upload_wav_preview(
         raise E2eeError("not_found")
     value = record["value"]
     pending = value.get("preview")
-    source_manifest = value["source"]
+    source_manifest, _ = _file_source(session, project_id, value)
     source_object = source_manifest["object"]
     wrapped_source = source_manifest["encryption"]["wrapped_data_key"]
     source_key = session.scope_key(project_id, source_object["epoch"])

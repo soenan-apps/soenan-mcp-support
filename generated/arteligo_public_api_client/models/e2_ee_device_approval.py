@@ -29,6 +29,8 @@ class E2EeDeviceApproval:
         envelopes (list[E2EeEnvelope]):
         account_subject (str | Unset): Signed target Account subject when present. Historical commands without this
             field retain their original bytes.
+        state (str | Unset): Original signed device state retained by legacy commands. This metadata does not grant
+            current approval or override the stored device state.
         recovery_root (E2EeRecoveryRoot | Unset):
         owner_access_backup (E2EeOwnerCustodyBackup | Unset): An opaque HPKE Auth backup for the owner's own recovery
             root or the approved target device. The complete encrypted backup is bound by the original device-signed command
@@ -43,6 +45,7 @@ class E2EeDeviceApproval:
     challenge: str
     envelopes: list[E2EeEnvelope]
     account_subject: str | Unset = UNSET
+    state: str | Unset = UNSET
     recovery_root: E2EeRecoveryRoot | Unset = UNSET
     owner_access_backup: E2EeOwnerCustodyBackup | Unset = UNSET
     issuer_admission: E2EeOwnerIssuerAdmission | Unset = UNSET
@@ -62,6 +65,8 @@ class E2EeDeviceApproval:
             envelopes.append(envelopes_item)
 
         account_subject = self.account_subject
+
+        state = self.state
 
         recovery_root: dict[str, Any] | Unset = UNSET
         if not isinstance(self.recovery_root, Unset):
@@ -88,6 +93,8 @@ class E2EeDeviceApproval:
         )
         if account_subject is not UNSET:
             field_dict["account_subject"] = account_subject
+        if state is not UNSET:
+            field_dict["state"] = state
         if recovery_root is not UNSET:
             field_dict["recovery_root"] = recovery_root
         if owner_access_backup is not UNSET:
@@ -122,6 +129,8 @@ class E2EeDeviceApproval:
 
         account_subject = d.pop("account_subject", UNSET)
 
+        state = d.pop("state", UNSET)
+
         _recovery_root = d.pop("recovery_root", UNSET)
         recovery_root: E2EeRecoveryRoot | Unset
         if isinstance(_recovery_root, Unset):
@@ -150,6 +159,7 @@ class E2EeDeviceApproval:
             challenge=challenge,
             envelopes=envelopes,
             account_subject=account_subject,
+            state=state,
             recovery_root=recovery_root,
             owner_access_backup=owner_access_backup,
             issuer_admission=issuer_admission,

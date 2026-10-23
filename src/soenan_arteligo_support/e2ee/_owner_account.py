@@ -86,7 +86,8 @@ class OwnerAccountReads:
         self._tls = ssl.create_default_context()
 
     def _read(self, request: Callable[[Client, str], Response[Any]], response_type: type[T],
-              *, missing: str = "owner_authority_unavailable") -> T:
+              *, missing: str = "owner_authority_unavailable",
+              observe: Callable[[T], None] | None = None) -> T:
         self.session._check_current()
         challenge = secrets.token_urlsafe(32)
         try:
@@ -106,6 +107,8 @@ class OwnerAccountReads:
             if (not isinstance(value, response_type) or value.challenge != challenge
                     or "no-store" not in response.headers.get("cache-control", "").lower()):
                 raise E2eeError("invalid_owner_authority")
+            if observe is not None:
+                observe(value)
             self.session._check_current()
             return value
         except (httpx.HTTPError, ValueError, TypeError, KeyError, AttributeError):
@@ -159,10 +162,10 @@ class OwnerAccountReads:
         ), OwnerHandoffGateResponse)
         return gate_descriptor(response.gate.to_dict())
 
-    def decision(self, organization: str, operation_id: str) -> OwnerTransferDecision:
+    def decision(self, organization: str, operation_id: str, *, capability: str | None = None) -> OwnerTransferDecision:
         response = self._read(lambda client, challenge: get_owner_transfer_decision.sync_detailed(
             operation_id=operation_id, client=client, challenge=challenge,
-            x_owner_read_capability=self.capability(organization),
+            x_owner_read_capability=capability if capability is not None else self.capability(organization),
         ), OwnerTransferDecisionResponse)
         if response.decision.operation_id != operation_id:
             raise E2eeError("owner_receipt_mismatch")
@@ -189,17 +192,21 @@ class OwnerAccountReads:
         return self._projections[reference]
 
     def custody(self, organization: str, subject: str, capability: str) -> OwnerCustodyResponse:
+        def observe(response: OwnerCustodyResponse) -> None:
+            if (response.organization_id != organization or response.account_subject != subject
+                    or not isinstance(response.revoked_device_ids, list)
+                    or any(not isinstance(identifier, str) or not identifier for identifier in response.revoked_device_ids)
+                    or len(response.revoked_device_ids) != len(set(response.revoked_device_ids))):
+                raise E2eeError("owner_invalidation_unconfirmed")
+            self.session.trust.observe_account_revocations(subject, response.revoked_device_ids)
+
         response = self._read(lambda client, challenge: get_owner_custody.sync_detailed(
             organization_id=organization, account_subject=subject, client=client,
             challenge=challenge, x_owner_read_capability=capability,
-        ), OwnerCustodyResponse)
-        if (response.organization_id != organization or response.account_subject != subject
-                or type(response.custody_revision) is not int or response.custody_revision < 0
+        ), OwnerCustodyResponse, observe=observe)
+        if (type(response.custody_revision) is not int or response.custody_revision < 0
                 or type(response.can_manage_organization_keys) is not bool
-                or type(response.can_receive_organization_keys) is not bool
-                or not isinstance(response.revoked_device_ids, list)
-                or any(not isinstance(identifier, str) or not identifier for identifier in response.revoked_device_ids)
-                or len(response.revoked_device_ids) != len(set(response.revoked_device_ids))):
+                or type(response.can_receive_organization_keys) is not bool):
             raise E2eeError("owner_invalidation_unconfirmed")
         bytes32(response.owner_bindings_digest)
         return response

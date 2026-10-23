@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, Mapping
 from ._admission import admission_message
 from ._crypto import E2eeCrypto, E2eeError, decode, encode, wipe
 from ._owner_protocol import ROOT_FIELDS, SignedEvidence, bytes32, object_value
-from ._trust import public_device
+from ._trust import _RootIdentity, public_device
 from ._owner_sources import OriginalIssuerAdmission
 from ._signed_commands import SavedCommand, UncertainCommand
 
@@ -95,6 +95,37 @@ class RootAdmissionProof:
 
     def document(self) -> dict[str, Any]:
         return {"root": self.root, "signed_command": self.command.document()}
+
+
+@dataclass(frozen=True)
+class PairedAdmissionProof:
+    root: _RootIdentity
+    approver: dict[str, Any]
+    command: SignedEvidence
+
+    @classmethod
+    def parse(cls, crypto: E2eeCrypto, origin: str, subject: str, device: Mapping[str, Any],
+              challenge: str, value: Any) -> PairedAdmissionProof:
+        value = object_value(value)
+        if set(value) != {"recovery_root", "trusted_device", "signed_command"}:
+            raise E2eeError("invalid_certificate")
+        root = _RootIdentity.parse(origin, subject, object_value(value["recovery_root"]))
+        approver = public_device(object_value(value["trusted_device"]))
+        command = SignedEvidence.parse(value["signed_command"])
+        if approver["account_subject"] != subject or command.device_id != approver["device_id"]:
+            raise E2eeError("account_mismatch")
+        command.verify(crypto, approver["signing_public_key"], "device_approve")
+        body = command.body
+        if (body.get("account_subject", subject) != subject or body.get("challenge") != challenge
+                or any(body.get(name) != device[name] for name in (
+                    "device_id", "encryption_public_key", "signing_public_key"))
+                or _RootIdentity.parse(origin, subject, object_value(body.get("recovery_root"))) != root):
+            raise E2eeError("pairing_mismatch")
+        return cls(root, approver, command)
+
+    def document(self) -> dict[str, Any]:
+        return {"recovery_root": self.root.document(), "trusted_device": self.approver,
+                "signed_command": self.command.document()}
 
 
 class RootAdmissions:

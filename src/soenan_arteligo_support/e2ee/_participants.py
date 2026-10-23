@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from ._crypto import E2eeError, decode, encode, wipe
-from ._owner_envelopes import OWNER_KEY_PROOF
 from ._owner_protocol import authority_head
 from ._owner_verifier import FrozenProjectOrigin
 from ._trust import (
@@ -28,6 +27,13 @@ class _Participation:
     device: dict[str, Any]
     root: _RootIdentity
     approver: dict[str, Any]
+
+
+
+@dataclass(frozen=True)
+class _ProjectOwnerInviterIntroduction:
+    scope: str
+    root: _RootIdentity
 
 
 def _fields(value: Any, expected: set[str]) -> dict[str, Any]:
@@ -396,6 +402,36 @@ class ScopeParticipants:
             self._proofs[key] = proofs
         return proofs
 
+    def project_owner_inviter_introductions(
+        self,
+        organization: str,
+        scope: str,
+    ) -> tuple[_ProjectOwnerInviterIntroduction, ...]:
+        candidates = [
+            self._evidence(scope, proof)
+            for proof in self._load(scope, self.session.subject)
+            if proof.get("kind") == "invitation"
+        ]
+        if not candidates:
+            return ()
+        identities = self.session.owner_access.current.current_root_identity_device_ids(
+            organization,
+            scope,
+            tuple(evidence.device for evidence in candidates),
+        )
+        introductions = []
+        roots = set()
+        for evidence in candidates:
+            if evidence.device["device_id"] not in identities:
+                continue
+            if (evidence.creator_root.subject != evidence.creator["account_subject"]
+                    or evidence.creator_root.origin != self.session.trust.origin):
+                raise E2eeError("participant_scope_mismatch")
+            if evidence.creator_root not in roots:
+                roots.add(evidence.creator_root)
+                introductions.append(_ProjectOwnerInviterIntroduction(scope, evidence.creator_root))
+        return tuple(introductions)
+
     def _owner_signer(
         self, scope: str, device: Mapping[str, Any], visiting: frozenset[str],
         lookup: Callable[[str], Mapping[str, Any]],
@@ -726,6 +762,10 @@ class ScopeParticipants:
         lookup: Callable[[str], Mapping[str, Any]],
         recovery_lookup: Callable[[str], Mapping[str, Any] | None] | None,
     ) -> _RootIdentity | None:
+        if self.session.scope_metadata(scope).get("owner_org") == scope:
+            from ._participant_sources import organization_anchor
+
+            return organization_anchor(self, scope, subject, visiting)
         trust = self.session.trust
         for proof in self._load(scope, subject):
             evidence = self._evidence(scope, proof)

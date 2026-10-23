@@ -16,6 +16,79 @@ if TYPE_CHECKING:
     from ._participants import ScopeParticipants
 
 
+def organization_anchor(
+    participants: ScopeParticipants,
+    scope: str,
+    subject: str,
+    visiting: frozenset[str],
+) -> _RootIdentity | None:
+    from ._participants import _device, _fields
+
+    session, trust = participants.session, participants.session.trust
+    owner = session._scope_owner(scope)
+    own_head = trust._confirmed_head(session.subject)
+    if own_head is None:
+        raise _TrustPathUnavailable()
+    roots: dict[str, _RootIdentity] = {session.subject: own_head}
+    own_lookup = session._current_device_lookup(None)
+
+    def pin(root: _RootIdentity) -> None:
+        session._check_scope(scope, owner)
+        trust.pin_scope_recovery(scope, root.subject, root.document())
+
+    def resolve(selected: str, active: frozenset[str]) -> _RootIdentity | None:
+        if selected in roots:
+            return roots[selected]
+        visit = f"organization:{scope}:{selected}"
+        if visit in active:
+            return None
+        active = active | {visit}
+        for command in [*trust._endorsements, *session.owner_access.organization_anchors(scope)]:
+            body = participants._body(command)
+            if body.get("scope_id") != scope:
+                continue
+            _fields(body, {"scope_id", "trusted_device", "recovery_root"})
+            device = _device(body["trusted_device"])
+            if device["account_subject"] != selected:
+                continue
+            root = participants._root(body["recovery_root"], selected)
+            issuer = trust._lookup_device(command["device_id"], own_lookup)
+            if issuer["account_subject"] != session.subject:
+                raise E2eeError("recovery_subject_mismatch")
+            try:
+                participants._historical_self_device(issuer, own_head)
+            except _TrustPathUnavailable:
+                continue
+            session.crypto.verify(issuer["signing_public_key"], "peer_trust", command)
+            pin(root)
+            roots[selected] = root
+            return root
+        for proof in participants._load(scope, selected):
+            if proof.get("kind") != "organization":
+                continue
+            evidence = participants._evidence(scope, proof)
+            anchor = resolve(evidence.creator_root.subject, active)
+            if anchor is None:
+                continue
+            try:
+                admission = session.owner_access.current.historical_organization_admission(
+                    scope, SignedEvidence.parse(proof["approval_command"]), evidence.approver, anchor,
+                )
+            except _TrustPathUnavailable:
+                continue
+            pin(admission.approver_root)
+            pin(admission.root)
+            roots[selected] = admission.root
+            return admission.root
+        return None
+
+    root = resolve(subject, visiting)
+    if root is None:
+        return None
+    session._check_scope(scope, owner)
+    return root
+
+
 def _organization_history(
     participants: ScopeParticipants,
     scope: str,
@@ -350,7 +423,7 @@ def verify_source(
 class _CommittedCreator:
     device: dict[str, Any]
     root: _RootIdentity
-
+    command: SignedEvidence
 
 def committed_owner(
     participants: ScopeParticipants,
@@ -381,7 +454,8 @@ def committed_owner(
             scope, creator["signing_public_key"],
         ):
             return
-        root = session.owner_access.verifier.creation_root(context["scope_id"], SignedEvidence.parse(command), creator)
+        original = SignedEvidence.parse(command)
+        root = session.owner_access.verifier.creation_root(context["scope_id"], original, creator)
         if staged.roots.get(root.identifier) != root.document():
             recovery = recovery_lookup(root.identifier) if recovery_lookup is not None else None
             if recovery is None:
@@ -395,7 +469,7 @@ def committed_owner(
         except _TrustPathUnavailable:
             return
         session.crypto.verify(creator["signing_public_key"], "project_create", command)
-        anchor = _CommittedCreator(public_device(creator), root)
+        anchor = _CommittedCreator(public_device(creator), root, original)
 
     if not _organization_history(participants, scope, subject, lookup, recovery_lookup, verify):
         return None

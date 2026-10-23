@@ -19,6 +19,7 @@ _DEVICE_FIELDS = (
     "encryption_public_key",
     "signing_public_key",
 )
+_DEVICE_ROOT_DOMAIN = b"arteligo-e2ee-device-root-v1\n"
 
 
 def public_device(value: Mapping[str, Any]) -> dict[str, Any]:
@@ -97,10 +98,16 @@ class _CurrentRecipientSet:
     devices: tuple[dict[str, Any], ...]
     roots: tuple[_CurrentRootHead, ...]
 
+
+@dataclass(frozen=True)
+class _CurrentRootClaim:
+    root: _RootIdentity
+    anchor: _RootIdentity
+
+
 class _ProofAuthority(Enum):
     LOCAL_PINS = "local_pins"
     SCOPE_OWNER = "scope_owner"
-    CURRENT_HEAD = "current_head"
 
 
 class _ScopedEvidence:
@@ -149,11 +156,6 @@ class _CurrentCustodyEvidence(_IdentityBoundEvidence):
     def accepts_root(self, recovery_id: Any) -> bool:
         return recovery_id == self.root.identifier
 
-
-@dataclass(frozen=True)
-class _CurrentAuthority:
-    anchor: _RootIdentity
-    before_generation: int
 
 
 class ScopeParticipantVerifier(Protocol):
@@ -214,7 +216,7 @@ class KeyTrust:
         self.origin = origin
         self._state: dict[str, dict[str, dict[str, Any]]] = {
             "devices": {}, "recovery": {}, "heads": {}, "peer_heads": {},
-            "revoked": {}, "scope_revoked": {}, "root_factors": {},
+            "revoked": {}, "scope_revoked": {}, "account_revoked": {}, "root_factors": {},
         }
         self.owner_subject = owner_subject or subject
         self._endorsements: list[dict[str, Any]] = []
@@ -225,6 +227,12 @@ class KeyTrust:
         self.certificate_projection: Callable[[Mapping[str, Any]], CertificateSignatureProjection] | None = None
         self.projected_device: Callable[[Mapping[str, Any], CertificateSignatureProjection,
                                          str | None, tuple[_RootIdentity, ...]], dict[str, Any]] | None = None
+        self.current_device: Callable[[Mapping[str, Any], str | None, _RootIdentity],
+                                      _CurrentDeviceQualification] | None = None
+        self.current_recovery: Callable[[Mapping[str, Any], str | None, _RootIdentity],
+                                        _CurrentRootHead] | None = None
+        self.recipient_set: Callable[[str, tuple[_CurrentRootClaim, ...],
+                                      tuple[Mapping[str, Any], ...]], _CurrentRecipientSet] | None = None
 
     def set_endorsements(self, statements: list[dict[str, Any]]) -> None:
         self._endorsements = statements
@@ -364,19 +372,33 @@ class KeyTrust:
         )
         self._save(kind, identifier, {"device_id": device_id, "scope_id": scope})
 
+    def observe_account_revocations(self, subject: str, device_ids: list[str]) -> None:
+        for identifier in device_ids:
+            if subject == self.owner_subject:
+                self.remember_revoked(identifier)
+            else:
+                key = json.dumps([subject, identifier], separators=(",", ":"))
+                self._save("account_revoked", key, {
+                    "account_subject": subject, "device_id": identifier,
+                })
+
+    def known_revoked(self, device: Mapping[str, Any], scope: str | None = None) -> bool:
+        identifier, subject = device["device_id"], device["account_subject"]
+        return (
+            subject == self.owner_subject and self._load("revoked", identifier) is not None
+        ) or self._load(
+            "account_revoked", json.dumps([subject, identifier], separators=(",", ":"))
+        ) is not None or (
+            subject != self.owner_subject and scope is not None and self._load(
+                "scope_revoked", json.dumps([scope, identifier], separators=(",", ":"))
+            ) is not None
+        )
+
+
     def require_current_issuer(
         self, device: Mapping[str, Any], scope: str | None = None
     ) -> None:
-        identifier = device["device_id"]
-        if device.get("state") != "approved" or (
-            device.get("account_subject") == self.owner_subject
-            and self._load("revoked", identifier) is not None
-        ) or (
-            device.get("account_subject") != self.owner_subject
-            and scope is not None and self._load(
-                "scope_revoked", json.dumps([scope, identifier], separators=(",", ":"))
-            ) is not None
-        ):
+        if device.get("state") != "approved" or self.known_revoked(device, scope):
             raise _TrustPathUnavailable()
 
     def pin_device(self, device: Mapping[str, Any]) -> dict[str, Any]:
@@ -416,8 +438,6 @@ class KeyTrust:
         if isinstance(authority, _ScopedEvidence):
             authority.require_scope(scope)
             return authority.roots.get(identifier)
-        if authority is _ProofAuthority.CURRENT_HEAD:
-            return None
         global_root = (
             self._load("recovery", identifier)
             if authority is _ProofAuthority.LOCAL_PINS else None
@@ -464,71 +484,13 @@ class KeyTrust:
 
     def _pin_verified_device(
         self, scope: str | None, device: Mapping[str, Any],
-        current_authority: _CurrentAuthority | None = None,
         authority: _ProofAuthority | _ScopedEvidence = _ProofAuthority.LOCAL_PINS,
     ) -> dict[str, Any]:
         if isinstance(authority, _ScopedEvidence):
             authority.require_scope(scope)
             return authority.pin_device(self._checked_device(scope, device))
         public = self.pin_device(device) if scope is None else self.pin_scope_device(scope, device)
-        if current_authority is not None and (
-            current_authority.before_generation == current_authority.anchor.generation
-        ):
-            try:
-                self.require_current_issuer(device, scope)
-            except _TrustPathUnavailable:
-                return public
-            self._qualify_current_device(scope, device, current_authority.anchor)
         return public
-
-    def _current_device_qualification(
-        self, scope: str | None, device: Mapping[str, Any], head: _RootIdentity
-    ) -> _CurrentDeviceQualification | None:
-        document = self._head_document(head.subject, scope)
-        if document is None:
-            return None
-        self._assert_head(head, document)
-        if self._head_identity(head.subject, scope, document) != head:
-            return None
-        known = document.get("qualified_devices", {}).get(device["device_id"])
-        if known is None:
-            return None
-        if public_device(known) != public_device(device):
-            raise E2eeError("device_key_changed")
-        try:
-            self.require_current_issuer(device, scope)
-        except _TrustPathUnavailable:
-            return None
-        return _CurrentDeviceQualification(head, known)
-
-    def _qualify_current_device(
-        self, scope: str | None, device: Mapping[str, Any], head: _RootIdentity
-    ) -> None:
-        slot = self._head_slot(head.subject, scope)
-        if slot is None:
-            return
-        self.require_current_issuer(device, scope)
-        public = public_device(device)
-        if public["account_subject"] != head.subject:
-            raise E2eeError("recovery_subject_mismatch")
-        kind, identifier = slot
-        with self.store.credential(f"{self.name}:{kind}:{identifier}") as item:
-            saved = item.read()
-            if not saved:
-                return
-            document = json.loads(saved)
-            self._assert_head(head, document)
-            if self._head_identity(head.subject, scope, document) != head:
-                return
-            qualified = document.setdefault("qualified_devices", {})
-            previous = qualified.get(public["device_id"])
-            if previous is not None and public_device(previous) != public:
-                raise E2eeError("device_key_changed")
-            if previous == public:
-                return
-            qualified[public["device_id"]] = public
-            item.replace(json.dumps(document, separators=(",", ":")))
-            self._state[kind][identifier] = document
 
     def _assert_head(
         self, identity: _RootIdentity, previous: Mapping[str, Any] | None
@@ -594,6 +556,12 @@ class KeyTrust:
         head = self._confirmed_head(identity.subject, scope)
         self._assert_head(identity, head.document() if head else None)
 
+    def _require_current_head(self, identity: _RootIdentity, scope: str | None = None) -> None:
+        head = self._confirmed_head(identity.subject, scope)
+        self._assert_head(identity, head.document() if head else None)
+        if head != identity:
+            raise E2eeError("recovery_head_changed")
+
     def confirm_recovery(
         self, subject: str, recovery: Mapping[str, Any], scope: str | None = None,
         *, current_device: Mapping[str, Any] | None = None,
@@ -629,10 +597,9 @@ class KeyTrust:
         if slot is None:
             raise E2eeError("recovery_scope_required")
         kind, identifier = slot
-        public = None
         if current_device is not None:
             self.require_current_issuer(current_device, scope)
-            public = public_device(current_device)
+            public = self._checked_device(scope, current_device)
             if public["account_subject"] != identity.subject:
                 raise E2eeError("recovery_subject_mismatch")
         name = f"{self.name}:{kind}:{identifier}"
@@ -644,17 +611,6 @@ class KeyTrust:
                 self._head_identity(identity.subject, scope, previous)
             self._assert_head(identity, previous)
             document = identity.document()
-            document["qualified_devices"] = (
-                dict(previous.get("qualified_devices", {}))
-                if previous is not None and
-                self._head_identity(identity.subject, scope, previous) == identity
-                else {}
-            )
-            if public is not None:
-                known = document["qualified_devices"].get(public["device_id"])
-                if known is not None and public_device(known) != public:
-                    raise E2eeError("device_key_changed")
-                document["qualified_devices"][public["device_id"]] = public
             if kind == "peer_heads":
                 document["scope_id"] = scope
             if previous != document:
@@ -689,42 +645,57 @@ class KeyTrust:
             raise E2eeError("invalid_recipient_purpose")
         if not scope:
             raise E2eeError("invalid_record_scope")
-        recoveries = audience["recoveries"]
+        claims = []
         qualified_subjects: set[str] = set()
-        for recovery in recoveries:
-            identity = _RootIdentity.parse(
-                self.origin, recovery["account_subject"], recovery
-            )
+        for recovery in audience["recoveries"]:
+            identity = _RootIdentity.parse(self.origin, recovery["account_subject"], recovery)
             if identity.subject in qualified_subjects:
                 raise E2eeError("invalid_recipient_set")
             qualified_subjects.add(identity.subject)
             self._check_head(identity, scope)
-        roots = []
-        for recovery in recoveries:
-            verified = self.verify_current_recovery(
-                recovery["account_subject"], recovery, lookup,
-                recovery_lookup=recovery_lookup, scope=scope, current_participant=True,
-            )
-            roots.append(_CurrentRootHead(
-                _RootIdentity.parse(self.origin, recovery["account_subject"], verified),
-                scope if recovery["account_subject"] != self.owner_subject else None,
-            ))
+            try:
+                anchor = self._current_recovery_anchor(identity, lookup, recovery_lookup, scope, True)
+            except _TrustPathUnavailable:
+                raise E2eeError("untrusted_recovery") from None
+            claims.append(_CurrentRootClaim(identity, anchor))
         devices = []
         for device in audience["devices"]:
             if device.get("state") != "approved":
                 raise E2eeError("device_approval_required")
-            if (
-                device.get("account_subject") != self.owner_subject
-                and device.get("account_subject") not in qualified_subjects
-            ):
+            if device.get("account_subject") != self.owner_subject and device.get("account_subject") not in qualified_subjects:
                 raise E2eeError("untrusted_recovery")
             material = self._lookup_device(device["device_id"], lookup)
             if public_device(material) != public_device(device):
                 raise E2eeError("device_key_changed")
-            devices.append(self.verify_current_device(
-                material, lookup, recovery_lookup=recovery_lookup, scope=scope,
-            ))
-        return _CurrentRecipientSet(scope, tuple(devices), tuple(roots))
+            devices.append(material)
+        if self.owner_subject not in qualified_subjects and any(
+            device["account_subject"] == self.owner_subject for device in devices
+        ):
+            head = self._confirmed_head(self.owner_subject, scope)
+            if head is None:
+                raise E2eeError("untrusted_recovery")
+            claims.append(_CurrentRootClaim(head, head))
+        if self.recipient_set is None:
+            raise E2eeError("untrusted_recovery")
+        verified = self.recipient_set(scope, tuple(claims), tuple(devices))
+        try:
+            for device in verified.devices:
+                self.require_current_issuer(device, scope)
+        except _TrustPathUnavailable:
+            raise E2eeError("untrusted_device") from None
+        for root in verified.roots:
+            self._pin_verified_recovery(scope, root.identity.subject, root.identity.document())
+            self._confirm_head(root.identity, scope)
+        try:
+            for device in verified.devices:
+                self._pin_verified_device(scope, device)
+                self.require_current_issuer(device, scope)
+            for root in verified.roots:
+                self._require_current_head(root.identity, scope)
+        except _TrustPathUnavailable:
+            raise E2eeError("untrusted_device") from None
+        return _CurrentRecipientSet(scope, verified.devices,
+            tuple(root for root in verified.roots if root.identity.subject in qualified_subjects))
 
     def remember_recoveries(
         self, recoveries: list[dict[str, Any]], scope: str | None = None
@@ -770,27 +741,11 @@ class KeyTrust:
         scope: str | None,
         offered: Mapping[str, Any] | None = None,
         authority: _ProofAuthority | _ScopedEvidence = _ProofAuthority.LOCAL_PINS,
-        current_authority: _CurrentAuthority | None = None,
     ) -> dict[str, Any]:
         if not isinstance(identifier, str) or not identifier:
             raise E2eeError("invalid_certificate")
         if offered is not None:
             self._root_identity(subject, offered, scope)
-        if authority is _ProofAuthority.CURRENT_HEAD:
-            if current_authority is None or current_authority.anchor.subject != subject:
-                raise E2eeError("recovery_subject_mismatch")
-            anchor = current_authority.anchor
-            if identifier == anchor.identifier:
-                if offered is not None and (
-                    _RootIdentity.parse(self.origin, subject, offered) != anchor
-                ):
-                    raise E2eeError("recovery_key_changed")
-                return anchor.document()
-            candidate = offered or self._historical_recovery(scope, identifier)
-            if candidate is not None:
-                identity = _RootIdentity.parse(self.origin, subject, candidate)
-                if not anchor.generation < identity.generation < current_authority.before_generation:
-                    raise _TrustPathUnavailable()
         previous = self._historical_recovery(scope, identifier, authority)
         if offered is not None:
             self._remember_recovery(subject, offered, scope)
@@ -821,18 +776,6 @@ class KeyTrust:
             proof = self._recovery_proofs.get((scope, identifier))
         if proof is None:
             raise _TrustPathUnavailable()
-        if authority is _ProofAuthority.CURRENT_HEAD:
-            identity = _RootIdentity.parse(self.origin, subject, proof)
-            if not current_authority.anchor.generation < identity.generation < current_authority.before_generation:
-                raise _TrustPathUnavailable()
-            self._verify_recovery(
-                subject, proof, lookup, visiting, recovery_lookup, scope, authority,
-                require_certificate=True,
-                current_authority=_CurrentAuthority(
-                    current_authority.anchor, identity.generation
-                ),
-            )
-            return proof
         return self._verify_recovery(
             subject, proof, lookup, visiting, recovery_lookup, scope, authority
         )
@@ -853,6 +796,32 @@ class KeyTrust:
         except _TrustPathUnavailable:
             raise E2eeError("untrusted_recovery") from None
 
+    def _current_recovery_anchor(
+        self, identity: _RootIdentity, lookup: Callable[[str], Mapping[str, Any]],
+        recovery_lookup: Callable[[str], Mapping[str, Any] | None] | None,
+        scope: str | None, current_participant: bool,
+    ) -> _RootIdentity:
+        subject = identity.subject
+        previous = self._confirmed_head(subject, scope)
+        self._assert_head(identity, previous.document() if previous else None)
+        initial = None
+        if subject != self.owner_subject:
+            if scope is None or self.participants is None:
+                raise _TrustPathUnavailable()
+            initial = previous if current_participant and previous is not None else (
+                self.participants.current_anchor(scope, subject, frozenset(), lookup, recovery_lookup)
+            )
+            if initial is None:
+                raise _TrustPathUnavailable()
+            if initial.subject != subject or initial.origin != self.origin:
+                raise E2eeError("recovery_subject_mismatch")
+            self._root_identity(subject, initial.document(), scope)
+            self._assert_head(identity, initial.document())
+        anchor = previous or initial
+        if anchor is None:
+            raise _TrustPathUnavailable()
+        return anchor
+
     def verify_current_recovery(
         self,
         subject: str,
@@ -864,52 +833,18 @@ class KeyTrust:
         current_participant: bool = False,
     ) -> dict[str, Any]:
         identity = _RootIdentity.parse(self.origin, subject, recovery)
-        previous = self._confirmed_head(subject, scope)
-        self._assert_head(identity, previous.document() if previous else None)
         try:
-            initial = None
-            if subject != self.owner_subject:
-                if scope is None or self.participants is None:
-                    raise _TrustPathUnavailable()
-                initial = previous if current_participant and previous is not None else (
-                    self.participants.current_anchor(
-                        scope, subject, frozenset(), lookup, recovery_lookup
-                    )
-                )
-                if initial is None:
-                    raise _TrustPathUnavailable()
-                if initial.subject != subject or initial.origin != self.origin:
-                    raise E2eeError("recovery_subject_mismatch")
-                self._root_identity(subject, initial.document(), scope)
-                self._assert_head(identity, initial.document())
-            anchor = previous or initial
-            if anchor is None:
+            anchor = self._current_recovery_anchor(identity, lookup, recovery_lookup, scope, current_participant)
+            if self.current_recovery is None:
                 raise _TrustPathUnavailable()
-            self._assert_head(identity, anchor.document())
-            initial_current = previous is None and initial == identity
-            if not initial_current and (previous is None or previous != identity):
-                self.remember_recoveries(
-                    [{**recovery, "account_subject": subject}], scope
-                )
-                proof = self._recovery_proofs[(scope, identity.identifier)]
-                if not proof.get("certificates") and recovery_lookup is not None:
-                    fetched = recovery_lookup(identity.identifier)
-                    if fetched is not None:
-                        self._remember_recovery(subject, fetched, scope)
-                    proof = self._recovery_proofs[(scope, identity.identifier)]
-                verified = self._verify_recovery(
-                    subject, proof, lookup, frozenset(), recovery_lookup, scope,
-                    authority=_ProofAuthority.CURRENT_HEAD,
-                    current_authority=_CurrentAuthority(anchor, identity.generation),
-                    require_certificate=True,
-                )
-            else:
-                self._pin_verified_recovery(scope, subject, recovery)
-                verified = dict(recovery)
+            verified = self.current_recovery(recovery, scope, anchor)
+            if verified.identity != identity:
+                raise E2eeError("recovery_key_changed")
         except _TrustPathUnavailable:
             raise E2eeError("untrusted_recovery") from None
+        self._pin_verified_recovery(scope, subject, recovery)
         self._confirm_head(identity, scope)
-        return verified
+        return dict(recovery)
 
     def _verify_recovery(
         self,
@@ -920,23 +855,20 @@ class KeyTrust:
         recovery_lookup: Callable[[str], Mapping[str, Any] | None] | None,
         scope: str | None,
         authority: _ProofAuthority | _ScopedEvidence = _ProofAuthority.LOCAL_PINS,
-        require_certificate: bool = False,
-        current_authority: _CurrentAuthority | None = None,
     ) -> dict[str, Any]:
         identity = self._root_identity(subject, recovery, scope)
         previous = self._historical_recovery(scope, identity.identifier, authority)
         if previous is not None:
             if _RootIdentity.parse(self.origin, subject, previous) != identity:
                 raise E2eeError("recovery_key_changed")
-            if not require_certificate:
-                return dict(recovery)
+            return dict(recovery)
         visit = f"recovery:{authority.value}:{identity.identifier}"
         if visit in visiting:
             raise _TrustPathUnavailable()
         visiting = visiting | {visit}
         endorsements = self._endorsed(
             lookup, visiting, recovery_lookup, scope, recovery_id=identity.identifier
-        ) if not require_certificate and authority is _ProofAuthority.LOCAL_PINS else ()
+        ) if authority is _ProofAuthority.LOCAL_PINS else ()
         for body in endorsements:
             peer = public_device(body.get("trusted_device", {}))
             root = body.get("recovery_root", {})
@@ -960,26 +892,15 @@ class KeyTrust:
                 issuer = self._lookup_device(command.get("device_id"), lookup)
                 if issuer.get("account_subject") != subject:
                     raise E2eeError("recovery_subject_mismatch")
-                if authority is _ProofAuthority.CURRENT_HEAD:
-                    self.require_current_issuer(issuer, scope)
                 checked = self._verify_device(
                     issuer, lookup, visiting, recovery_lookup, scope, authority,
-                    current_authority,
                 )
             except _TrustPathUnavailable:
                 continue
             self.crypto.verify(checked["signing_public_key"], operation, command)
-            if authority is _ProofAuthority.CURRENT_HEAD:
-                try:
-                    self.require_current_issuer(issuer, scope)
-                except _TrustPathUnavailable:
-                    continue
             self._pin_verified_recovery(scope, subject, recovery, authority)
             return dict(recovery)
-        if (
-            not require_certificate and scope is not None
-            and authority is _ProofAuthority.LOCAL_PINS and self.participants
-        ):
+        if scope is not None and authority is _ProofAuthority.LOCAL_PINS and self.participants:
             try:
                 if self.participants.verify_recovery(
                     scope, recovery, visiting, lookup, recovery_lookup
@@ -1017,9 +938,7 @@ class KeyTrust:
     def verify_current_device(
         self,
         device: Mapping[str, Any],
-        lookup: Callable[[str], Mapping[str, Any]],
         *,
-        recovery_lookup: Callable[[str], Mapping[str, Any] | None] | None = None,
         scope: str | None = None,
     ) -> dict[str, Any]:
         if device.get("state") != "approved":
@@ -1030,10 +949,15 @@ class KeyTrust:
             raise E2eeError("untrusted_recovery")
         try:
             self.require_current_issuer(device, scope)
-            return self._verify_device(
-                device, lookup, frozenset(), recovery_lookup, scope,
-                _ProofAuthority.CURRENT_HEAD, _CurrentAuthority(head, head.generation),
-            )
+            if self.current_device is None:
+                raise _TrustPathUnavailable()
+            qualified = self.current_device(device, scope, head)
+            if qualified.head != head or public_device(qualified.device) != public:
+                raise E2eeError("device_key_changed")
+            verified = self._pin_verified_device(scope, qualified.device)
+            self.require_current_issuer(device, scope)
+            self._require_current_head(head, scope)
+            return verified
         except _TrustPathUnavailable:
             raise E2eeError("untrusted_device") from None
 
@@ -1096,22 +1020,13 @@ class KeyTrust:
         recovery_lookup: Callable[[str], Mapping[str, Any] | None] | None,
         scope: str | None,
         authority: _ProofAuthority | _ScopedEvidence = _ProofAuthority.LOCAL_PINS,
-        current_authority: _CurrentAuthority | None = None,
     ) -> dict[str, Any]:
         public = self._checked_device(scope, device)
         identifier, subject = public["device_id"], public["account_subject"]
         if isinstance(authority, _ScopedEvidence):
             authority.require_scope(scope)
-        if authority is _ProofAuthority.CURRENT_HEAD and current_authority is not None:
-            qualified = self._current_device_qualification(
-                scope, device, current_authority.anchor
-            )
-            if qualified is not None:
-                return dict(qualified.device)
         if isinstance(authority, _ScopedEvidence):
             previous = authority.devices.get(identifier)
-        elif authority is _ProofAuthority.CURRENT_HEAD:
-            previous = None
         else:
             previous = self._scope_devices.get((scope, identifier))
             if authority is _ProofAuthority.LOCAL_PINS:
@@ -1155,7 +1070,7 @@ class KeyTrust:
                     if not roots:
                         raise _TrustPathUnavailable()
                     verified = self.projected_device(device, projection, scope, roots)
-                    return self._pin_verified_device(scope, verified, current_authority, authority)
+                    return self._pin_verified_device(scope, verified, authority=authority)
             if operation == "bootstrap":
                 if public_device(certificate.get("public_device", {})) != public:
                     raise E2eeError("invalid_certificate")
@@ -1169,7 +1084,6 @@ class KeyTrust:
                     root = self._recovery(
                         subject, recovery.get("recovery_id"), lookup,
                         visiting, recovery_lookup, scope, recovery, authority,
-                        current_authority,
                     )
                 except _TrustPathUnavailable:
                     continue
@@ -1178,7 +1092,7 @@ class KeyTrust:
                 ):
                     continue
                 canonical = self.crypto.canonical(public)
-                message = bytearray(b"arteligo-e2ee-device-root-v1\n") + canonical
+                message = bytearray(_DEVICE_ROOT_DOMAIN) + canonical
                 try:
                     self.crypto.execute({
                         "op": "verify_bytes",
@@ -1191,7 +1105,7 @@ class KeyTrust:
                     wipe(message)
                 if isinstance(authority, _CurrentCustodyEvidence):
                     authority.admitted(device, certificate, None)
-                return self._pin_verified_device(scope, device, current_authority, authority)
+                return self._pin_verified_device(scope, device, authority=authority)
             if operation == "envelopes_save" and isinstance(authority, _CurrentCustodyEvidence):
                 from ._organization_admission import OrganizationAdmission
 
@@ -1202,9 +1116,12 @@ class KeyTrust:
                 approval = OrganizationAdmission.parse(self.crypto, self.origin, command, issuer)
                 if approval.device != public or approval.root != authority.root:
                     continue
-                authority.authorize(operation, command, approval.target())
+                try:
+                    authority.authorize(operation, command, approval.target())
+                except _TrustPathUnavailable:
+                    continue
                 authority.admitted(device, certificate, None)
-                return self._pin_verified_device(scope, device, current_authority, authority)
+                return self._pin_verified_device(scope, device, authority=authority)
             if operation not in {"device_approve", "device_add_by_key"}:
                 continue
             from ._owner_protocol import SignedEvidence
@@ -1214,7 +1131,9 @@ class KeyTrust:
             if operation == "device_approve":
                 if any(body.get(field) != public[field] for field in _DEVICE_FIELDS if field != "account_subject"):
                     raise E2eeError("invalid_certificate")
-                declared_subject = body.get("account_subject", projection.reference.witness_subject if projection is not None else None)
+                declared_subject = body.get("account_subject",
+                    projection.reference.witness_subject if projection is not None
+                    else subject if isinstance(authority, _CurrentCustodyEvidence) else None)
                 if declared_subject != subject:
                     raise E2eeError("recovery_subject_mismatch")
                 consent = self._enrollment_identity_consent(device, body) if isinstance(authority, _IdentityBoundEvidence) else None
@@ -1224,32 +1143,27 @@ class KeyTrust:
                         and not authority.accepts_root(body["recovery_root"].get("recovery_id"))):
                     continue
                 if isinstance(authority, _CurrentCustodyEvidence):
-                    authority.authorize(operation, command, {field: body.get(field) for field in (
-                        "device_id", "encryption_public_key", "signing_public_key", "challenge",
-                    )})
+                    try:
+                        authority.authorize(operation, command, {field: body.get(field) for field in (
+                            "device_id", "encryption_public_key", "signing_public_key", "challenge",
+                        )})
+                    except _TrustPathUnavailable:
+                        continue
                 try:
                     issuer = self._lookup_device(command.device_id, lookup)
                     if issuer.get("account_subject") != subject:
                         raise E2eeError("recovery_subject_mismatch")
-                    if authority is _ProofAuthority.CURRENT_HEAD:
-                        self.require_current_issuer(issuer, scope)
                     checked = self._verify_device(
                         issuer, lookup, visiting, recovery_lookup, scope, authority,
-                        current_authority,
                     )
                 except _TrustPathUnavailable:
                     continue
                 command.verify(self.crypto, checked["signing_public_key"], operation)
-                if authority is _ProofAuthority.CURRENT_HEAD:
-                    try:
-                        self.require_current_issuer(issuer, scope)
-                    except _TrustPathUnavailable:
-                        continue
                 if body.get("recovery_root") is not None:
                     self._pin_verified_recovery(scope, subject, body["recovery_root"], authority)
                 if isinstance(authority, _CurrentCustodyEvidence):
                     authority.admitted(device, certificate, consent)
-                return self._pin_verified_device(scope, device, current_authority, authority)
+                return self._pin_verified_device(scope, device, authority=authority)
             if command.device_id != identifier or (
                 public_device(body.get("device", {})) != public
             ):
@@ -1284,7 +1198,6 @@ class KeyTrust:
                 root = self._recovery(
                     subject, body.get("recovery_id"), lookup,
                     visiting, recovery_lookup, scope, authority=authority,
-                    current_authority=current_authority,
                 )
             except _TrustPathUnavailable:
                 continue
@@ -1293,5 +1206,5 @@ class KeyTrust:
             command.verify(self.crypto, root["signing_public_key"], operation)
             if isinstance(authority, _CurrentCustodyEvidence):
                 authority.admitted(device, certificate, None)
-            return self._pin_verified_device(scope, device, current_authority, authority)
+            return self._pin_verified_device(scope, device, authority=authority)
         raise _TrustPathUnavailable()

@@ -3,7 +3,6 @@ from __future__ import annotations
 from contextlib import nullcontext
 import json
 import re
-import secrets
 import time
 from typing import Any, Literal, TypedDict
 
@@ -742,11 +741,11 @@ class EncryptedRecords:
         )
         if not is_canonical_project_id(scope):
             raise E2eeError("invalid_project_id")
-        devices = self.session.approved_self_devices()
         authority = self.session.owner_access.authority(owner_org, active=False)
         if authority.state != OwnerAuthorityHeadState.ACTIVE:
             authority = self.session.owner_access.provision_key(owner_org, authority)
         issuer = self.session.owner_access.maintenance_issuer(authority) if authority.owner_subject == self.session.subject else None
+        devices = [] if issuer is not None else self.session.approved_self_devices(owner_org, authority)
         wrap_key = issuer.wrap if issuer is not None else self.session.wrap_key
         owner = self.session._scope_owner(scope)
         key = self.crypto.key()

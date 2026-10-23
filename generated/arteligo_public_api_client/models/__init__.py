@@ -83,6 +83,7 @@ from .e2_ee_owner_binding_reference import E2EeOwnerBindingReference
 from .e2_ee_owner_candidate_offer import E2EeOwnerCandidateOffer
 from .e2_ee_owner_candidate_result import E2EeOwnerCandidateResult
 from .e2_ee_owner_capsule import E2EeOwnerCapsule
+from .e2_ee_owner_committed_export_reference import E2EeOwnerCommittedExportReference
 from .e2_ee_owner_coverage_gap import E2EeOwnerCoverageGap
 from .e2_ee_owner_custody import E2EeOwnerCustody
 from .e2_ee_owner_custody_backup import E2EeOwnerCustodyBackup
@@ -273,6 +274,7 @@ __all__ = (
     "E2EeOwnerCandidateOffer",
     "E2EeOwnerCandidateResult",
     "E2EeOwnerCapsule",
+    "E2EeOwnerCommittedExportReference",
     "E2EeOwnerCoverageGap",
     "E2EeOwnerCustody",
     "E2EeOwnerCustodyBackup",

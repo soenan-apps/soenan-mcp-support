@@ -10,12 +10,13 @@ from arteligo_public_api_client.models.e2_ee_owner_custody import E2EeOwnerCusto
 from ._crypto import E2eeError
 from ._owner_protocol import (
     OwnerAuthorityHead, OwnerBinding, OwnerCapsuleCrypto, OwnerManifest, OwnerOperation, OwnerSourceDocument,
-    SignedEvidence, authority_head, object_value, parse_model,
+    ROOT_FIELDS, SignedEvidence, authority_head, object_value, parse_model,
 )
 from ._signed_commands import AcceptedCommand, RejectedCommand, SavedCommand, UncertainCommand
-from ._trust import _RootIdentity
+from ._trust import _RootIdentity, public_device
 
 if TYPE_CHECKING:
+    from ._owner_sources import OwnerIssuerEvidence
     from ._session import DeviceSession
 
 
@@ -85,14 +86,23 @@ class SourceAnchor:
     root: dict[str, Any]
 
     @classmethod
-    def parse(cls, value: Any) -> SourceAnchor:
+    def parse(cls, value: Any, *, origin: str) -> SourceAnchor:
         value = object_value(value)
+        if set(value) != {"command", "device", "root"} or not isinstance(origin, str) or not origin:
+            raise E2eeError("invalid_owner_state")
         try:
             command = SignedEvidence.parse(value["command"])
             device, root = object_value(value["device"]), object_value(value["root"])
-            if command.body.get("trusted_device") != device or command.body.get("recovery_root") != root:
+            signed_device = object_value(command.body.get("trusted_device"))
+            signed_root = object_value(command.body.get("recovery_root"))
+            if (device != signed_device or set(signed_root) != set(ROOT_FIELDS)
+                    or set(root) - {"origin", "account_subject"} != set(ROOT_FIELDS)):
                 raise E2eeError("invalid_owner_state")
-            return cls(command, device, root)
+            subject = public_device(signed_device)["account_subject"]
+            identity = _RootIdentity.parse(origin, subject, signed_root)
+            if _RootIdentity.parse(origin, subject, root) != identity:
+                raise E2eeError("invalid_owner_state")
+            return cls(command, signed_device, signed_root)
         except (KeyError, TypeError):
             raise E2eeError("invalid_owner_state") from None
 
@@ -118,11 +128,14 @@ class SavedManifest:
     manifest: OwnerManifest
     selection: ManifestSelection | None = None
     origin: ManifestOrigin = ManifestOrigin.LOCAL
+    issuer_evidence: OwnerIssuerEvidence | None = None
 
     def document(self) -> dict[str, Any]:
         result = {"signed_command": self.manifest.command.document(), "manifest_digest": self.manifest.digest,
                   "documents": [item.document() for item in self.manifest.require_documents()],
-                  "origin": self.origin.value}
+                  "origin": self.origin.value if self.issuer_evidence is not None else ManifestOrigin.DATA.value}
+        if self.issuer_evidence is not None:
+            result["issuer_evidence"] = self.issuer_evidence.document()
         if self.selection is not None:
             result.update(source_binding=self.selection.source_binding,
                           selected_preparation=self.selection.preparation.document(),
@@ -229,6 +242,8 @@ class OwnerStateStore:
         self._device, self._states, self._roots = device, states, roots
 
     def _parse(self, organization: str, value: dict[str, Any]) -> OwnerState:
+        from ._owner_sources import OwnerIssuerEvidence
+
         try:
             state = OwnerState()
             state.keys = [OwnerKey.parse(item, organization, self.crypto) for item in value.get("keys", [])]
@@ -239,15 +254,22 @@ class OwnerStateStore:
                 if manifest.digest != saved["manifest_digest"] or manifest.body.manifest_id != identifier:
                     raise E2eeError("owner_source_manifest_mismatch")
                 selection = None
+                selected_fields = {"source_binding", "selected_preparation", "selected_decision"}
+                if saved.keys() & selected_fields not in (set(), selected_fields):
+                    raise E2eeError("invalid_owner_state")
                 if "selected_decision" in saved:
                     selection = ManifestSelection(object_value(saved["source_binding"]),
                         SignedEvidence.parse(saved["selected_preparation"]),
                         parse_model(OwnerTransferDecision.from_dict, saved["selected_decision"]))
                 origin = ManifestOrigin(saved.get("origin", ManifestOrigin.DATA.value))
-                state.manifests[identifier] = SavedManifest(manifest, selection, origin)
+                evidence = OwnerIssuerEvidence.parse(saved["issuer_evidence"]) if "issuer_evidence" in saved else None
+                if evidence is None:
+                    origin = ManifestOrigin.DATA
+                state.manifests[identifier] = SavedManifest(manifest, selection, origin, evidence)
             if value.get("source_anchor") is not None:
-                state.source_anchor = SourceAnchor.parse(value["source_anchor"])
-            state.confirmed_sources = [SourceAnchor.parse(item) for item in value.get("confirmed_sources", [])]
+                state.source_anchor = SourceAnchor.parse(value["source_anchor"], origin=self.session.trust.origin)
+            state.confirmed_sources = [SourceAnchor.parse(item, origin=self.session.trust.origin)
+                                       for item in value.get("confirmed_sources", [])]
             if value.get("observed_head") is not None:
                 state.observed_head = authority_head(value["observed_head"], organization)
             if value.get("candidate") is not None:

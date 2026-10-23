@@ -204,7 +204,7 @@ class OwnerHandoffs:
                 or gate.offer_digest != decision.candidate_offer_digest
                 or gate.history_manifest_digest != canonical_digest(self.crypto, [item.to_dict() for item in body.keyring_manifest])):
             raise E2eeError("owner_gate_mismatch")
-        decision = self.verifier.decision(organization, decision.operation_id, preparation, offered, selected_head)
+        decision = self.verifier.verify_decision(organization, decision, preparation, offered, selected_head)
         saved_manifest = self.session.call("e2eeGetOwnerManifestDocuments", organization_id=organization,
                                            manifest_id=body.source_manifest_id)
         manifest = OwnerManifest.parse(self.crypto, saved_manifest.get("signed_command"), saved_manifest.get("documents"))
@@ -223,7 +223,7 @@ class OwnerHandoffs:
                 [item.to_dict() for item in body.keyring_manifest], source_head)
             if any(key.key_id == offered.key_id or key.public_key == offered.public_key for key in keys):
                 raise E2eeError("owner_keyring_mismatch")
-            self.verifier.manifest(organization, manifest, source, OwnerIssuerEvidence.parse(saved_manifest.get("issuer_evidence")))
+            evidence = self.verifier.manifest(organization, manifest, source, OwnerIssuerEvidence.parse(saved_manifest.get("issuer_evidence")))
             active = OwnerKey(selected_head.key_id, selected_head.key_epoch, selected_head.public_key,
                               selected_head.binding_digest, candidate.secret_key, candidate.binding)
             self.keyring.merge(organization, [*keys, active])
@@ -232,7 +232,8 @@ class OwnerHandoffs:
         finally:
             wipe(outer)
             wipe(inner)
-        state.manifests[manifest.body.manifest_id] = SavedManifest(manifest, ManifestSelection(proof, preparation.command, decision))
+        state.manifests[manifest.body.manifest_id] = SavedManifest(
+            manifest, ManifestSelection(proof, preparation.command, decision), issuer_evidence=evidence)
         state.receipts[decision.operation_id] = decision
         self.store.save(organization)
         current = authority(organization)

@@ -23,17 +23,19 @@ from ._owner_protocol import (
     OwnerManifest, OwnerOperation, OwnerSourceDocument, SignedEvidence, authority_head,
     custody, object_value, require_active,
 )
+from ._project_identity import committed_creator, has_committed_creator
 from ._owner_state import CandidateSecret, OwnerKey, OwnerStateStore, SavedManifest, SourceAnchor
 from ._owner_sources import OriginalIssuerAdmission
 from ._owner_verifier import (
     AuthenticatedAbsent, FrozenProjectOrigin, NoSelectedHistory, OriginalProjectCreation,
-    OwnerEvidenceVerifier, ProjectOriginConstraint, VerifiedProjectOrigin,
+    OwnerEvidenceVerifier, ProjectOriginConstraint, VerifiedBinding, VerifiedProjectOrigin,
 )
 from ._signed_commands import AcceptedCommand, RejectedCommand, SavedCommand, UncertainCommand
-from ._trust import _RootIdentity, _TrustPathUnavailable, public_device
+from ._trust import _RootIdentity, public_device
 
 if TYPE_CHECKING:
     from ._session import DeviceSession
+    from ._participants import _ProjectOwnerInviterIntroduction
 
 
 
@@ -67,7 +69,8 @@ class OwnerAccess:
         self.blockers: dict[str, str] = {}
         self._maintaining = False
 
-    def authority(self, organization: str, *, active: bool = True) -> OwnerAuthorityHead:
+    def authority(self, organization: str, *, active: bool = True, verify_binding: bool = True,
+                  proof_scope: str | None = None) -> OwnerAuthorityHead:
         proof = self.session.call("e2eeGetOwnerAuthority", organization_id=organization)
         suggested = authority_head(proof.get("owner_authority"), organization)
         head = self.account.authority(organization, suggested.read_capability)
@@ -81,8 +84,8 @@ class OwnerAccess:
         ):
             raise E2eeError("owner_authority_rollback")
         verified = None
-        if head.state != OwnerAuthorityHeadState.UNPROVISIONED:
-            verified = self.verifier.binding(organization, proof, head)
+        if head.state != OwnerAuthorityHeadState.UNPROVISIONED and verify_binding:
+            verified = self.verifier.binding(organization, proof, head, proof_scope=proof_scope)
             if head.owner_subject == self.session.subject and not any(key.key_id == head.key_id for key in state.keys):
                 for candidate in (*state.retired_candidates, *((state.candidate,) if state.candidate is not None else ())):
                     if (candidate.binding.command.digest(self.crypto, OwnerOperation.OFFER) == head.binding_digest
@@ -97,7 +100,9 @@ class OwnerAccess:
             require_active(head)
             if verified is None:
                 raise E2eeError("owner_binding_mismatch")
-            self.current.qualify(organization, verified.device, verified.root, head, expected_root=verified.root)
+            known_roots = verified.positive_roots if proof_scope is not None and proof_scope != organization else ()
+            self.current.qualify(organization, verified.device, verified.root, head, expected_root=verified.root,
+                known_roots=known_roots, proof_scope=proof_scope)
         return head
 
 
@@ -252,14 +257,17 @@ class OwnerAccess:
             if organization not in memberships:
                 continue
             state = self.store.get(organization)
-            if state.candidate is not None or (state.observed_head is not None and state.observed_head.owner_subject == self.session.subject):
+            observed = state.observed_head
+            if state.candidate is not None or (
+                observed is not None and observed.owner_subject == self.session.subject and observed.key_id
+            ):
                 holders.append(organization)
         for organization in holders:
             self.invalidate_custody(organization, self._custody(organization))
         self.maintain()
         for organization in holders:
             head = self.authority(organization, active=False)
-            if head.owner_subject == self.session.subject:
+            if head.owner_subject == self.session.subject and head.key_id:
                 require_active(head)
                 self.keyring.active(organization, head)
             candidate = self.store.get(organization).candidate
@@ -267,13 +275,37 @@ class OwnerAccess:
                 raise E2eeError("owner_candidate_secret_missing")
 
 
-    def _selected_project(self, organization: str, scope: str) -> VerifiedProjectOrigin | None:
-        head = self.authority(organization, active=False)
+    def _selected_project(self, organization: str, scope: str) -> tuple[
+        OwnerAuthorityHead, VerifiedBinding | None, VerifiedProjectOrigin | None,
+    ]:
+        head = self.authority(organization, active=False, verify_binding=False, proof_scope=scope)
         if not head.key_id:
-            return None
+            return head, None, None
         proof = self.session.call("e2eeGetOwnerBinding", organization_id=organization, binding_digest=head.binding_digest)
-        source = self.verifier.binding(organization, proof, head)
-        return self.verifier.project_origin(organization, scope, source)
+        source = self.verifier.binding(organization, proof, head, proof_scope=scope)
+        return head, source, self.verifier.project_origin(organization, scope, source)
+
+    def _has_retained_owner_anchor(self, organization: str, scope: str, source: VerifiedBinding) -> bool:
+        independent = source.independent_anchor
+        roots = []
+        if independent.subject == self.session.subject:
+            confirmed = self.session.trust._confirmed_head(independent.subject)
+            if confirmed is not None:
+                roots.append(confirmed)
+        roots.extend(self.verifier.root(value, independent.subject)
+            for (selected, _), value in self.session.trust._scope_roots.items()
+            if selected == organization and value["account_subject"] == independent.subject)
+        state = self.store.find(organization)
+        if state is not None:
+            anchors = (*((state.source_anchor,) if state.source_anchor is not None else ()), *state.confirmed_sources)
+            roots.extend(self.verifier.root(anchor.root, anchor.device["account_subject"])
+                for anchor in anchors if anchor.command.body.get("scope_id") == organization
+                and anchor.device["account_subject"] == independent.subject)
+        for root in roots:
+            if root.origin == independent.origin:
+                self.current.assert_root_lineage(scope, root, independent)
+                return True
+        return False
 
     def project_origin_constraint(self, scope: str) -> ProjectOriginConstraint:
         organization = self.session.scope_metadata(scope).get("owner_org")
@@ -285,8 +317,8 @@ class OwnerAccess:
         snapshot = self.account.authority_snapshot(organization, suggested.read_capability)
         if snapshot.head != suggested:
             raise E2eeError("owner_authority_changed")
-        selected = self.verifier.selected_source(organization, snapshot)
-        result = (self.verifier.origin_constraint(organization, scope, selected)
+        selected = self.verifier.selected_source(organization, snapshot, proof_scope=scope)
+        result = (self.verifier.origin_constraint(organization, scope, selected, proof_scope=scope)
                   if selected is not None else NoSelectedHistory())
         self.store.observe_source(scope, organization, result.document if isinstance(result, FrozenProjectOrigin) else None)
         return result
@@ -362,44 +394,176 @@ class OwnerAccess:
                 return anchor.device, self.verifier.root(anchor.root, subject)
         return None
 
-    def _project_source(self, organization: str, scope: str) -> OriginalProjectCreation:
-        selected = self._selected_project(organization, scope)
-        if selected is not None:
-            return OriginalProjectCreation(SignedEvidence.parse(selected.project.creation_command.to_dict()), selected.creator, selected.root)
-        from ._participant_sources import committed_owner
-
+    def _project_creation_command(self, organization: str, scope: str) -> SignedEvidence:
         page = self.session.call("e2eeGetScopeParticipantProofs", scope_id=scope, source_scope_id=organization, limit=256)
         context = object_value(page.get("source"))
+        if context.get("scope_id") != organization:
+            raise E2eeError("participant_scope_mismatch")
         original = SignedEvidence.parse(context.get("project_command"))
-        material = self.session._device_material(scope, original.device_id)
-        subject = material["account_subject"]
-        lookup = self.session._current_device_lookup(scope)
-        roots = lambda identifier: self.session._recovery_material(scope, identifier)
-        try:
-            committed = committed_owner(self.session._participants, scope, subject, lookup, roots)
-        except _TrustPathUnavailable:
-            committed = None
-        if committed is not None:
-            if committed.device != public_device(material):
-                raise E2eeError("device_key_changed")
-            original.verify(self.crypto, committed.device["signing_public_key"], "project_create")
-            if original.body.get("project_id") != scope or original.body.get("owner_org") != organization:
-                raise E2eeError("owner_project_source_mismatch")
-            return OriginalProjectCreation(original, committed.device, committed.root)
-        anchor = self.project_owner_anchor(scope, subject)
-        if anchor is None:
-            raise E2eeError("owner_confirmation_required")
-        root = self.verifier.creation_root(organization, original, material)
-        creator = self.verifier.signer(organization, original, material, root.document(), proof_scope=scope)
-        original.verify(self.crypto, creator["signing_public_key"], "project_create")
-        if original.body.get("project_id") != scope or original.body.get("owner_org") != organization:
+        from ._participants import _fields
+
+        body = original.body
+        fields = {"project_id", "owner_org", "participation_policy", "envelopes", "records"}
+        if "owner_authority" in body:
+            fields.add("owner_authority")
+        if "owner_key_proof" in body:
+            fields.add("owner_key_proof")
+        body = _fields(body, fields)
+        if (body["project_id"] != scope or body["owner_org"] != organization
+                or not isinstance(body["participation_policy"], str)
+                or body["participation_policy"] not in {"private", "organization"}
+                or not isinstance(body["envelopes"], list) or not isinstance(body["records"], list)):
             raise E2eeError("owner_project_source_mismatch")
+        if "owner_key_proof" in body and body["owner_key_proof"] != OWNER_KEY_PROOF:
+            raise E2eeError("unsupported_owner_key_proof")
+        return original
+
+    def _independent_project_creation(
+        self,
+        organization: str,
+        scope: str,
+        original: SignedEvidence,
+        introductions: tuple[_ProjectOwnerInviterIntroduction, ...],
+    ) -> OriginalProjectCreation | None:
+        body = original.body
+        if "owner_authority" not in body:
+            return None
+        material = self.session._device_material(scope, original.device_id)
+        creator_subject = material["account_subject"]
+        endorsed = authority_head(body["owner_authority"], organization)
+        if (not self.account.selected(organization, endorsed.binding_digest,
+                capability=endorsed.read_capability).matches(endorsed)
+                or (endorsed.owner_subject == creator_subject and body.get("owner_key_proof") != OWNER_KEY_PROOF)
+                or (endorsed.owner_subject != creator_subject and body.get("owner_key_proof") is not None)):
+            raise E2eeError("owner_project_source_mismatch")
+        root = self.verifier.creation_root(organization, original, material, proof_scope=scope)
+        if has_committed_creator(scope) and not committed_creator(scope, material["signing_public_key"]):
+            raise E2eeError("owner_project_source_mismatch")
+
+        trusted_roots: list[_RootIdentity] = []
+
+        def remember(candidate: _RootIdentity | None) -> None:
+            if (candidate is not None and candidate.subject == creator_subject
+                    and candidate.origin == self.session.trust.origin and candidate not in trusted_roots):
+                trusted_roots.append(candidate)
+
+        remember(self.session.trust._confirmed_head(creator_subject, scope))
+        if creator_subject == self.session.subject:
+            for (selected, _), recovery in self.session.trust._scope_roots.items():
+                if selected == scope and recovery["account_subject"] == creator_subject:
+                    remember(self.verifier.root(recovery, creator_subject))
+            trusted_roots.extend(root for root in self.store.self_roots() if root not in trusted_roots)
+        else:
+            try:
+                remember(self.current.independent_root(scope, material))
+            except E2eeError as error:
+                if error.code != "owner_identity_verification_required":
+                    raise
+        state = self.store.find(organization)
+        if state is not None:
+            anchor = state.source_anchor
+            if (anchor is not None and anchor.command.body.get("scope_id") == organization
+                    and anchor.device["account_subject"] == creator_subject):
+                remember(self.verifier.root(anchor.root, creator_subject))
+            for anchor in (*((state.source_anchor,) if state.source_anchor is not None else ()),
+                           *state.confirmed_sources):
+                if (anchor.command.body.get("scope_id") == scope
+                        and anchor.device["account_subject"] == creator_subject):
+                    remember(self.verifier.root(anchor.root, creator_subject))
+        project_anchor = self.project_owner_anchor(scope, creator_subject)
+        if project_anchor is not None:
+            remember(project_anchor[1])
+
+        if not trusted_roots:
+            for introduction in introductions:
+                if introduction.scope != scope:
+                    raise E2eeError("participant_scope_mismatch")
+                if introduction.root.subject == creator_subject:
+                    remember(introduction.root)
+            if not trusted_roots:
+                return None
+        independent = max(trusted_roots, key=lambda candidate: (candidate.generation, candidate.identifier))
+        for candidate in trusted_roots:
+            if candidate != independent:
+                self.current.assert_root_lineage(scope, candidate, independent)
+        self.current.assert_root_lineage(scope, root, independent)
+        creator = self.verifier.signer(organization, original, material, root.document(), proof_scope=scope,
+            historical_roots=tuple(trusted_roots))
+        original.verify(self.crypto, creator["signing_public_key"], "project_create")
         return OriginalProjectCreation(original, creator, root)
+
+    def _delegated_project_creation(self, organization: str, scope: str, source: VerifiedBinding,
+                                    creation: SignedEvidence) -> OriginalProjectCreation | None:
+        if not self._has_retained_owner_anchor(organization, scope, source):
+            return None
+        if "owner_authority" in creation.body:
+            self.verifier._project_authority_index(organization, creation, source.links)
+        material = self.session._device_material(scope, creation.device_id)
+        creator = public_device(material)
+        if has_committed_creator(scope) and not committed_creator(scope, creator["signing_public_key"]):
+            raise E2eeError("owner_project_source_mismatch")
+        from ._participant_sources import committed_owner
+
+        committed = committed_owner(self.session._participants, scope, creator["account_subject"],
+            self.session._current_device_lookup(scope),
+            lambda identifier: self.session._recovery_material(scope, identifier))
+        if committed is not None:
+            if committed.command != creation or committed.device != creator:
+                raise E2eeError("owner_project_source_mismatch")
+            root = self.verifier.creation_root(organization, creation, creator, committed.root, proof_scope=scope)
+            creation.verify(self.crypto, creator["signing_public_key"], "project_create")
+            return OriginalProjectCreation(creation, creator, root)
+        if "owner_authority" in creation.body:
+            return None
+        inherited = self.project_owner_anchor(scope, creator["account_subject"])
+        if inherited is None:
+            return None
+        anchor_device, anchor_root = inherited
+        if anchor_device != creator:
+            raise E2eeError("owner_project_source_mismatch")
+        root = self.verifier.creation_root(organization, creation, creator, anchor_root, proof_scope=scope)
+        verified = self.verifier.signer(organization, creation, material, root.document(),
+            proof_scope=scope, historical_roots=(root,))
+        if public_device(verified) != creator:
+            raise E2eeError("owner_project_source_mismatch")
+        creation.verify(self.crypto, creator["signing_public_key"], "project_create")
+        return OriginalProjectCreation(creation, creator, root)
+
+    def _project_source(self, organization: str, scope: str) -> OriginalProjectCreation:
+        head, source, selected = self._selected_project(organization, scope)
+        if selected is not None:
+            return OriginalProjectCreation(SignedEvidence.parse(selected.project.creation_command.to_dict()),
+                selected.creator, selected.root)
+        if not head.key_id:
+            raise E2eeError("owner_identity_verification_required")
+        constraint = self.project_origin_constraint(scope)
+        creation = self._project_creation_command(organization, scope)
+        if isinstance(constraint, AuthenticatedAbsent):
+            self.verifier._require_creation_epoch(organization, creation, constraint.last_source_epoch, None)
+        elif not isinstance(constraint, NoSelectedHistory):
+            raise E2eeError("owner_identity_verification_required")
+        if source is not None:
+            delegated = self._delegated_project_creation(organization, scope, source, creation)
+            if delegated is not None:
+                return delegated
+        independent = self._independent_project_creation(organization, scope, creation, ())
+        if independent is None:
+            introductions = self.session._participants.project_owner_inviter_introductions(
+                organization, scope,
+            )
+            independent = self._independent_project_creation(
+                organization, scope, creation, introductions,
+            )
+        if independent is None:
+            raise E2eeError("owner_identity_verification_required")
+        if independent.command != creation:
+            raise E2eeError("owner_project_source_mismatch")
+        return independent
 
     def _project_evidence(self, organization: str, project: dict[str, Any],
                           admission: OriginalIssuerAdmission) -> OwnerSourceDocument:
         scope = project["project_id"]
-        inherited = self._selected_project(organization, scope)
+        inherited = self._selected_project(organization, scope)[2]
         if inherited is not None:
             if inherited.project.creation_command.to_dict() != project["creation_command"]:
                 raise E2eeError("owner_project_source_mismatch")
@@ -407,12 +571,11 @@ class OwnerAccess:
         source = self._project_source(organization, scope)
         if source.command.document() != project["creation_command"]:
             raise E2eeError("owner_project_source_mismatch")
-        self.verifier.creation_root(organization, source.command, source.creator, source.root)
+        self.verifier.creation_root(organization, source.command, source.creator, source.root, proof_scope=scope)
         confirmations = [anchor.command for anchor in self.store.get(organization).confirmed_sources
                          if anchor.command.body.get("scope_id") == scope
                          and public_device(anchor.command.body.get("trusted_device", {})) == source.creator
                          and self.verifier.root(anchor.root, source.root.subject) == source.root]
-        from ._project_identity import has_committed_creator
 
         if not has_committed_creator(scope) and not confirmations:
             raise E2eeError("owner_confirmation_required")
@@ -451,8 +614,8 @@ class OwnerAccess:
             saved = OwnerManifest.parse(self.crypto, pending.command.document(), pending.source_documents)
             original_head = authority_head(saved.body.owner_authority.to_dict(), organization)
             proof = self.session.call("e2eeGetOwnerBinding", organization_id=organization, binding_digest=original_head.binding_digest)
-            self.verifier.manifest(organization, saved, self.verifier.binding(organization, proof, original_head))
-            state.manifests[saved.body.manifest_id] = SavedManifest(saved)
+            evidence = self.verifier.manifest(organization, saved, self.verifier.binding(organization, proof, original_head))
+            state.manifests[saved.body.manifest_id] = SavedManifest(saved, issuer_evidence=evidence)
             self.store.finish(organization, "manifest")
         proof = self.session.call("e2eeGetOwnerBinding", organization_id=organization, binding_digest=head.binding_digest)
         source = self.verifier.binding(organization, proof, head)
@@ -478,8 +641,8 @@ class OwnerAccess:
         self.store.save(organization)
         self.commands.submit(organization, "manifest", OwnerOperation.MANIFEST)
         manifest = OwnerManifest.parse(self.crypto, command.document(), pending.source_documents)
-        self.verifier.manifest(organization, manifest, source)
-        state.manifests[manifest.body.manifest_id] = SavedManifest(manifest)
+        evidence = self.verifier.manifest(organization, manifest, source)
+        state.manifests[manifest.body.manifest_id] = SavedManifest(manifest, issuer_evidence=evidence)
         self.store.finish(organization, "manifest")
         return manifest
 
@@ -537,6 +700,12 @@ class OwnerAccess:
         self._maintain_candidate(organization, proof, current_custody)
         if head.owner_subject != self.session.subject:
             if head.state == OwnerAuthorityHeadState.ACTIVE:
+                try:
+                    self.session.scope_metadata(organization, refresh=True)
+                except E2eeError as error:
+                    if error.code == "access_denied":
+                        return
+                    raise
                 self.provision_member_projects(organization, head)
             return
         if head.state != OwnerAuthorityHeadState.ACTIVE or state.registration is not None:

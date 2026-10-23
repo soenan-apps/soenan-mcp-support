@@ -183,6 +183,8 @@ HTTP 契約の正本は Arteligo の `contracts/openapi/arteligo-public.yaml` �
 bin/soenan arteligo contract generate
 ```
 
+SDKの手書きsourceは、ワークスペースのルートから`bin/soenan check`で静的検査します。Ruff F規則とPython 3.10の対象設定は、このリポジトリの`pyproject.toml`が管理します。生成clientの`generated/`は除外します。未定義名や未使用importの検出は、暗号・認可・転送の実サービス検証の代わりにはなりません。
+
 SDKの業務検証には、配布packageとRust crypto runtime、実際のAccount・Arteligo・PostgreSQL・Bucketを使います。通常構成にValkeyはありません。通常クライアントでOAuthのブラウザー認証、OSの保護ストアへの保存、端末設定を行い、実際のファイルを保存・取得して内容を確認します。[workspaceの利用者フロー](../docs/local-development.md#利用者フローの確認)を参照してください。
 
 micro・mock・fakeのsuite、大量metadataの生成・測定driver、専用DBus・keyring・native library環境、identity・source hash・証跡台帳を使うacceptance helperは削除しました。このリポジトリには、通常の認証からファイル転送までを自動確認するstandalone suiteはありません。

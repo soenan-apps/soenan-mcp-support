@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Any, Mapping
 
 from ._crypto import E2eeError, decode, encode, wipe
 from ._owner_envelopes import OWNER_KEY_PROOF
-from ._owner_protocol import GENERATION_BLOCKERS, OwnerAuthorityHead, SignedEvidence, authority_head
+from ._owner_protocol import GENERATION_BLOCKERS, OwnerAuthorityHead, SignedEvidence
 from ._signed_commands import SavedCommand, UncertainCommand
 from ._trust import _CurrentRecipientSet, _TrustPathUnavailable
 from account_public_api_client.models.owner_custody_evidence import OwnerCustodyEvidence

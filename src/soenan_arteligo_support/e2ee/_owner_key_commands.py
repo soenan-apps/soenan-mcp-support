@@ -68,8 +68,12 @@ class OwnerEnvelopeCommands:
         if sender["account_subject"] != head.owner_subject:
             raise E2eeError("owner_signer_mismatch")
         proof = self.session.call("e2eeGetOwnerBinding", organization_id=organization, binding_digest=head.binding_digest)
-        binding = self.owner.verifier.binding(organization, proof, head)
-        self.owner.verifier.signer(organization, signed, sender, binding.binding.body.recovery_root.to_dict())
+        binding = self.owner.verifier.binding(organization, proof, head, proof_scope=scope)
+        historical_roots = tuple(root for root in binding.positive_roots
+                                 if root.subject == sender["account_subject"]
+                                 and root.origin == self.session.trust.origin)
+        self.owner.verifier.signer(organization, signed, sender, binding.binding.body.recovery_root.to_dict(),
+            proof_scope=scope, historical_roots=historical_roots)
         signed.verify(self.crypto, sender["signing_public_key"], operation)
         envelopes = body.get("envelopes")
         if not isinstance(envelopes, list) or not envelopes or any(not isinstance(value, dict)
@@ -94,9 +98,11 @@ class OwnerEnvelopeCommands:
                 raise E2eeError("owner_key_generation_stale")
             proof = self.session.call("e2eeGetOwnerBinding", organization_id=verified.authority.organization_id,
                 binding_digest=verified.authority.binding_digest)
-            binding = self.owner.verifier.binding(verified.authority.organization_id, proof, verified.authority)
+            binding = self.owner.verifier.binding(verified.authority.organization_id, proof, verified.authority,
+                proof_scope=scope)
+            roots = binding.positive_roots
             self.owner.current.qualify(verified.authority.organization_id, verified.sender, binding.root,
-                generation.authority, expected_root=binding.root)
+                generation.authority, expected_root=binding.root, known_roots=roots, proof_scope=scope)
         else:
             try:
                 original = self.owner.publications.generation(scope, epoch)

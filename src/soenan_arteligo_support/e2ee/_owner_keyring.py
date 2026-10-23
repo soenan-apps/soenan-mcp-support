@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any, Iterable, Mapping
+from typing import TYPE_CHECKING, Any, Iterable
 
 from ._crypto import E2eeError, decode, encode, wipe
 from ._owner_commands import OwnerCommands
@@ -85,7 +85,12 @@ class OwnerKeyring:
         proof = self.session.call("e2eeGetOwnerBinding", organization_id=organization, binding_digest=head.binding_digest)
         source = self.verifier.binding(organization, proof, head)
         signer = self.session._device_material(organization, signed.device_id)
-        self.verifier.signer(organization, signed, signer, source.binding.body.recovery_root.to_dict())
+        proof_scope = None if signer["account_subject"] == self.session.subject else organization
+        historical_roots = tuple(root for root in source.positive_roots
+                                 if root.subject == signer["account_subject"]
+                                 and root.origin == self.session.trust.origin)
+        self.verifier.signer(organization, signed, signer, source.binding.body.recovery_root.to_dict(),
+                             proof_scope=proof_scope, historical_roots=historical_roots)
         signed.verify(self.crypto, signer["signing_public_key"], OwnerOperation.KEYRING)
         body = signed.body
         if (signer["account_subject"] != head.owner_subject or body.get("organization_id") != organization

@@ -57,7 +57,8 @@ class OwnerPublicationKeys:
             return
         selected_scope = None if subject == self.session.subject else scope
         material = self.session._device_material(selected_scope, device["device_id"], refresh=True)
-        anchor = source.root if subject == source.creator["account_subject"] else self.owner.current.independent_root(scope, material)
+        anchor = source.root if subject == source.creator["account_subject"] else self.owner.current.independent_root(
+            scope, material)
         self.owner.current.qualify(organization, material, anchor, head, proof_scope=scope)
 
     def generation(self, scope: str, epoch: int, expected: OwnerAuthorityHead | None = None) -> VerifiedGeneration:
@@ -111,7 +112,8 @@ class OwnerPublicationKeys:
             return None
         if expected is not None and expected.organization_id != organization:
             raise E2eeError("owner_key_generation_stale")
-        return self.generation(scope, epoch, expected or self.owner.authority(organization))
+        current = self.owner.authority(organization, proof_scope=scope)
+        return self.generation(scope, epoch, expected or current)
 
     def _recipient_secret(self, generation: VerifiedGeneration, envelope: Mapping[str, Any]) -> str | None:
         kind, recipient = envelope.get("recipient_kind"), envelope.get("recipient_id")
