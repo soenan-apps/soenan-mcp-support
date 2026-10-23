@@ -5,20 +5,34 @@ from urllib.parse import quote
 import httpx
 
 from ...client import AuthenticatedClient, Client
+from ...models.e2_ee_recipient_purpose import E2EeRecipientPurpose
 from ...models.e2_ee_recipients import E2EeRecipients
 from ...models.error_envelope import ErrorEnvelope
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     scope_id: str,
+    *,
+    purpose: E2EeRecipientPurpose | Unset = UNSET,
 ) -> dict[str, Any]:
+
+    params: dict[str, Any] = {}
+
+    json_purpose: str | Unset = UNSET
+    if not isinstance(purpose, Unset):
+        json_purpose = purpose.value
+
+    params["purpose"] = json_purpose
+
+    params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
     _kwargs: dict[str, Any] = {
         "method": "get",
         "url": "/api/e2ee/scopes/{scope_id}/recipients".format(
             scope_id=quote(str(scope_id), safe=""),
         ),
+        "params": params,
     }
 
     return _kwargs
@@ -52,10 +66,12 @@ def sync_detailed(
     scope_id: str,
     *,
     client: AuthenticatedClient,
+    purpose: E2EeRecipientPurpose | Unset = UNSET,
 ) -> Response[E2EeRecipients | ErrorEnvelope]:
     """
     Args:
         scope_id (str):
+        purpose (E2EeRecipientPurpose | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -67,6 +83,7 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         scope_id=scope_id,
+        purpose=purpose,
     )
 
     response = client.get_httpx_client().request(
@@ -80,10 +97,12 @@ def sync(
     scope_id: str,
     *,
     client: AuthenticatedClient,
+    purpose: E2EeRecipientPurpose | Unset = UNSET,
 ) -> E2EeRecipients | ErrorEnvelope | None:
     """
     Args:
         scope_id (str):
+        purpose (E2EeRecipientPurpose | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -96,6 +115,7 @@ def sync(
     return sync_detailed(
         scope_id=scope_id,
         client=client,
+        purpose=purpose,
     ).parsed
 
 
@@ -103,10 +123,12 @@ async def asyncio_detailed(
     scope_id: str,
     *,
     client: AuthenticatedClient,
+    purpose: E2EeRecipientPurpose | Unset = UNSET,
 ) -> Response[E2EeRecipients | ErrorEnvelope]:
     """
     Args:
         scope_id (str):
+        purpose (E2EeRecipientPurpose | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -118,6 +140,7 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         scope_id=scope_id,
+        purpose=purpose,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -129,10 +152,12 @@ async def asyncio(
     scope_id: str,
     *,
     client: AuthenticatedClient,
+    purpose: E2EeRecipientPurpose | Unset = UNSET,
 ) -> E2EeRecipients | ErrorEnvelope | None:
     """
     Args:
         scope_id (str):
+        purpose (E2EeRecipientPurpose | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -146,5 +171,6 @@ async def asyncio(
         await asyncio_detailed(
             scope_id=scope_id,
             client=client,
+            purpose=purpose,
         )
     ).parsed

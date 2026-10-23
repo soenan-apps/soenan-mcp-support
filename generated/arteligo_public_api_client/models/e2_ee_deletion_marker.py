@@ -14,7 +14,7 @@ T = TypeVar("T", bound="E2EeDeletionMarker")
 @_attrs_define
 class E2EeDeletionMarker:
     """Payload-free signed deletion metadata. It is not an AEAD document and has no encryption key or plaintext value.
-    Existing authorization, revision, epoch, immutable-head, maintenance and source-ownership checks still apply.
+    Existing authorization, revision, epoch, immutable-head and source-ownership checks still apply.
 
         Attributes:
             record_id (str):

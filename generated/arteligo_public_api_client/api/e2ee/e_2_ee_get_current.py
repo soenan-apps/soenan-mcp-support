@@ -16,6 +16,8 @@ def _get_kwargs(
     *,
     kind: E2EeRecordKind | Unset = UNSET,
     after_record_id: str | Unset = UNSET,
+    record_id_prefix: str | Unset = UNSET,
+    live_only: bool | Unset = False,
     limit: int | Unset = 256,
 ) -> dict[str, Any]:
 
@@ -28,6 +30,10 @@ def _get_kwargs(
     params["kind"] = json_kind
 
     params["after_record_id"] = after_record_id
+
+    params["record_id_prefix"] = record_id_prefix
+
+    params["live_only"] = live_only
 
     params["limit"] = limit
 
@@ -74,16 +80,22 @@ def sync_detailed(
     client: AuthenticatedClient,
     kind: E2EeRecordKind | Unset = UNSET,
     after_record_id: str | Unset = UNSET,
+    record_id_prefix: str | Unset = UNSET,
+    live_only: bool | Unset = False,
     limit: int | Unset = 256,
 ) -> Response[E2EeCurrentPage | ErrorEnvelope]:
-    """Bounded current records ordered by opaque record ID. Optional kind is a public record category, not
-    a name or folder search. The caller selects the row limit; required signature and key proofs are
+    """Bounded current records ordered by opaque record ID. Optional kind is a public record category.
+    Optional record_id_prefix selects an opaque ID range and live_only excludes current tombstones
+    before pagination. Neither filter searches names or encrypted content. Without filters, current
+    tombstones remain included. The caller selects the row limit; required signature and key proofs are
     complete regardless of their aggregate size. Continue using next_record_id when has_more.
 
     Args:
         scope_id (str):
         kind (E2EeRecordKind | Unset):
         after_record_id (str | Unset):
+        record_id_prefix (str | Unset):
+        live_only (bool | Unset):  Default: False.
         limit (int | Unset):  Default: 256.
 
     Raises:
@@ -98,6 +110,8 @@ def sync_detailed(
         scope_id=scope_id,
         kind=kind,
         after_record_id=after_record_id,
+        record_id_prefix=record_id_prefix,
+        live_only=live_only,
         limit=limit,
     )
 
@@ -114,16 +128,22 @@ def sync(
     client: AuthenticatedClient,
     kind: E2EeRecordKind | Unset = UNSET,
     after_record_id: str | Unset = UNSET,
+    record_id_prefix: str | Unset = UNSET,
+    live_only: bool | Unset = False,
     limit: int | Unset = 256,
 ) -> E2EeCurrentPage | ErrorEnvelope | None:
-    """Bounded current records ordered by opaque record ID. Optional kind is a public record category, not
-    a name or folder search. The caller selects the row limit; required signature and key proofs are
+    """Bounded current records ordered by opaque record ID. Optional kind is a public record category.
+    Optional record_id_prefix selects an opaque ID range and live_only excludes current tombstones
+    before pagination. Neither filter searches names or encrypted content. Without filters, current
+    tombstones remain included. The caller selects the row limit; required signature and key proofs are
     complete regardless of their aggregate size. Continue using next_record_id when has_more.
 
     Args:
         scope_id (str):
         kind (E2EeRecordKind | Unset):
         after_record_id (str | Unset):
+        record_id_prefix (str | Unset):
+        live_only (bool | Unset):  Default: False.
         limit (int | Unset):  Default: 256.
 
     Raises:
@@ -139,6 +159,8 @@ def sync(
         client=client,
         kind=kind,
         after_record_id=after_record_id,
+        record_id_prefix=record_id_prefix,
+        live_only=live_only,
         limit=limit,
     ).parsed
 
@@ -149,16 +171,22 @@ async def asyncio_detailed(
     client: AuthenticatedClient,
     kind: E2EeRecordKind | Unset = UNSET,
     after_record_id: str | Unset = UNSET,
+    record_id_prefix: str | Unset = UNSET,
+    live_only: bool | Unset = False,
     limit: int | Unset = 256,
 ) -> Response[E2EeCurrentPage | ErrorEnvelope]:
-    """Bounded current records ordered by opaque record ID. Optional kind is a public record category, not
-    a name or folder search. The caller selects the row limit; required signature and key proofs are
+    """Bounded current records ordered by opaque record ID. Optional kind is a public record category.
+    Optional record_id_prefix selects an opaque ID range and live_only excludes current tombstones
+    before pagination. Neither filter searches names or encrypted content. Without filters, current
+    tombstones remain included. The caller selects the row limit; required signature and key proofs are
     complete regardless of their aggregate size. Continue using next_record_id when has_more.
 
     Args:
         scope_id (str):
         kind (E2EeRecordKind | Unset):
         after_record_id (str | Unset):
+        record_id_prefix (str | Unset):
+        live_only (bool | Unset):  Default: False.
         limit (int | Unset):  Default: 256.
 
     Raises:
@@ -173,6 +201,8 @@ async def asyncio_detailed(
         scope_id=scope_id,
         kind=kind,
         after_record_id=after_record_id,
+        record_id_prefix=record_id_prefix,
+        live_only=live_only,
         limit=limit,
     )
 
@@ -187,16 +217,22 @@ async def asyncio(
     client: AuthenticatedClient,
     kind: E2EeRecordKind | Unset = UNSET,
     after_record_id: str | Unset = UNSET,
+    record_id_prefix: str | Unset = UNSET,
+    live_only: bool | Unset = False,
     limit: int | Unset = 256,
 ) -> E2EeCurrentPage | ErrorEnvelope | None:
-    """Bounded current records ordered by opaque record ID. Optional kind is a public record category, not
-    a name or folder search. The caller selects the row limit; required signature and key proofs are
+    """Bounded current records ordered by opaque record ID. Optional kind is a public record category.
+    Optional record_id_prefix selects an opaque ID range and live_only excludes current tombstones
+    before pagination. Neither filter searches names or encrypted content. Without filters, current
+    tombstones remain included. The caller selects the row limit; required signature and key proofs are
     complete regardless of their aggregate size. Continue using next_record_id when has_more.
 
     Args:
         scope_id (str):
         kind (E2EeRecordKind | Unset):
         after_record_id (str | Unset):
+        record_id_prefix (str | Unset):
+        live_only (bool | Unset):  Default: False.
         limit (int | Unset):  Default: 256.
 
     Raises:
@@ -213,6 +249,8 @@ async def asyncio(
             client=client,
             kind=kind,
             after_record_id=after_record_id,
+            record_id_prefix=record_id_prefix,
+            live_only=live_only,
             limit=limit,
         )
     ).parsed

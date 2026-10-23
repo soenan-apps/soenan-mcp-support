@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 import json
-import secrets
+import re
 import time
 from typing import Any, Literal, TypedDict
 
 from ._crypto import E2eeError, decode, encode, wipe
+from ._owner_protocol import OwnerAuthorityHeadState, SignedEvidence, canonical_digest
+from ._owner_envelopes import OWNER_KEY_PROOF, VerifiedPublicationKey
+from ._signed_commands import SavedCommand, UncertainCommand
+from ._project_identity import committed_creator, is_canonical_project_id, new_project_id
 from ._session import DeviceSession, _ScopeResponse
+from ._trust import public_device
 
 KINDS = frozenset(
     {
@@ -54,6 +60,14 @@ OpenedRecord = OpenedContentRecord | OpenedHistoricalDeletionRecord | OpenedDele
 
 
 
+class _PendingProjectCreation(TypedDict):
+    phase: Literal["create", "owner_trust"]
+    command: dict[str, str]
+    creator_device: dict[str, Any]
+    key: str
+    owner_statement: dict[str, str] | None
+
+
 class EncryptedRecords:
     def __init__(self, session: DeviceSession):
         self.session = session
@@ -85,6 +99,24 @@ class EncryptedRecords:
         value: dict[str, Any],
         immutable: bool = False,
     ) -> dict[str, Any]:
+        with self.session.owner_access.publications.key(scope, key_epoch) as publication:
+            return self._seal(
+                scope, key=publication.key, record_id=record_id, kind=kind, expected_revision=expected_revision,
+                key_epoch=key_epoch, value=value, immutable=immutable,
+            )
+
+    def _seal(
+        self,
+        scope: str,
+        *,
+        key: bytearray,
+        record_id: str,
+        kind: str,
+        expected_revision: int,
+        key_epoch: int,
+        value: dict[str, Any],
+        immutable: bool = False,
+    ) -> dict[str, Any]:
         if (
             kind not in KINDS
             or expected_revision < 0
@@ -92,7 +124,6 @@ class EncryptedRecords:
             or not isinstance(value, dict)
         ):
             raise E2eeError("invalid_record")
-        key = self.session.scope_key(scope, key_epoch)
         key_aad = self._context(
             "arteligo.record-key",
             scope,
@@ -117,7 +148,7 @@ class EncryptedRecords:
                 ),
             }
         finally:
-            for secret in (key, key_aad, payload_aad):
+            for secret in (key_aad, payload_aad):
                 wipe(secret)
 
     @staticmethod
@@ -168,7 +199,7 @@ class EncryptedRecords:
             raise E2eeError("invalid_record_signature")
         if signed.get("device_id") != wire.get("author_device_id"):
             raise E2eeError("invalid_author")
-        device = self.session.device(scope, signed["device_id"])
+        device = self.session.device(scope, signed["device_id"], key_epoch=wire["key_epoch"])
         cache_key = (
             operation,
             signed["device_id"],
@@ -487,24 +518,36 @@ class EncryptedRecords:
         key_epoch: int,
         records: list[dict[str, Any]],
         preconditions: list[dict[str, Any]] | None = None,
-        maintenance: dict[str, Any] | None = None,
+        publication: VerifiedPublicationKey | None = None,
     ) -> list[dict[str, Any]]:
         self.session.require_approved()
         if not records or len(
             {value["record_id"] for value in records}
         ) != len(records):
             raise E2eeError("invalid_batch")
-        writes = []
-        for draft in records:
-            if draft.get("deleted") is True:
-                if set(draft) != {"record_id", "kind", "expected_revision", "deleted"}:
-                    raise E2eeError("invalid_record")
-                writes.append(self.deletion_marker(
-                    record_id=draft["record_id"], kind=draft["kind"],
-                    expected_revision=draft["expected_revision"], key_epoch=key_epoch,
-                ))
-            else:
-                writes.append(self.seal(scope, key_epoch=key_epoch, **draft))
+        intent = canonical_digest(self.crypto, {
+            "scope_id": scope, "key_epoch": key_epoch, "records": records,
+            "preconditions": preconditions or [],
+        })
+        pending = self.session.publications.pending("record_publications", scope, "records_write")
+        if pending is not None:
+            if pending.intent != intent:
+                raise E2eeError("record_publication_pending")
+            return self.resume_write(scope)
+        if publication is not None and (publication.scope != scope or publication.epoch != key_epoch or len(publication.key) != 32):
+            raise E2eeError("owner_key_generation_stale")
+        with (nullcontext(publication) if publication is not None else self.session.owner_access.publications.key(scope, key_epoch)) as publication:
+            writes = []
+            for draft in records:
+                if draft.get("deleted") is True:
+                    if set(draft) != {"record_id", "kind", "expected_revision", "deleted"}:
+                        raise E2eeError("invalid_record")
+                    writes.append(self.deletion_marker(
+                        record_id=draft["record_id"], kind=draft["kind"],
+                        expected_revision=draft["expected_revision"], key_epoch=key_epoch,
+                    ))
+                else:
+                    writes.append(self._seal(scope, key=publication.key, key_epoch=key_epoch, **draft))
         body = {
             "scope_id": scope,
             "records": writes,
@@ -514,13 +557,35 @@ class EncryptedRecords:
             "expires_at": int(time.time()) + 29 * 86400,
             "preconditions": preconditions or [],
         }
-        if maintenance is not None:
-            body["maintenance"] = maintenance
-        result = self.session.command(
-            "e2eeWriteRecords",
-            "records_write",
-            body,
-            scope_id=scope,
+        self.session.publications.save("record_publications", scope, SavedCommand(
+            "records_write", UncertainCommand(SignedEvidence.parse(self.session.sign("records_write", body))),
+            intent=intent,
+        ))
+        return self.resume_write(scope)
+
+    def resume_write_for(self, scope: str, record_ids: set[str]) -> list[dict[str, Any]] | None:
+        pending = self.session.publications.pending("record_publications", scope, "records_write")
+        if pending is None:
+            return None
+        saved_ids = {value["record_id"] for value in pending.command.body["records"]}
+        if not record_ids <= saved_ids:
+            raise E2eeError("record_publication_pending")
+        return self.resume_write(scope)
+
+    def resume_write(self, scope: str) -> list[dict[str, Any]]:
+        self.session.require_approved()
+        pending = self.session.publications.pending("record_publications", scope, "records_write")
+        if pending is None:
+            raise E2eeError("record_publication_not_pending")
+        signed_command = pending.command.document()
+        signer = self.session.device(scope, signed_command["device_id"])
+        body = self.crypto.verify(signer["signing_public_key"], "records_write", signed_command)
+        if body.get("scope_id") != scope or signer["account_subject"] != self.session.subject:
+            raise E2eeError("invalid_record_signature")
+        writes = body["records"]
+        result = self.session.publications.submit(
+            "record_publications", scope, pending,
+            lambda command: self.session.call("e2eeWriteRecords", body=command, scope_id=scope),
         )
         expected = {value["record_id"]: value for value in writes}
         opened: dict[str, dict[str, Any]] = {}
@@ -554,16 +619,104 @@ class EncryptedRecords:
                 )
                 if not any(value == wanted for value in signed_body.get("records", [])):
                     raise E2eeError("invalid_record_signature")
-                if verified["author_device_id"] != self.session.device_id:
+                if verified["author_device_id"] != signed_command["device_id"]:
                     raise E2eeError("invalid_record_signature")
                 opened[wire["record_id"]] = verified
             if len(opened) == len(expected):
+                self.session.publications.finish("record_publications", scope, pending)
                 return [opened[value["record_id"]] for value in writes]
             cursor = result["cursor"]
             if not result["has_more"] or cursor <= previous_cursor:
                 raise E2eeError("incomplete_write_response")
             previous_cursor = cursor
             result = self.session.call("e2eeGetRecords", scope_id=scope, after=cursor, limit=256)
+
+    @property
+    def pending_project_id(self) -> str | None:
+        self.session._check_current()
+        pending = (self.session._device or {}).get("project_creation")
+        if pending is None:
+            return None
+        body = self.crypto.verify(
+            pending["creator_device"]["signing_public_key"], "project_create", pending["command"],
+        )
+        return body["project_id"]
+
+    def _project_owner_confirmed(self, scope: str) -> bool:
+        root = self.session.recovery
+        if root is None:
+            return False
+        expected_root = {
+            field: root[field] for field in (
+                "recovery_id", "generation", "encryption_public_key", "signing_public_key",
+            )
+        }
+        for statement in self.session.trust._endorsements:
+            if statement.get("device_id") != self.session.device_id:
+                continue
+            body = self.crypto.verify(
+                self.session.public["signing_public_key"], "peer_trust", statement,
+            )
+            if (set(body) != {"scope_id", "trusted_device", "recovery_root"}
+                    or body["scope_id"] != scope or body["recovery_root"] != expected_root):
+                continue
+            peer = public_device(body["trusted_device"])
+            if peer["account_subject"] != self.session.subject:
+                continue
+            anchor = self.session._participants._root(expected_root, self.session.subject)
+            qualified = self.session.owner_access.qualify_current_creator(scope, self.session.public, anchor, anchor)
+            return qualified.current.root == anchor
+        return False
+
+    def resume_project_creation(self) -> str:
+        self.session.require_approved()
+        pending: _PendingProjectCreation | None = self.session._device.get("project_creation")
+        if pending is None:
+            raise E2eeError("project_creation_not_pending")
+        command = pending["command"]
+        creator = pending["creator_device"]
+        if (command.get("device_id") != creator["device_id"]
+                or creator["account_subject"] != self.session.subject
+                or pending["phase"] not in {"create", "owner_trust"}):
+            raise E2eeError("invalid_project_creation")
+        body = self.crypto.verify(
+            creator["signing_public_key"], "project_create", command,
+        )
+        scope = body["project_id"]
+        owner = self.session._scope_owner(scope)
+        key = decode(pending["key"])
+        try:
+            if len(key) != 32:
+                raise E2eeError("invalid_project_creation")
+            self.session._remember(scope, 1, key, owner=owner)
+            self.session._persist()
+            if pending["phase"] == "create":
+                if command["device_id"] != self.session.device_id:
+                    raise E2eeError("project_creation_device_changed")
+                self.session.call("e2eeCreateProject", body=command)
+                self.session._check_scope(scope, owner)
+                pending["phase"] = "owner_trust"
+                self.session._persist()
+            if pending["owner_statement"] is not None and not self._project_owner_confirmed(scope):
+                if command["device_id"] != self.session.device_id:
+                    raise E2eeError("project_creation_owner_confirmation_required")
+                try:
+                    self.session._save_scope_owner(scope, pending["owner_statement"])
+                except E2eeError as error:
+                    if error.code == "revision_conflict":
+                        raise E2eeError("project_creation_owner_confirmation_required") from None
+                    raise
+            self.session._check_scope(scope, owner)
+            self.session._device.pop("project_creation")
+            try:
+                self.session._persist()
+            except BaseException:
+                if self.session._device is not None:
+                    self.session._device["project_creation"] = pending
+                raise
+            return scope
+        finally:
+            wipe(key)
 
     def create_project(
         self,
@@ -574,22 +727,31 @@ class EncryptedRecords:
         project_id: str | None = None,
     ) -> str:
         self.session.require_approved()
-        if owner_org is None or participation_policy not in {"private", "organization"}:
+        if self.session._device.get("project_creation") is not None:
+            raise E2eeError("project_creation_pending")
+        if (not isinstance(owner_org, str)
+                or re.fullmatch(r"[A-Za-z0-9_-]{1,128}", owner_org) is None
+                or participation_policy not in ("private", "organization")):
             raise E2eeError("invalid_project_policy")
         if self.session.recovery is None:
             raise E2eeError("recovery_missing")
-        scope = project_id if project_id is not None else "prj_" + secrets.token_hex(16)
-        if (
-            not isinstance(scope, str)
-            or not scope.startswith("prj_")
-            or len(scope) < 5
-        ):
+        scope = (
+            project_id if project_id is not None
+            else new_project_id(self.session.public["signing_public_key"])
+        )
+        if not is_canonical_project_id(scope):
             raise E2eeError("invalid_project_id")
+        authority = self.session.owner_access.authority(owner_org, active=False)
+        if authority.state != OwnerAuthorityHeadState.ACTIVE:
+            authority = self.session.owner_access.provision_key(owner_org, authority)
+        issuer = self.session.owner_access.maintenance_issuer(authority) if authority.owner_subject == self.session.subject else None
+        devices = [] if issuer is not None else self.session.approved_self_devices(owner_org, authority)
+        wrap_key = issuer.wrap if issuer is not None else self.session.wrap_key
         owner = self.session._scope_owner(scope)
         key = self.crypto.key()
         try:
             self.session._remember(scope, 1, key, owner=owner)
-            recipients = [
+            recipients = [] if issuer is not None else [
                 (
                     self.session.device_id,
                     "device",
@@ -601,8 +763,13 @@ class EncryptedRecords:
                     self.session.recovery["encryption_public_key"],
                 ),
             ]
+            recipients.extend(
+                (device["device_id"], "device", device["encryption_public_key"])
+                for device in devices
+                if device["device_id"] != self.session.device_id and device["account_subject"] != authority.owner_subject
+            )
             envelopes = [
-                self.session.wrap_key(
+                wrap_key(
                     scope,
                     1,
                     key,
@@ -616,8 +783,8 @@ class EncryptedRecords:
                 if owner_org is None:
                     raise E2eeError("organization_required")
                 organization = self.session.scope_metadata(owner_org)
-                org_key = self.session.scope_key(owner_org, organization["key_epoch"])
-                try:
+                with self.session.owner_access.publications.key(owner_org, organization["key_epoch"], authority) as organization_key:
+                    org_key = organization_key.key
                     org_public = self.crypto.execute(
                         {
                             "op": "public_keys",
@@ -626,7 +793,7 @@ class EncryptedRecords:
                         }
                     )["encryption_public_key"]
                     envelopes.append(
-                        self.session.wrap_key(
+                        wrap_key(
                             scope,
                             1,
                             key,
@@ -636,14 +803,15 @@ class EncryptedRecords:
                             organization_epoch=organization["key_epoch"],
                         )
                     )
-                finally:
-                    wipe(org_key)
+            envelopes.append(wrap_key(scope, 1, key, recipient=authority.key_id, kind="owner",
+                public_key=authority.public_key, owner_key_epoch=authority.key_epoch, owner_binding_digest=authority.binding_digest))
             from ._conversation_context import initial_records
             from ._directory import initial_directory
 
             root, directory_records = initial_directory()
-            record = self.seal(
+            record = self._seal(
                 scope,
+                key=key,
                 record_id=scope,
                 kind="project",
                 expected_revision=0,
@@ -656,21 +824,33 @@ class EncryptedRecords:
                     "directory": {"format": 2, "root": root},
                 },
             )
-            self.session.command(
-                "e2eeCreateProject",
+            command = self.session.sign(
                 "project_create",
                 {
                     "project_id": scope,
                     "owner_org": owner_org,
                     "participation_policy": participation_policy,
+                    "owner_authority": authority.to_dict(),
+                    **({"owner_key_proof": OWNER_KEY_PROOF} if issuer is not None else {}),
                     "envelopes": envelopes,
                     "records": [record]
                     + [
-                        self.seal(scope, key_epoch=1, **item)
+                        self._seal(scope, key=key, key_epoch=1, **item)
                         for item in [*directory_records, *initial_records()]
                     ],
                 },
             )
-            return scope
+            statement = (
+                self.session._scope_owner_statement(
+                    scope, self.session.public, self.session.recovery,
+                )
+                if committed_creator(scope, self.session.public["signing_public_key"]) else None
+            )
+            self.session._device["project_creation"] = _PendingProjectCreation(
+                phase="create", command=command, key=encode(key), owner_statement=statement,
+                creator_device=self.session.public,
+            )
+            self.session._persist()
         finally:
             wipe(key)
+        return self.resume_project_creation()

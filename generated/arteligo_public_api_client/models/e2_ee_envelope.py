@@ -30,7 +30,12 @@ class E2EeEnvelope:
         organization_epoch (int | None | Unset): Organization key epoch bound into the signed command and HPKE context.
             Required for new organization recipients and forbidden for other recipients. Legacy stored envelopes may omit
             this field and retain their original authenticated context.
+        owner_key_epoch (int | Unset): Required only for owner recipients. Bound into the signed command and existing
+            canonical JSON HPKE context.
+        owner_binding_digest (str | Unset): Exact domain-separated Owner binding evidence digest.
         signed_command (E2EeSignedCommand | Unset):
+        operation (str | Unset): Explicit original signing domain for new Owner key commands. Historical absence retains
+            historical verification.
     """
 
     scope_id: str
@@ -41,7 +46,10 @@ class E2EeEnvelope:
     encapsulated_key: str
     ciphertext: str
     organization_epoch: int | None | Unset = UNSET
+    owner_key_epoch: int | Unset = UNSET
+    owner_binding_digest: str | Unset = UNSET
     signed_command: E2EeSignedCommand | Unset = UNSET
+    operation: str | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         scope_id = self.scope_id
@@ -64,9 +72,15 @@ class E2EeEnvelope:
         else:
             organization_epoch = self.organization_epoch
 
+        owner_key_epoch = self.owner_key_epoch
+
+        owner_binding_digest = self.owner_binding_digest
+
         signed_command: dict[str, Any] | Unset = UNSET
         if not isinstance(self.signed_command, Unset):
             signed_command = self.signed_command.to_dict()
+
+        operation = self.operation
 
         field_dict: dict[str, Any] = {}
 
@@ -83,8 +97,14 @@ class E2EeEnvelope:
         )
         if organization_epoch is not UNSET:
             field_dict["organization_epoch"] = organization_epoch
+        if owner_key_epoch is not UNSET:
+            field_dict["owner_key_epoch"] = owner_key_epoch
+        if owner_binding_digest is not UNSET:
+            field_dict["owner_binding_digest"] = owner_binding_digest
         if signed_command is not UNSET:
             field_dict["signed_command"] = signed_command
+        if operation is not UNSET:
+            field_dict["operation"] = operation
 
         return field_dict
 
@@ -118,12 +138,18 @@ class E2EeEnvelope:
             d.pop("organization_epoch", UNSET)
         )
 
+        owner_key_epoch = d.pop("owner_key_epoch", UNSET)
+
+        owner_binding_digest = d.pop("owner_binding_digest", UNSET)
+
         _signed_command = d.pop("signed_command", UNSET)
         signed_command: E2EeSignedCommand | Unset
         if isinstance(_signed_command, Unset):
             signed_command = UNSET
         else:
             signed_command = E2EeSignedCommand.from_dict(_signed_command)
+
+        operation = d.pop("operation", UNSET)
 
         e2_ee_envelope = cls(
             scope_id=scope_id,
@@ -134,7 +160,10 @@ class E2EeEnvelope:
             encapsulated_key=encapsulated_key,
             ciphertext=ciphertext,
             organization_epoch=organization_epoch,
+            owner_key_epoch=owner_key_epoch,
+            owner_binding_digest=owner_binding_digest,
             signed_command=signed_command,
+            operation=operation,
         )
 
         return e2_ee_envelope

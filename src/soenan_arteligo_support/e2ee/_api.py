@@ -96,6 +96,16 @@ class GeneratedAPI:
                         "project_access_denied",
                         "service_terms_acceptance_required",
                         "content_format_update_required",
+                        "owner_rotation_required",
+                        "owner_handoff_fenced",
+                        "owner_key_generation_stale",
+                        "owner_candidate_invalidated",
+                        "owner_candidate_key_consumed",
+                        "owner_custody_changed",
+                        "owner_coverage_incomplete",
+                        "owner_authority_changed",
+                        "ambiguous_owner_authority",
+                        "owner_key_proof_required",
                     } and (detail != "project_access_denied" or status == 403):
                         code = detail
                 except (ValueError, AttributeError):
