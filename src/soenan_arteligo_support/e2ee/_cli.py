@@ -28,6 +28,55 @@ def _require_terminal() -> None:
         raise E2eeError("interactive_terminal_required")
 
 
+def _verify_owner_candidate_references(
+    oauth: ProfileVault, organization: str, candidate_id: str
+) -> dict[str, int | str]:
+    from arteligo_public_api_client.models.e2_ee_owner_candidate_offer import (
+        E2EeOwnerCandidateOffer,
+    )
+
+    from ._api import GeneratedAPI
+    from ._owner_protocol import OwnerBinding, OwnerOperation
+
+    if not organization or not candidate_id:
+        raise E2eeError("invalid_input")
+    response = GeneratedAPI(oauth.bind()).call(
+        "e2eeGetOwnerCandidates", organization_id=organization
+    )
+    if not isinstance(response, dict):
+        raise E2eeError("invalid_response")
+    candidates = response.get("candidates")
+    if not isinstance(candidates, list) or not candidates:
+        raise E2eeError("owner_candidate_mismatch")
+    matches = []
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            raise E2eeError("invalid_owner_evidence")
+        binding = OwnerBinding.parse(candidate.get("offer"))
+        if (binding.operation is not OwnerOperation.OFFER
+                or not isinstance(binding.body, E2EeOwnerCandidateOffer)):
+            raise E2eeError("invalid_owner_evidence")
+        if not binding.body.candidate_id:
+            raise E2eeError("invalid_owner_evidence")
+        if binding.body.candidate_id == candidate_id:
+            matches.append((candidate, binding))
+    if len(matches) != 1:
+        raise E2eeError("owner_candidate_mismatch")
+    candidate, binding = matches[0]
+    if (candidate.get("state") != "qualified"
+            or binding.body.organization_id != organization):
+        raise E2eeError("owner_candidate_mismatch")
+    admission = binding.original_admission
+    return {
+        "status": "passed",
+        "scope": "production_issuer_reference_resolution",
+        "candidate_count": 1,
+        "root_generation": binding.body.recovery_generation,
+        "reference_count": len(admission.certificates)
+        + (admission.root_evidence_digest is not None),
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Arteligo の承認済みローカル端末と E2EE MCP"
@@ -53,6 +102,11 @@ def main() -> int:
     publication.add_argument("--project", required=True)
     owner_identity = commands.add_parser("owner-identity", help="別の端末で確認する公開 Owner 情報を表示します")
     owner_identity.add_argument("--organization", required=True)
+    verify_owner = commands.add_parser(
+        "verify-owner", help="候補の公開 issuer references を読み取り専用で確認します",
+    )
+    verify_owner.add_argument("--organization", required=True)
+    verify_owner.add_argument("--candidate", required=True)
     owner_confirm = commands.add_parser("confirm-owner-authority", help="Owner 本人から受け取った公開鍵を確認します")
     owner_confirm.add_argument("--organization", required=True)
     owner_confirm.add_argument("--identity-json", required=True)
@@ -117,6 +171,12 @@ def main() -> int:
                 print("このプロファイルからサインアウトし、保存されていた認証系列を失効させました。")
             else:
                 print("このプロファイルはサインアウトしています。")
+            return 0
+        if args.command == "verify-owner":
+            result = _verify_owner_candidate_references(
+                oauth, args.organization, args.candidate
+            )
+            print(json.dumps({"owner_candidate_references": result}, separators=(",", ":")))
             return 0
 
         def connect(*, recover: bool = False):

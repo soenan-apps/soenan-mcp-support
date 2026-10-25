@@ -185,6 +185,17 @@ bin/soenan arteligo contract generate
 
 SDKの手書きsourceは、ワークスペースのルートから`bin/soenan check`で静的検査します。Ruff F規則とPython 3.10の対象設定は、このリポジトリの`pyproject.toml`が管理します。生成clientの`generated/`は除外します。未定義名や未使用importの検出は、暗号・認可・転送の実サービス検証の代わりにはなりません。
 
+Owner候補の証明参照だけを確認する場合は、ログイン済みの通常profileで次を実行します。
+
+```sh
+arteligo --account-origin ACCOUNT_ORIGIN --arteligo-origin ARTELIGO_ORIGIN \
+  --profile PROFILE verify-owner --organization=ORGANIZATION_ID --candidate=CANDIDATE_ID
+```
+
+このコマンドは生成clientで候補一覧を一度だけ取得し、指定したqualified候補を確認します。WWWはその読み取りで、保存済みの署名者証明とRoot公開証明への参照を解決します。候補なし、重複、不正な証拠、APIの拒否は非ゼロ終了になり、候補IDや署名bytesは出力しません。`=`で値を渡すと、`-`で始まる候補IDも一つの引数になります。
+
+通常のOAuth refreshを除き、鍵の取得・更新、Owner準備、gate作成は行いません。クライアント側の信頼経路、Owner引継ぎ、ファイル復号をまとめて検証するコマンドではありません。メタCLIの`bin/soenan arteligo verify-owner`も同じ引数を受け取り、`PATH`上のこのSDKへ委譲します。
+
 SDKの業務検証には、配布packageとRust crypto runtime、実際のAccount・Arteligo・PostgreSQL・Bucketを使います。通常構成にValkeyはありません。通常クライアントでOAuthのブラウザー認証、OSの保護ストアへの保存、端末設定を行い、実際のファイルを保存・取得して内容を確認します。[workspaceの利用者フロー](../docs/local-development.md#利用者フローの確認)を参照してください。
 
 micro・mock・fakeのsuite、大量metadataの生成・測定driver、専用DBus・keyring・native library環境、identity・source hash・証跡台帳を使うacceptance helperは削除しました。このリポジトリには、通常の認証からファイル転送までを自動確認するstandalone suiteはありません。
