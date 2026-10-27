@@ -4,7 +4,8 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
-from typing_extensions import Self
+
+from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.e2_ee_signed_command import E2EeSignedCommand
@@ -20,11 +21,13 @@ class E2EeEpochLink:
         key_epoch (int):
         previous_key_ciphertext (str):
         signed_command (E2EeSignedCommand):
+        operation (str | Unset): Original rotate_scope or owner_rotate_scope signing domain.
     """
 
     key_epoch: int
     previous_key_ciphertext: str
     signed_command: E2EeSignedCommand
+    operation: str | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         key_epoch = self.key_epoch
@@ -32,6 +35,8 @@ class E2EeEpochLink:
         previous_key_ciphertext = self.previous_key_ciphertext
 
         signed_command = self.signed_command.to_dict()
+
+        operation = self.operation
 
         field_dict: dict[str, Any] = {}
 
@@ -42,11 +47,13 @@ class E2EeEpochLink:
                 "signed_command": signed_command,
             }
         )
+        if operation is not UNSET:
+            field_dict["operation"] = operation
 
         return field_dict
 
     @classmethod
-    def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.e2_ee_signed_command import E2EeSignedCommand
 
         d = dict(src_dict)
@@ -56,10 +63,13 @@ class E2EeEpochLink:
 
         signed_command = E2EeSignedCommand.from_dict(d.pop("signed_command"))
 
+        operation = d.pop("operation", UNSET)
+
         e2_ee_epoch_link = cls(
             key_epoch=key_epoch,
             previous_key_ciphertext=previous_key_ciphertext,
             signed_command=signed_command,
+            operation=operation,
         )
 
         return e2_ee_epoch_link

@@ -13,6 +13,8 @@ def open_session(
     arteligo_origin: str,
     profile: str = "default",
     store: ProfileSecureStore | None = None,
+    recover: bool = False,
+    maintain_owner_access: bool = True,
 ) -> DeviceSession:
     protected = store or SystemSecureStore(profile)
     vault = ProfileVault(
@@ -36,7 +38,18 @@ def open_session(
     )
     try:
         session.refresh()
+    except E2eeError as error:
+        if not recover or error.code not in {"untrusted_device", "untrusted_recovery"}:
+            session.lock()
+            raise
+        session.state = "pending_approval"
     except BaseException:
         session.lock()
         raise
+    if maintain_owner_access and session.state == "approved" and not session.recovery_replacement_pending:
+        try:
+            session.owner_access.maintain()
+        except BaseException:
+            session.lock()
+            raise
     return session

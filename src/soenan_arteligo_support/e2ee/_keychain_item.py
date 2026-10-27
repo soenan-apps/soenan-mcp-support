@@ -5,7 +5,7 @@ import ctypes as c
 from ctypes.util import find_library
 
 
-def replace(service: str, name: str, value: str) -> None:
+def replace(service: str, name: str, value: str, *, protected: bool = False) -> None:
     security = c.CDLL(find_library("Security"))
     core = c.CDLL(find_library("CoreFoundation"))
     pointer = c.c_void_p
@@ -52,6 +52,9 @@ def replace(service: str, name: str, value: str) -> None:
         }
         raw = value.encode()
         data = own(core.CFDataCreate(None, raw, len(raw)))
+        update = {"kSecValueData": data}
+        if protected:
+            update["kSecAttrSynchronizable"] = pointer.in_dll(core, "kCFBooleanFalse")
         existing = pointer()
         result = security.SecItemCopyMatching(dictionary({
             **query,
@@ -59,12 +62,12 @@ def replace(service: str, name: str, value: str) -> None:
             "kSecReturnPersistentRef": pointer.in_dll(core, "kCFBooleanTrue"),
         }), c.byref(existing))
         if result == -25300:
-            result = security.SecItemAdd(dictionary({**query, "kSecValueData": data}), None)
+            result = security.SecItemAdd(dictionary({**query, **update}), None)
         elif result == 0:
             own(existing)
             result = security.SecItemUpdate(
                 dictionary({"kSecValuePersistentRef": existing}),
-                dictionary({"kSecValueData": data}),
+                dictionary(update),
             )
         if result != 0:
             raise OSError

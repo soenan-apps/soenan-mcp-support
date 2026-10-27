@@ -4,7 +4,6 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
-from typing_extensions import Self
 
 from ..types import UNSET, Unset
 
@@ -85,7 +84,7 @@ class E2EeImmutablePage:
         return field_dict
 
     @classmethod
-    def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.e2_ee_immutable_page_commands import E2EeImmutablePageCommands
         from ..models.e2_ee_project import E2EeProject
         from ..models.e2_ee_read_response import E2EeReadResponse

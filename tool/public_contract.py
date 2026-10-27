@@ -1,4 +1,4 @@
-"""Generate the public SDK client from Arteligo's canonical OpenAPI."""
+"""Generate public SDK clients from the product-owned canonical OpenAPI."""
 
 from __future__ import annotations
 
@@ -8,7 +8,10 @@ from pathlib import Path
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
-GENERATED = ROOT / "generated/arteligo_public_api_client"
+CLIENT_PACKAGES = {
+    "arteligo": "arteligo_public_api_client",
+    "account": "account_public_api_client",
+}
 
 
 def generate(contract: Path, output: Path) -> None:
@@ -24,7 +27,8 @@ def generate(contract: Path, output: Path) -> None:
     subprocess.run(
         ["uvx", "--from", "openapi-python-client==0.28.0", "--with", "ruff==0.16.9",
          "openapi-python-client", "generate", "--path", str(contract), "--meta", "none",
-         "--output-path", str(output), "--overwrite"],
+         "--output-path", str(output), "--overwrite",
+         "--config", str(ROOT / "tool" / "public-contract-config.json")],
         cwd=ROOT, env=environment, check=True,
     )
 
@@ -33,9 +37,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("generate",))
     parser.add_argument("--contract", required=True, type=Path)
+    parser.add_argument("--product", choices=CLIENT_PACKAGES, default="arteligo")
     args = parser.parse_args()
     contract = args.contract.resolve(strict=True)
-    generate(contract, GENERATED)
+    generate(contract, ROOT / "generated" / CLIENT_PACKAGES[args.product])
 
 
 if __name__ == "__main__":

@@ -1,0 +1,6 @@
+{
+  "content_type_overrides": {
+    "application/x-ndjson": "application/octet-stream",
+    "text/event-stream": "application/octet-stream"
+  }
+}

@@ -4,12 +4,10 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
-from typing_extensions import Self
-
-from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.e2_ee_recovery_root import E2EeRecoveryRoot
+    from ..models.e2_ee_signed_device_input import E2EeSignedDeviceInput
 
 
 T = TypeVar("T", bound="E2EeCreateInvitation")
@@ -19,24 +17,31 @@ T = TypeVar("T", bound="E2EeCreateInvitation")
 class E2EeCreateInvitation:
     """
     Attributes:
+        creator_device (E2EeSignedDeviceInput): Immutable public device snapshot bound into a signed request.
+            Certificates are returned separately in E2eeDevice and are not accepted in this input.
+        creator_recovery (E2EeRecoveryRoot):
         invitation_id (str):
         project_id (str):
         role (str):
         expires_at (int):
         binding_public_key (str):
         binding_signature (str):
-        creator_recovery (E2EeRecoveryRoot | Unset):
     """
 
+    creator_device: E2EeSignedDeviceInput
+    creator_recovery: E2EeRecoveryRoot
     invitation_id: str
     project_id: str
     role: str
     expires_at: int
     binding_public_key: str
     binding_signature: str
-    creator_recovery: E2EeRecoveryRoot | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
+        creator_device = self.creator_device.to_dict()
+
+        creator_recovery = self.creator_recovery.to_dict()
+
         invitation_id = self.invitation_id
 
         project_id = self.project_id
@@ -49,14 +54,12 @@ class E2EeCreateInvitation:
 
         binding_signature = self.binding_signature
 
-        creator_recovery: dict[str, Any] | Unset = UNSET
-        if not isinstance(self.creator_recovery, Unset):
-            creator_recovery = self.creator_recovery.to_dict()
-
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
             {
+                "creator_device": creator_device,
+                "creator_recovery": creator_recovery,
                 "invitation_id": invitation_id,
                 "project_id": project_id,
                 "role": role,
@@ -65,16 +68,19 @@ class E2EeCreateInvitation:
                 "binding_signature": binding_signature,
             }
         )
-        if creator_recovery is not UNSET:
-            field_dict["creator_recovery"] = creator_recovery
 
         return field_dict
 
     @classmethod
-    def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.e2_ee_recovery_root import E2EeRecoveryRoot
+        from ..models.e2_ee_signed_device_input import E2EeSignedDeviceInput
 
         d = dict(src_dict)
+        creator_device = E2EeSignedDeviceInput.from_dict(d.pop("creator_device"))
+
+        creator_recovery = E2EeRecoveryRoot.from_dict(d.pop("creator_recovery"))
+
         invitation_id = d.pop("invitation_id")
 
         project_id = d.pop("project_id")
@@ -87,21 +93,15 @@ class E2EeCreateInvitation:
 
         binding_signature = d.pop("binding_signature")
 
-        _creator_recovery = d.pop("creator_recovery", UNSET)
-        creator_recovery: E2EeRecoveryRoot | Unset
-        if isinstance(_creator_recovery, Unset):
-            creator_recovery = UNSET
-        else:
-            creator_recovery = E2EeRecoveryRoot.from_dict(_creator_recovery)
-
         e2_ee_create_invitation = cls(
+            creator_device=creator_device,
+            creator_recovery=creator_recovery,
             invitation_id=invitation_id,
             project_id=project_id,
             role=role,
             expires_at=expires_at,
             binding_public_key=binding_public_key,
             binding_signature=binding_signature,
-            creator_recovery=creator_recovery,
         )
 
         return e2_ee_create_invitation

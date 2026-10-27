@@ -4,12 +4,13 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
-from typing_extensions import Self
 
+from ..models.e2_ee_recipient_purpose import E2EeRecipientPurpose
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.e2_ee_device import E2EeDevice
+    from ..models.e2_ee_owner_authority import E2EeOwnerAuthority
     from ..models.e2_ee_recovery_public import E2EeRecoveryPublic
 
 
@@ -20,18 +21,24 @@ T = TypeVar("T", bound="E2EeRecipients")
 class E2EeRecipients:
     """
     Attributes:
+        purpose (E2EeRecipientPurpose):
         devices (list[E2EeDevice]):
         recoveries (list[E2EeRecoveryPublic]):
         organization_id (str | Unset):
         organization_epoch (int | Unset):
+        owner_authority (E2EeOwnerAuthority | Unset):
     """
 
+    purpose: E2EeRecipientPurpose
     devices: list[E2EeDevice]
     recoveries: list[E2EeRecoveryPublic]
     organization_id: str | Unset = UNSET
     organization_epoch: int | Unset = UNSET
+    owner_authority: E2EeOwnerAuthority | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
+        purpose = self.purpose.value
+
         devices = []
         for devices_item_data in self.devices:
             devices_item = devices_item_data.to_dict()
@@ -46,10 +53,15 @@ class E2EeRecipients:
 
         organization_epoch = self.organization_epoch
 
+        owner_authority: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.owner_authority, Unset):
+            owner_authority = self.owner_authority.to_dict()
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
             {
+                "purpose": purpose,
                 "devices": devices,
                 "recoveries": recoveries,
             }
@@ -58,15 +70,20 @@ class E2EeRecipients:
             field_dict["organization_id"] = organization_id
         if organization_epoch is not UNSET:
             field_dict["organization_epoch"] = organization_epoch
+        if owner_authority is not UNSET:
+            field_dict["owner_authority"] = owner_authority
 
         return field_dict
 
     @classmethod
-    def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.e2_ee_device import E2EeDevice
+        from ..models.e2_ee_owner_authority import E2EeOwnerAuthority
         from ..models.e2_ee_recovery_public import E2EeRecoveryPublic
 
         d = dict(src_dict)
+        purpose = E2EeRecipientPurpose(d.pop("purpose"))
+
         devices = []
         _devices = d.pop("devices")
         for devices_item_data in _devices:
@@ -85,11 +102,20 @@ class E2EeRecipients:
 
         organization_epoch = d.pop("organization_epoch", UNSET)
 
+        _owner_authority = d.pop("owner_authority", UNSET)
+        owner_authority: E2EeOwnerAuthority | Unset
+        if isinstance(_owner_authority, Unset):
+            owner_authority = UNSET
+        else:
+            owner_authority = E2EeOwnerAuthority.from_dict(_owner_authority)
+
         e2_ee_recipients = cls(
+            purpose=purpose,
             devices=devices,
             recoveries=recoveries,
             organization_id=organization_id,
             organization_epoch=organization_epoch,
+            owner_authority=owner_authority,
         )
 
         return e2_ee_recipients

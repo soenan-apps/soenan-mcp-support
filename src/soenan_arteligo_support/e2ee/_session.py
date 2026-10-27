@@ -4,13 +4,40 @@ import hashlib
 import json
 import secrets
 import threading
-from collections.abc import Mapping
+from collections.abc import Callable, Iterable, Mapping
+from dataclasses import replace
 from typing import Any
 
+from ._admission import AdmissionAttempt, AdmissionResult, ScopeAcquisition
 from ._api import E2eeAPI
 from ._crypto import E2eeCrypto, E2eeError, decode, encode, wipe
-from ._storage import SecureStore
-from ._trust import KeyTrust, public_device
+from ._storage import ProfileSecureStore
+from ._trust import KeyTrust, _DEVICE_ROOT_DOMAIN, public_device
+from ._participants import ScopeParticipants
+from ._owner_access import CurrentCreatorQualification, OwnerAccess
+from ._owner_protocol import OwnerAuthorityHead, SignedEvidence
+from ._owner_envelopes import OWNER_KEY_PROOF
+from ._signed_commands import PublicationJournal, SavedCommand, UncertainCommand
+from ._root_admission import PairedAdmissionProof, RootAdmissions, open_recovery_code
+from ._root_replacement import RootReplacements
+from ._root_read_set import CONTEXT_READS, RootReadSet
+from ._key_operation_proof import OperationProofContext
+from ._device_approval import DeviceApprovals
+
+
+_PROOF_MUTATIONS = frozenset({
+    "e2eeBootstrap", "e2eeApproveDevice", "e2eeAddDeviceByKey", "e2eeRevokeDevice",
+    "e2eeEnrollDevice", "e2eeCreateInvitation", "e2eeRequestInvitation", "e2eeApproveInvitation",
+    "e2eeRevokeInvitation", "e2eeChangeProjectPolicy", "e2eeArchiveProject", "e2eeRemoveMember",
+    "e2eeCreateOrganization", "e2eeCreateProject", "e2eeSaveTrust",
+    "e2eeRegisterOwnerKey", "e2eeRegisterOwnerCandidate", "e2eeInvalidateOwnerCustody",
+    "e2eeSaveOwnerKeyring", "e2eeSaveOwnerManifest", "e2eeCreateOwnerGate", "e2eeSaveOwnerPreparation",
+    "e2eeSaveOwnerEnvelopes", "e2eeSaveEnvelopes", "e2eeRotateOwnerScope", "e2eeRotateScope",
+})
+
+_FLAT_PROOF_MUTATIONS = frozenset({
+    "e2eeWriteRecords", "e2eeBeginObject", "e2eePutObjectCapability", "e2eeFinalizeObject", "e2eeDeleteObject",
+})
 
 
 class _ScopeResponse(dict[str, Any]):
@@ -24,7 +51,7 @@ class DeviceSession:
         self,
         api: E2eeAPI,
         crypto: E2eeCrypto,
-        store: SecureStore,
+        store: ProfileSecureStore,
         *,
         origin: str,
         subject: str,
@@ -34,29 +61,78 @@ class DeviceSession:
         self.subject = subject
         namespace = hashlib.sha256((origin + "\n" + subject).encode()).hexdigest()
         self._storage_key = "device:" + namespace
-        self.trust = KeyTrust(crypto, store, namespace, owner_subject=subject)
+        self.trust = KeyTrust(
+            crypto, store, namespace, origin=origin, owner_subject=subject
+        )
         self._device: dict[str, Any] | None = None
+        self._device_snapshot: str | None = None
+        self._device_observed = False
         self._devices: dict[str, dict[str, Any]] = {}
+        self._scope_device_material: dict[tuple[str, str], dict[str, Any]] = {}
         self._scope_keys: dict[tuple[str, int], bytearray] = {}
         self._scope_metadata: dict[str, dict[str, Any]] = {}
         self._key_bundles: dict[str, dict[str, Any]] = {}
         self._scope_state_lock = threading.RLock()
 
-        self._restoring_recovery: tuple[str, bytearray] | None = None
+        self._key_admission: AdmissionAttempt | None = None
+        self._last_key_acquisition_progress: dict[str, Any] = {
+            "available": [], "pending": [], "remaining": {},
+        }
+        self._device_approval = "unregistered"
         self.recovery: dict[str, Any] | None = None
+        self._root_read_set = None
+        self._proof_read_set: RootReadSet | None = None
         self.state = "needs_setup"
+        self._participants = ScopeParticipants(self)
+        self.trust.participants = self._participants
+        self.owner_access = OwnerAccess(self)
+        self.trust.certificate_projection = self.owner_access.reads.projection
+        self.trust.projected_device = self.owner_access.current.projected_device
+        self.trust.current_device = self.owner_access.current.current_device
+        self.trust.current_recovery = self.owner_access.current.current_recovery
+        self.trust.recipient_set = self.owner_access.current.recipient_set
+        self.publications = PublicationJournal(self)
+        self.root_admissions = RootAdmissions(self)
+        self.root_replacements = RootReplacements(self)
+        self.device_approvals = DeviceApprovals(self)
 
     def _check_current(self) -> None:
         try:
             self._credentials.check_current()
+            if self._device_observed:
+                with self.store.credential(self._storage_key) as item:
+                    if item.read() != self._device_snapshot:
+                        raise E2eeError("device_session_superseded")
         except E2eeError as error:
-            if error.code == "authentication_superseded":
+            if error.code in {"authentication_superseded", "device_session_superseded"}:
                 self.lock()
             raise
 
     def call(
         self, operation: str, *, body: dict[str, Any] | None = None, **parameters: Any
     ) -> _ScopeResponse:
+        context = self._root_read_set or self._proof_read_set
+        if self._root_read_set is not None and body is not None:
+            raise E2eeError("root_replacement_dependency_missing")
+        if body is None and (self._root_read_set is not None or operation in CONTEXT_READS):
+            organization = parameters.get("organization_id")
+            if context is None and operation.startswith("e2eeGetOwner"):
+                self.load_owner_context(organization=organization)
+                context = self._proof_read_set
+            if context is not None:
+                self._check_current()
+                if operation == "e2eeGetOwnerCustody":
+                    root = context.recovery
+                    proof = self.owner_access.reads._operation
+                    if proof is None:
+                        raise E2eeError("operation_proof_context_missing")
+                    value = {"recovery_id": root["recovery_id"], "recovery_generation": root["generation"],
+                             "root_revision": root["generation"], "custody_revision": proof.subject(self.subject)["custody_revision"]}
+                else:
+                    value = context.read(operation, **parameters)
+                return _ScopeResponse(value, dict(self._scope_metadata))
+        if self._root_read_set is not None:
+            raise E2eeError("root_replacement_dependency_missing")
         scope = parameters.get("scope_id", parameters.get("project_id"))
         identifiers = (
             [scope] if isinstance(scope, str) else
@@ -75,6 +151,33 @@ class DeviceSession:
             elif error.code == "project_access_denied" and scope in captured:
                 self._deny_scope(scope, captured[scope])
             raise
+        self._check_current()
+        if operation in _PROOF_MUTATIONS or operation in _FLAT_PROOF_MUTATIONS or operation == "e2eeApplyRootReplacement":
+            self._proof_read_set = None
+            self.owner_access.reads._operation = None
+        if operation in _PROOF_MUTATIONS and (
+                not isinstance(response.get("proof_delta"), dict) or "result" not in response
+                or response["result"] is not None and not isinstance(response["result"], dict)):
+            raise E2eeError("operation_proof_context_missing")
+        if operation in _FLAT_PROOF_MUTATIONS and not isinstance(response.get("proof_delta"), dict):
+            raise E2eeError("operation_proof_context_missing")
+        proof = response.get("proof_context", response.get("proof_delta"))
+        if isinstance(proof, dict):
+            self.receive_proof_context(proof)
+        elif (operation in {"e2eeWriteRecords", "e2eeGetInvitation", "e2eeGetObject", "e2eeGetObjectCapability"}
+              or operation == "e2eeReadRecords" and (body or {}).get("include_keys") is True):
+            raise E2eeError("operation_proof_context_missing")
+        if "proof_delta" in response and "result" in response:
+            result = response["result"]
+            if not isinstance(response["proof_delta"], dict) or result is not None and not isinstance(result, dict):
+                raise E2eeError("invalid_response")
+            response = result if result is not None else {}
+        devices = response.get("devices")
+        if isinstance(devices, list):
+            if isinstance(scope, str):
+                self._remember_device_material(scope, devices)
+            elif operation == "e2eeListDevices":
+                self._remember_device_material(None, devices)
         context = response.get("key_context") or {}
         for item in (
             response.get("scopes", []) + response.get("key_scopes", [])
@@ -85,12 +188,71 @@ class DeviceSession:
                 self._deny_scope(identifier, captured[identifier])
         return _ScopeResponse(response, captured)
 
+    def receive_proof_context(self, value: Any) -> RootReadSet:
+        self._check_current()
+        context = RootReadSet.from_context(self, value)
+        proof = OperationProofContext.from_wire(self, context.proof_context) if context.proof_context else None
+        context.remember(self, proof)
+        self._proof_read_set = context
+        self.owner_access.reads._operation = proof
+        return context
+
+    def load_owner_context(self, *, organization: str | None = None, subject: str | None = None,
+                           gate_ids: list[str] | None = None, operation_ids: list[str] | None = None) -> RootReadSet:
+        from ._root_operation import ProtectedRootDependencies
+
+        self._check_current()
+        if self._root_read_set is not None:
+            raise E2eeError("root_replacement_dependency_missing")
+        response = self._api.call("e2eeReadOwnerContext", body={
+            **({"organization_ids": [organization]} if organization is not None else {}),
+            "subject_ids": list(dict.fromkeys([self.subject, *([subject] if subject is not None else [])])),
+            "references": [], "gate_ids": gate_ids or [], "operation_ids": operation_ids or [],
+            "dependency_manifest": ProtectedRootDependencies.for_session(self),
+        })
+        return self.receive_proof_context(response)
+
+    def prepare_scope_context(self, scope: str) -> None:
+        if (self._root_read_set is None and self._proof_read_set is not None
+                and scope not in self._proof_read_set.scopes):
+            self._proof_read_set = None
+            self.owner_access.reads._operation = None
+        self.require_scope_context(scope)
+
+    def require_scope_context(self, scope: str, *, acquire: bool = True) -> None:
+        from ._root_operation import ProtectedRootDependencies
+
+        context = self._root_read_set or self._proof_read_set
+        if context is not None:
+            if not context.proof_context:
+                raise E2eeError("operation_proof_context_missing")
+            context.scope(scope)
+            return
+        if not acquire:
+            raise E2eeError("operation_proof_context_missing")
+        self.call("e2eeReadRecords", body={
+            "scopes": [{"scope_id": scope, "record_ids": []}], "include_keys": True,
+            "dependency_manifest": ProtectedRootDependencies.for_session(self),
+        })
+        if self._proof_read_set is None or not self._proof_read_set.proof_context:
+            raise E2eeError("operation_proof_context_missing")
+        self._proof_read_set.scope(scope)
+
     def _deny_scope(self, scope: str, captured: dict[str, Any] | None) -> None:
         with self._scope_state_lock:
             if self._scope_metadata.get(scope) is not captured:
                 return
             self._scope_metadata.pop(scope, None)
             self._key_bundles.pop(scope, None)
+            self.trust.forget_scope(scope)
+            self._participants.forget_scope(scope)
+            if self._proof_read_set is not None:
+                self._proof_read_set = replace(self._proof_read_set, scopes={
+                    identifier: value for identifier, value in self._proof_read_set.scopes.items() if identifier != scope
+                })
+            for identity in list(self._scope_device_material):
+                if identity[0] == scope:
+                    self._scope_device_material.pop(identity)
             for identity in list(self._scope_keys):
                 if identity[0] == scope:
                     wipe(self._scope_keys.pop(identity))
@@ -141,33 +303,98 @@ class DeviceSession:
 
     def _new_device(self) -> dict[str, Any]:
         self._check_current()
-        return {**self.crypto.keypair(), "device_id": secrets.token_urlsafe(24)}
+        device = {**self.crypto.keypair(), "device_id": secrets.token_urlsafe(24)}
+        for name in ("project_creation", "owner_access", "owner_root_provenance", "root_scope_generations",
+                     "owner_source_observations", "owner_provisional_root_evidence",
+                     "device_approvals", "scope_initializations", "scope_rotations", "record_publications",
+                     RootAdmissions.HISTORY_COLLECTION, RootReplacements.HISTORY_COLLECTION):
+            pending = (self._device or {}).get(name)
+            if pending is not None:
+                device[name] = pending
+        return device
+
+    @property
+    def device_approval(self) -> str:
+        return self._device_approval
+
+    @property
+    def key_acquisition_progress(self) -> dict[str, Any]:
+        progress = (
+            self._key_admission.progress() if self._key_admission is not None
+            else self._last_key_acquisition_progress
+        )
+        return {
+            "available": list(progress["available"]),
+            "pending": list(progress["pending"]),
+            "remaining": dict(progress["remaining"]),
+        }
 
     def _persist(self) -> None:
         self._check_current()
-        self.store.write(
-            self._storage_key, json.dumps(self._device, separators=(",", ":"))
-        )
+        if self._device is None:
+            raise E2eeError("device_approval_required")
+        self._device.pop("completed_commands", None)
+        if self._key_admission is None:
+            self._device.pop("key_admission", None)
+        else:
+            self._device["key_admission"] = self._key_admission.document()
+        value = json.dumps(self._device, separators=(",", ":"))
+        try:
+            with self.store.credential(self._storage_key) as item:
+                if item.read() != self._device_snapshot:
+                    raise E2eeError("device_session_superseded")
+                if value != self._device_snapshot:
+                    item.replace(value)
+                self._device_snapshot = value
+                self._device_observed = True
+        except E2eeError as error:
+            if error.code == "device_session_superseded":
+                self.lock()
+            raise
 
     def refresh(self) -> str:
         self._check_current()
+        if self._root_read_set is None:
+            self._proof_read_set = None
+            self.owner_access.reads._operation = None
         self.state = "pending_approval"
-        saved = self.store.read(self._storage_key)
+        self._device_approval = "unregistered"
+        with self.store.credential(self._storage_key) as item:
+            saved = item.read()
+        device = None
+        attempt = None
         if saved is not None:
             device = json.loads(saved)
             if not isinstance(device, dict):
                 raise TypeError("Stored device must be an object")
-            self._device = device
-            self._check_current()
             derived = self.crypto.execute(
                 {
                     "op": "public_keys",
-                    "encryption_secret_key": self._device["encryption_secret_key"],
-                    "signing_secret_key": self._device["signing_secret_key"],
+                    "encryption_secret_key": device["encryption_secret_key"],
+                    "signing_secret_key": device["signing_secret_key"],
                 }
             )
-            if any(derived[field] != self._device[field] for field in derived):
+            if any(derived[field] != device[field] for field in derived):
                 raise E2eeError("device_key_changed")
+            if device.get("key_admission") is not None:
+                attempt = AdmissionAttempt.load(
+                    device["key_admission"], self.crypto, self.subject,
+                    public_device({**device, "account_subject": self.subject}),
+                )
+        self._check_current()
+        try:
+            with self.store.credential(self._storage_key) as item:
+                if item.read() != saved:
+                    raise E2eeError("device_session_superseded")
+                self._device = device
+                self._key_admission = attempt
+                self._device_snapshot = saved
+                self._device_observed = True
+        except E2eeError as error:
+            if error.code == "device_session_superseded":
+                self.lock()
+            raise
+        if self._device is not None:
             self.trust.pin_device(self.public)
         try:
             self.recovery = self.call("e2eeGetRecovery")
@@ -176,6 +403,8 @@ class DeviceSession:
                 raise
             self.recovery = None
         if self.recovery is not None:
+            if self.recovery.get("account_subject", self.subject) != self.subject:
+                raise E2eeError("recovery_subject_mismatch")
             self.trust.set_endorsements(self.call("e2eeGetTrust")["statements"])
         if self._device is None:
             self.state = "needs_setup" if self.recovery is None else "pending_approval"
@@ -189,18 +418,25 @@ class DeviceSession:
             if public_device(current) != self.public:
                 raise E2eeError("device_key_changed")
             self.state = current["state"]
+            self._device_approval = current["state"]
         observed_state = self.state
         self.state = (
             "pending_approval" if observed_state == "approved" else observed_state
         )
         if observed_state != "approved":
             self._clear_keys()
+            if observed_state == "revoked":
+                self._end_key_admission(revoked=True)
+                return self.state
         elif self.recovery is not None:
             try:
-                self.trust.verify_recovery(
+                self.trust.verify_current_recovery(
                     self.subject,
                     self.recovery,
-                    lambda identifier: self._devices[identifier],
+                    self._current_device_lookup(None, values),
+                    recovery_lookup=lambda identifier: self._recovery_material(
+                        None, identifier
+                    ),
                 )
             except E2eeError as error:
                 if (
@@ -213,13 +449,18 @@ class DeviceSession:
                 self._clear_keys()
                 return self.state
             self.state = "approved"
-        if self._device.get("recovery_restore") is not None and self.state != "revoked":
-            self.state = "recovery_pending"
+            self.root_admissions.complete()
+            self.owner_access.recovery.accept_device_backup(current)
+        if self._key_admission is not None:
+            self.state = "key_acquisition_pending"
         return self.state
 
     def require_approved(self) -> None:
         self._check_current()
-        if self.state != "approved" or self._device is None:
+        if (
+            self._device is None or self.device_approval != "approved"
+            or self.state not in {"approved", "key_acquisition_pending"}
+        ):
             raise E2eeError("device_approval_required")
 
     def endorse(
@@ -241,7 +482,61 @@ class DeviceSession:
         self.command("e2eeSaveTrust", "peer_trust", body)
         self.trust.pin_device(device)
         if recovery is not None:
-            self.trust.pin_recovery(device["account_subject"], recovery)
+            if device["account_subject"] == self.subject:
+                self.trust.confirm_recovery(self.subject, recovery)
+            else:
+                self.trust.pin_recovery(device["account_subject"], recovery)
+
+    def confirm_project_owner(
+        self, project_id: str, invitation: str, *, invitation_id: str | None = None,
+    ) -> dict[str, str]:
+        """Confirm an owner using an invitation received directly from that owner."""
+        from ._invitations import confirm_project_owner
+
+        return confirm_project_owner(self, project_id, invitation, invitation_id=invitation_id)
+
+    def _scope_owner_statement(
+        self, scope: str, device: dict[str, Any], recovery: dict[str, Any],
+    ) -> dict[str, str]:
+        self.require_approved()
+        document = {
+            field: recovery[field] for field in (
+                "recovery_id", "generation", "encryption_public_key", "signing_public_key",
+            )
+        }
+        root = self._participants._root(document, device["account_subject"])
+        self.trust._root_identity(root.subject, root.document(), scope)
+        return self.sign("peer_trust", {
+            "scope_id": scope, "trusted_device": public_device(device), "recovery_root": document,
+        })
+
+    def _record_scope_owner(
+        self, scope: str, device: dict[str, Any], recovery: dict[str, Any],
+        qualification: CurrentCreatorQualification | None = None,
+    ) -> None:
+        self._save_scope_owner(scope, self._scope_owner_statement(scope, device, recovery), qualification)
+
+    def _save_scope_owner(self, scope: str, statement: dict[str, str],
+                          qualification: CurrentCreatorQualification | None = None) -> None:
+        self.require_approved()
+        if statement.get("device_id") != self.device_id:
+            raise E2eeError("invalid_certificate")
+        body = self.crypto.verify(self.public["signing_public_key"], "peer_trust", statement)
+        if body.get("scope_id") != scope:
+            raise E2eeError("participant_scope_mismatch")
+        device = body["trusted_device"]
+        owner = self._scope_owner(scope)
+        root = self._participants._root(body["recovery_root"], device["account_subject"])
+        self.owner_access.assert_project_creator(scope, root, device=device, qualification=qualification)
+        self.trust._root_identity(root.subject, root.document(), scope)
+        self.call("e2eeSaveTrust", body=statement)
+        self._check_scope(scope, owner)
+        self.trust.pin_scope_device(scope, device)
+        self.trust.pin_scope_recovery(scope, root.subject, root.document())
+        self.trust.set_endorsements([*self.trust._endorsements, statement])
+        if qualification is not None:
+            self.trust._confirm_head(root, scope, current_device=qualification.current.device)
+        self.owner_access.recovery.remember_confirmation(scope, statement)
 
     def sign(
         self, operation: str, body: Mapping[str, Any], *, secret_key: str | None = None
@@ -265,9 +560,14 @@ class DeviceSession:
         secret_key: str | None = None,
         **parameters: Any,
     ) -> dict[str, Any]:
-        return self.call(api_operation,
-        body=self.sign(operation, body, secret_key=secret_key),
-        **parameters,)
+        result = self.call(
+            api_operation, body=self.sign(operation, body, secret_key=secret_key),
+            **parameters,
+        )
+        if operation == "device_revoke":
+            self.trust.remember_revoked(body["device_id"])
+            self.owner_access.after_custody_change()
+        return result
 
     def prepare_setup(self) -> dict[str, Any]:
         self._check_current()
@@ -297,9 +597,7 @@ class DeviceSession:
                 }
             )
             public = public_device({**device, "account_subject": self.subject})
-            root_bytes = bytearray(
-                b"arteligo-e2ee-device-root-v1\n"
-            ) + self.crypto.canonical(public)
+            root_bytes = bytearray(_DEVICE_ROOT_DOMAIN) + self.crypto.canonical(public)
             try:
                 root_signature = self.crypto.execute(
                     {
@@ -310,6 +608,12 @@ class DeviceSession:
                 )["signature"]
             finally:
                 wipe(root_bytes)
+            self._device = device
+            self.root_admissions.prepare({
+                "recovery_id": identifier, "generation": 1,
+                "encryption_public_key": recovery["encryption_public_key"],
+                "signing_public_key": recovery["signing_public_key"],
+            }, recovery)
             return {
                 "code": code,
                 "device": device,
@@ -343,7 +647,10 @@ class DeviceSession:
 
     def finish_setup(self, draft: dict[str, Any]) -> None:
         self._check_current()
-        self._device = draft["device"]
+        pending = (self._device or {}).get("project_creation")
+        self._device = dict(draft["device"])
+        if pending is not None:
+            self._device["project_creation"] = pending
         self._persist()
         self.command(
             "e2eeBootstrap",
@@ -356,36 +663,60 @@ class DeviceSession:
         )
         self.recovery = draft["recovery"]
         self.trust.pin_device(self.public)
-        self.trust.pin_recovery(self.subject, self.recovery)
+        self.trust.confirm_recovery(
+            self.subject, self.recovery, current_device=self.public
+        )
         self._devices[self.device_id] = self.public
+        self._device_approval = "approved"
         self.state = "approved"
+        self.root_admissions.complete()
+
+    def reanchor(self) -> dict[str, Any]:
+        """Replace this profile's device keys after explicit out-of-band approval."""
+        self._check_current()
+        if not self.trust.has_confirmed_head(self.subject):
+            raise E2eeError("recovery_missing")
+        if self._key_admission is not None:
+            raise E2eeError("key_acquisition_pending")
+        self._device = self._new_device()
+        self._device_approval = "unregistered"
+        self.state = "pending_approval"
+        self._persist()
+        return self.enroll()
 
     def enroll(self) -> dict[str, Any]:
         self._check_current()
-        if self.state == "approved":
+        if self.device_approval == "approved":
             raise E2eeError("already_approved")
+        if self._key_admission is not None:
+            raise E2eeError("key_acquisition_pending")
         if self._device is None or self.state == "revoked":
             self._device = self._new_device()
         self._device.setdefault("challenge", secrets.token_urlsafe(32))
         self._persist()
         pairing = {**self.public, "challenge": self._device["challenge"]}
         self.command("e2eeEnrollDevice", "device_enroll", {**pairing, "envelopes": []})
+        self._device_approval = "pending"
         self.state = "pending_approval"
         return pairing
 
     def scopes(self) -> list[dict[str, Any]]:
         self.require_approved()
-        projects = self.call("e2eeListProjects")
-        organizations = self.call("e2eeListOrganizations")
-        values = organizations["projects"] + projects["projects"]
-        for response in (organizations, projects):
+        values: dict[str, dict[str, Any]] = {}
+        for operation in ("e2eeListOrganizations", "e2eeListProjects"):
+            response = self.call(operation)
             for value in response["projects"]:
                 scope = value["project_id"]
                 self._adopt_scope(scope, self._response_scope(scope, response), value)
-        return values
+                values[scope] = value
+        return list(values.values())
 
     def scope_metadata(self, scope: str, *, refresh: bool = False) -> dict[str, Any]:
         self.require_approved()
+        if self._root_read_set is not None:
+            return self._root_read_set.scope(scope)["scope"]
+        if self._root_read_set is None and self._proof_read_set is None:
+            self.require_scope_context(scope)
         owner = self._scope_owner(scope)
         if refresh or not owner:
             response = self.call("e2eeGetScope", scope_id=scope)
@@ -405,69 +736,15 @@ class DeviceSession:
         owner = self._response_scope(scope, response)
         with self._scope_state_lock:
             self._adopt_scope(scope, owner, metadata)
-            self._devices.update(
-                {value["device_id"]: value for value in bundle.get("devices", [])}
-            )
+            self._remember_device_material(scope, bundle.get("devices", []))
+            self.trust.remember_recoveries(bundle.get("recoveries", []), scope)
             self._key_bundles[scope] = {
                 field: bundle.get(field, []) for field in ("envelopes", "epochs")
             }
 
 
     def prepare_recovery_replacement(self) -> dict[str, Any]:
-        self.require_approved()
-        if self.recovery_replacement_pending:
-            raise E2eeError("recovery_replacement_pending")
-        if self.recovery is None:
-            raise E2eeError("recovery_missing")
-        keys = self.crypto.keypair()
-        identifier = secrets.token_urlsafe(24)
-        generation = self.recovery["generation"] + 1
-        code = self.crypto.execute({"op": "recovery_generate"})["code"]
-        context = self.crypto.canonical(
-            {
-                "v": 1,
-                "domain": "arteligo.recovery",
-                "account_subject": self.subject,
-                "recovery_id": identifier,
-                "generation": generation,
-            }
-        )
-        plaintext = self.crypto.canonical(keys)
-        try:
-            sealed = self.crypto.execute(
-                {
-                    "op": "recovery_seal",
-                    "code": code,
-                    "plaintext": encode(plaintext),
-                    "aad": encode(context),
-                }
-            )
-            public = {
-                "recovery_id": identifier,
-                "generation": generation,
-                "encryption_public_key": keys["encryption_public_key"],
-                "signing_public_key": keys["signing_public_key"],
-            }
-            return {
-                "code": code,
-                "recovery": self._recovery_replacement_body(
-                    {
-                        **public,
-                        "encrypted_bundle": encode(
-                            json.dumps(sealed, separators=(",", ":")).encode()
-                        ),
-                        "public_command": self.sign(
-                            "recovery_public",
-                            {**public, "account_subject": self.subject},
-                        ),
-                    },
-                    keys,
-                ),
-            }
-        finally:
-            keys.clear()
-            wipe(context)
-            wipe(plaintext)
+        return self.root_replacements.prepare()
 
     @property
     def recovery_replacement_pending(self) -> bool:
@@ -476,157 +753,13 @@ class DeviceSession:
             and self._device.get("recovery_replacement") is not None
         )
 
-    def _recovery_replacement_body(
-        self, recovery: dict[str, Any], keys: dict[str, str]
-    ) -> dict[str, Any]:
-        devices = self.call("e2eeListDevices")["devices"]
-        self._devices.update({device["device_id"]: device for device in devices})
-        roots = []
-        for device in devices:
-            previously_approved = device["state"] == "revoked" and any(
-                isinstance(certificate, Mapping)
-                and certificate.get("operation")
-                in {"bootstrap", "device_approve", "recovery_restore"}
-                for certificate in device.get("certificates", [])
-            )
-            if device["state"] != "approved" and not previously_approved:
-                continue
-            if device["account_subject"] != self.subject:
-                raise E2eeError("account_mismatch")
-            checked = self.trust.verify_device(
-                device, lambda value: self._devices[value]
-            )
-            message = bytearray(
-                b"arteligo-e2ee-device-root-v1\n"
-            ) + self.crypto.canonical(checked)
-            try:
-                signature = self.crypto.execute(
-                    {
-                        "op": "sign_bytes",
-                        "secret_key": keys["signing_secret_key"],
-                        "bytes": encode(message),
-                    }
-                )["signature"]
-            finally:
-                wipe(message)
-            roots.append({"public_device": checked, "root_signature": signature})
-        envelopes = []
-        for scope in self.scopes():
-            epoch = scope["key_epoch"]
-            if epoch == 0 and scope.get("lifecycle") == "uninitialized":
-                continue
-            key = self.scope_key(scope["project_id"], epoch)
-            try:
-                envelopes.append(
-                    self.wrap_key(
-                        scope["project_id"],
-                        epoch,
-                        key,
-                        recipient=recovery["recovery_id"],
-                        kind="recovery",
-                        public_key=recovery["encryption_public_key"],
-                    )
-                )
-            finally:
-                wipe(key)
-        return {**recovery, "device_roots": roots, "envelopes": envelopes}
 
     def resume_recovery_replacement(self, code: str) -> None:
-        self.require_approved()
-        if not self.recovery_replacement_pending:
-            raise E2eeError("recovery_replacement_not_pending")
-        recovery = self._device["recovery_replacement"]
-        self._check_recovery_replacement_current(
-            recovery, self.call("e2eeGetRecovery")
-        )
-        context = self.crypto.canonical(
-            {
-                "v": 1,
-                "domain": "arteligo.recovery",
-                "account_subject": self.subject,
-                "recovery_id": recovery["recovery_id"],
-                "generation": recovery["generation"],
-            }
-        )
-        plaintext = bytearray()
-        keys: dict[str, str] = {}
-        try:
-            opened = self.crypto.execute(
-                {
-                    "op": "recovery_open",
-                    "code": code,
-                    "envelope": json.loads(decode(recovery["encrypted_bundle"])),
-                    "aad": encode(context),
-                }
-            )
-            plaintext = decode(opened["plaintext"])
-            keys = json.loads(plaintext)
-            derived = self.crypto.execute(
-                {
-                    "op": "public_keys",
-                    "encryption_secret_key": keys["encryption_secret_key"],
-                    "signing_secret_key": keys["signing_secret_key"],
-                }
-            )
-            if any(derived[field] != recovery[field] for field in derived):
-                raise E2eeError("recovery_key_changed")
-            self.replace_recovery(
-                {"recovery": self._recovery_replacement_body(recovery, keys)}
-            )
-        finally:
-            keys.clear()
-            wipe(plaintext)
-            wipe(context)
+        self.root_replacements.resume(code)
 
-    def _check_recovery_replacement_current(
-        self, requested: dict[str, Any], current: dict[str, Any]
-    ) -> None:
-        if (
-            current["generation"] < requested["generation"]
-            or current["recovery_id"] == requested["recovery_id"]
-        ):
-            return
-        devices = self.call("e2eeListDevices")["devices"]
-        self._devices.update({device["device_id"]: device for device in devices})
-        verified = self.trust.verify_recovery(
-            self.subject, current, lambda identifier: self._devices[identifier]
-        )
-        self.recovery = verified
-        self._device.pop("recovery_replacement", None)
-        self._persist()
-        raise E2eeError("recovery_replacement_superseded")
 
     def replace_recovery(self, draft: dict[str, Any]) -> None:
-        self.require_approved()
-        requested = draft["recovery"]
-        identity = (
-            "recovery_id",
-            "generation",
-            "encryption_public_key",
-            "signing_public_key",
-            "encrypted_bundle",
-        )
-        pending = self._device.get("recovery_replacement")
-        if pending is not None and any(
-            pending[field] != requested[field] for field in identity
-        ):
-            raise E2eeError("recovery_replacement_pending")
-        self._device["recovery_replacement"] = {
-            **{field: requested[field] for field in identity},
-            "public_command": requested["public_command"],
-        }
-        self._persist()
-        current = self.call("e2eeGetRecovery")
-        self._check_recovery_replacement_current(requested, current)
-        if any(current[field] != requested[field] for field in identity):
-            if current["generation"] + 1 != requested["generation"]:
-                raise E2eeError("revision_conflict")
-            self.command("e2eeRotateRecovery", "recovery_rotate", requested)
-        self.recovery = requested
-        self.trust.pin_recovery(self.subject, self.recovery)
-        self.reconcile_keys()
-        self._device.pop("recovery_replacement")
-        self._persist()
+        self.root_replacements.apply(draft)
 
     def reconcile_keys(self) -> None:
         self._check_current()
@@ -634,7 +767,7 @@ class DeviceSession:
             pending = [
                 scope
                 for scope in self.scopes()
-                if scope.get("lifecycle") == "rekey_required"
+                if scope["key_state"] == "rekey_required"
                 and scope.get("role") in {"owner", "editor", "admin"}
             ]
             if not pending:
@@ -646,7 +779,7 @@ class DeviceSession:
                     if error.code != "revision_conflict":
                         raise
         if any(
-            scope.get("lifecycle") == "rekey_required"
+            scope["key_state"] == "rekey_required"
             and scope.get("role") in {"owner", "editor", "admin"}
             for scope in self.scopes()
         ):
@@ -655,7 +788,32 @@ class DeviceSession:
     def rotate_scope(self, scope: dict[str, Any]) -> None:
         self.require_approved()
         identifier, epoch = scope["project_id"], scope["key_epoch"]
+        pending = self.publications.pending("scope_rotations", identifier)
+        if pending is not None:
+            self._resume_scope_rotation(identifier, pending)
+            return
         owner = self._scope_owner(identifier)
+        organization_id = scope.get("owner_org")
+        authority = (
+            self.owner_access.authority(organization_id, proof_scope=identifier)
+            if organization_id is not None else None
+        )
+        if authority is not None and identifier == organization_id and authority.owner_subject != self.subject:
+            self.owner_access.organizations.qualify_admin(identifier, self.public, authority)
+        if (
+            scope.get("participation_policy") == "organization"
+            and organization_id is not None
+            and organization_id != identifier
+        ):
+            organization = self.scope_metadata(organization_id, refresh=True)
+            if organization["key_state"] == "rekey_required":
+                if organization.get("role") not in {"owner", "editor", "admin"}:
+                    raise E2eeError("rekey_required")
+                self.rotate_scope(organization)
+                organization = self.scope_metadata(organization_id, refresh=True)
+            if organization["key_state"] != "ready":
+                raise E2eeError("rekey_required")
+            self._check_scope(identifier, owner)
         key = self.crypto.key()
         previous = bytearray()
         try:
@@ -680,16 +838,24 @@ class DeviceSession:
                 finally:
                     wipe(aad)
             audience = self.call("e2eeGetRecipients", scope_id=identifier)
-            self._devices.update(
-                {device["device_id"]: device for device in audience["devices"]}
+            recipients = self.trust.current_recipients(
+                identifier, audience,
+                self._current_device_lookup(identifier, audience["devices"]),
+                lambda value: self._recovery_material(identifier, value),
             )
+            if authority is not None and identifier == organization_id:
+                self.owner_access.organizations.qualify_recipients(identifier, recipients, authority)
+            maintenance = (
+                self.owner_access.maintenance_issuer(authority)
+                if authority is not None and authority.owner_subject == self.subject else None
+            )
+            wrap_key = maintenance.wrap if maintenance is not None else self.wrap_key
             envelopes = []
-            for device in audience["devices"]:
-                checked = self.trust.verify_device(
-                    device, lambda value: self._devices[value]
-                )
+            for checked in recipients.devices:
+                if authority is not None and checked["account_subject"] == authority.owner_subject:
+                    continue
                 envelopes.append(
-                    self.wrap_key(
+                    wrap_key(
                         identifier,
                         epoch + 1,
                         key,
@@ -698,26 +864,24 @@ class DeviceSession:
                         public_key=checked["encryption_public_key"],
                     )
                 )
-            for recovery in audience["recoveries"]:
-                self.trust.verify_recovery(
-                    recovery["account_subject"],
-                    recovery,
-                    lambda value: self._devices[value],
-                )
+            for head in recipients.roots:
+                recovery = head.identity
+                if authority is not None and recovery.subject == authority.owner_subject:
+                    continue
                 envelopes.append(
-                    self.wrap_key(
+                    wrap_key(
                         identifier,
                         epoch + 1,
                         key,
-                        recipient=recovery["recovery_id"],
+                        recipient=recovery.identifier,
                         kind="recovery",
-                        public_key=recovery["encryption_public_key"],
+                        public_key=recovery.encryption_key,
                     )
                 )
             if audience.get("organization_id") is not None:
                 organization = audience["organization_id"]
-                org_key = self.scope_key(organization, audience["organization_epoch"])
-                try:
+                with self.owner_access.publications.key(organization, audience["organization_epoch"], authority) as organization_key:
+                    org_key = organization_key.key
                     public = self.crypto.execute(
                         {
                             "op": "public_keys",
@@ -726,7 +890,7 @@ class DeviceSession:
                         }
                     )
                     envelopes.append(
-                        self.wrap_key(
+                        wrap_key(
                             identifier,
                             epoch + 1,
                             key,
@@ -736,67 +900,50 @@ class DeviceSession:
                             organization_epoch=audience["organization_epoch"],
                         )
                     )
-                finally:
-                    wipe(org_key)
             body["envelopes"] = envelopes
-            self.command("e2eeRotateScope", "rotate_scope", body, scope_id=identifier)
-            with self._scope_state_lock:
-                if self._scope_metadata.get(identifier) is owner:
-                    previous_cached = self._scope_keys.pop((identifier, epoch + 1), None)
-                    if previous_cached is not None:
-                        wipe(previous_cached)
-                    self._scope_keys[(identifier, epoch + 1)] = bytearray(key)
+            if authority is not None:
+                body["owner_authority"] = authority.to_dict()
+                body["envelopes"].append(wrap_key(identifier, epoch + 1, key,
+                    recipient=authority.key_id, kind="owner", public_key=authority.public_key,
+                    owner_key_epoch=authority.key_epoch, owner_binding_digest=authority.binding_digest))
+            if maintenance is not None:
+                body["owner_key_proof"] = OWNER_KEY_PROOF
+            operation = "owner_rotate_scope" if maintenance is not None else "rotate_scope"
+            pending = SavedCommand(
+                operation, UncertainCommand(SignedEvidence.parse(self.sign(operation, body))),
+                key=encode(key), epoch=epoch + 1,
+            )
+            self.publications.save("scope_rotations", identifier, pending)
+            self._resume_scope_rotation(identifier, pending)
         finally:
             wipe(key)
             wipe(previous)
 
-    def approve(self, pairing: dict[str, Any]) -> dict[str, Any]:
-        self.require_approved()
-        if pairing.get("account_subject") != self.subject:
-            raise E2eeError("account_mismatch")
-        public_device(pairing)
-        envelopes = []
-        for scope in self.scopes():
-            if scope["key_epoch"] == 0 and scope.get("lifecycle") == "uninitialized":
-                continue
-            key = self.scope_key(scope["project_id"], scope["key_epoch"])
-            try:
-                envelopes.append(
-                    self.wrap_key(
-                        scope["project_id"],
-                        scope["key_epoch"],
-                        key,
-                        recipient=pairing["device_id"],
-                        kind="device",
-                        public_key=pairing["encryption_public_key"],
-                    )
-                )
-            finally:
-                wipe(key)
-        if self.recovery is None:
-            raise E2eeError("recovery_missing")
-        recovery_root = {
-            key: self.recovery[key]
-            for key in (
-                "recovery_id",
-                "encryption_public_key",
-                "signing_public_key",
-                "generation",
-            )
-        }
-        approved = self.command(
-            "e2eeApproveDevice",
-            "device_approve",
-            {**pairing, "recovery_root": recovery_root, "envelopes": envelopes},
-            device_id=pairing["device_id"],
+    def _resume_scope_rotation(self, scope: str, pending: SavedCommand) -> None:
+        if pending.operation not in {"owner_rotate_scope", "rotate_scope"}:
+            raise E2eeError("invalid_scope_rotation")
+        body = pending.command.body
+        if pending.operation == "owner_rotate_scope" and body.get("owner_key_proof") != OWNER_KEY_PROOF:
+            raise E2eeError("unsupported_owner_key_proof")
+        if (pending.key is None or type(pending.epoch) is not int
+                or body.get("scope_id") != scope or body.get("expected_epoch") != pending.epoch - 1):
+            raise E2eeError("invalid_scope_rotation")
+        api = "e2eeRotateOwnerScope" if pending.operation == "owner_rotate_scope" else "e2eeRotateScope"
+        self.publications.submit(
+            "scope_rotations", scope, pending,
+            lambda command: self.call(api, scope_id=scope, body=command),
         )
-        self.trust.pin_device(pairing)
-        return {
-            "trusted_device": self.public,
-            "recovery_root": recovery_root,
-            "approved_device": public_device(approved),
-            "challenge": pairing["challenge"],
-        }
+        key = decode(pending.key)
+        try:
+            if len(key) != 32:
+                raise E2eeError("invalid_scope_rotation")
+            self._remember(scope, pending.epoch, key, owner=self._scope_owner(scope))
+        finally:
+            wipe(key)
+        self.publications.finish("scope_rotations", scope, pending)
+
+    def approve(self, pairing: dict[str, Any]) -> dict[str, Any]:
+        return self.device_approvals.approve(pairing)
 
     def accept_approval(self, receipt: dict[str, Any]) -> None:
         self._check_current()
@@ -851,157 +998,273 @@ class DeviceSession:
                 )
                 and body.get("recovery_root") == recovery
             ):
-                matching.append(body)
+                matching.append(signed)
         if not matching:
             raise E2eeError("invalid_certificate")
+        paired = PairedAdmissionProof.parse(self.crypto, self.trust.origin, self.subject,
+            self.public, self._device["challenge"], {
+                "recovery_root": recovery, "trusted_device": approver, "signed_command": matching[0],
+            })
         self.trust.pin_device(approver)
-        self.trust.pin_recovery(self.subject, recovery)
+        self.trust.confirm_recovery(
+            self.subject, recovery, current_device=approved
+        )
         self._devices[approver["device_id"]] = approver
         self._devices[self.device_id] = approved
         self._device["paired"] = True
+        self._device["paired_admission"] = paired.document()
         self._persist()
         self.refresh()
         self.endorse(approver, recovery)
 
-    def restore(self, code: str) -> None:
+    def add_by_key(self, code: str) -> AdmissionResult:
         self._check_current()
+        previously_revoked = self.device_approval == "revoked"
+        self.refresh()
+        if self.device_approval == "revoked" and not previously_revoked:
+            raise E2eeError("device_revoked")
+        attempt = self._key_admission
         recovery = self.recovery
         if recovery is None:
             raise E2eeError("recovery_missing")
-        context = self.crypto.canonical(
-            {
-                "v": 1,
-                "domain": "arteligo.recovery",
-                "account_subject": self.subject,
-                "recovery_id": recovery["recovery_id"],
-                "generation": recovery["generation"],
-            }
-        )
-        plaintext = bytearray()
+        has_confirmed_head = self.trust._confirmed_head(self.subject) is not None
+        if attempt is not None and self.device_approval != "approved" and any(
+            recovery.get(name) != value for name, value in attempt.root.items()
+        ):
+            if not has_confirmed_head:
+                raise E2eeError("untrusted_recovery")
+            current = self._admission_current_device()
+            if current is None or current["state"] != "approved":
+                self._end_key_admission()
+                raise E2eeError("key_admission_superseded")
         keys: dict[str, str] = {}
         try:
-            opened = self.crypto.execute(
-                {
-                    "op": "recovery_open",
-                    "code": code,
-                    "envelope": json.loads(decode(recovery["encrypted_bundle"])),
-                    "aad": encode(context),
-                }
-            )
-            plaintext = decode(opened["plaintext"])
-            keys = json.loads(plaintext)
-            derived = self.crypto.execute(
-                {
-                    "op": "public_keys",
-                    "encryption_secret_key": keys["encryption_secret_key"],
-                    "signing_secret_key": keys["signing_secret_key"],
-                }
-            )
-            if any(derived[field] != recovery[field] for field in derived):
-                raise E2eeError("recovery_key_changed")
-            self._restoring_recovery = (
-                recovery["recovery_id"],
-                decode(keys["encryption_secret_key"]),
-            )
-            self.trust.pin_recovery(self.subject, recovery)
-            pending = self._device.get("recovery_restore") if self._device else None
-            if (
-                pending is None
-                or pending.get("recovery_id") != recovery["recovery_id"]
-                or pending.get("generation") != recovery["generation"]
-                or self.state == "revoked"
-            ):
-                self._clear_keys()
-                self._device = self._new_device()
-                pending = {
-                    "recovery_id": recovery["recovery_id"],
-                    "generation": recovery["generation"],
-                    "challenge": secrets.token_urlsafe(32),
-                }
-                self._device["recovery_restore"] = pending
-                self._persist()
-            self.state = "recovery_pending"
-            devices = self.call("e2eeListDevices")["devices"]
-            registered = next(
-                (device for device in devices if device["device_id"] == self.device_id),
-                None,
-            )
-            if registered is None or registered["state"] != "approved":
-                self.command(
-                    "e2eeRestoreRecovery",
-                    "recovery_restore",
-                    {
-                        "recovery_id": recovery["recovery_id"],
-                        "device": self.public,
-                        "challenge": pending["challenge"],
-                    },
-                    secret_key=keys["signing_secret_key"],
+            keys = open_recovery_code(self.crypto, self.subject, recovery, code)
+            self.trust.confirm_private_recovery(recovery, keys)
+            self.trust.confirm_recovery(self.subject, recovery)
+            if attempt is None:
+                if self._device is None or self.device_approval == "revoked":
+                    self._clear_keys()
+                    self._device = self._new_device()
+                    self._device_approval = "unregistered"
+                proof = self.root_admissions.prepare(recovery, keys)
+                attempt = AdmissionAttempt(
+                    secrets.token_urlsafe(24), self.subject, proof.root,
+                    proof.command.body["challenge"], proof.command.document(),
                 )
-            elif public_device(registered) != self.public:
-                raise E2eeError("device_key_changed")
-            self.trust.pin_device(self.public)
-            self._devices[self.device_id] = self.public
-            self._devices.update(
-                {
-                    device["device_id"]: device
-                    for device in self.call("e2eeListDevices")["devices"]
+                self._key_admission = attempt
+                self.state = "key_acquisition_pending"
+                self._persist()
+            if self._device.get("root_admission") is None:
+                self._device["root_admission"] = {
+                    "root": attempt.root, "signed_command": attempt.signed_command,
                 }
-            )
-            self.state = "approved"
-            for scope in self.scopes():
-                identifier, epoch = scope["project_id"], scope["key_epoch"]
-                owner = self._scope_owner(identifier)
-                if epoch == 0 and scope.get("lifecycle") == "uninitialized":
-                    continue
-                try:
-                    key = self._read_key(
-                        identifier,
-                        epoch,
-                        recipient=recovery["recovery_id"],
-                        kind="recovery",
-                        secret_key=keys["encryption_secret_key"],
-                    )
-                except E2eeError as error:
-                    if (
-                        error.code != "key_redistribution_required"
-                        or scope.get("participation_policy") != "organization"
-                    ):
-                        raise
-                    key = self.scope_key(identifier, epoch)
-                try:
-                    self._remember(identifier, epoch, key, owner=owner)
-                    envelope = self.wrap_key(
-                        identifier,
-                        epoch,
-                        key,
-                        recipient=self.device_id,
-                        kind="device",
-                        public_key=self.public["encryption_public_key"],
-                    )
-                    self.command(
-                        "e2eeSaveEnvelopes",
-                        "envelopes_save",
-                        {
-                            "scope_id": identifier,
-                            "key_epoch": epoch,
-                            "envelopes": [envelope],
-                        },
-                        scope_id=identifier,
-                    )
-                finally:
-                    wipe(key)
-            self.reconcile_keys()
-            self._device.pop("recovery_restore")
+                self._persist()
+            self.root_admissions.complete()
+            self._admission_current_device(require_approved=True)
+            self.trust.pin_device(self.public)
+            self.state = "key_acquisition_pending"
+            self.owner_access.recovery.restore_root(keys["encryption_secret_key"])
+            self.owner_access.maintain()
+            attempt.synchronize(self.scopes())
             self._persist()
+            for scope in list(attempt.scopes):
+                self._acquire_admission_scope(scope, attempt, recovery, keys)
+            for scope in self.scopes():
+                self.root_admissions.publish_history(scope, recovery, keys["encryption_secret_key"])
+            attempt.synchronize(self.scopes())
+            self._persist()
+            for scope, progress in list(attempt.scopes.items()):
+                if progress.state == "available":
+                    try:
+                        self._verify_admission_scope(scope, progress)
+                    except E2eeError as error:
+                        self._admission_scope_failure(scope, attempt, error)
+            attempt.synchronize(self.scopes())
+            self._admission_current_device(require_approved=True)
+            self._last_key_acquisition_progress = attempt.progress()
+            if self._last_key_acquisition_progress["pending"]:
+                result = AdmissionResult.KEY_ACQUISITION_PENDING
+            else:
+                self._key_admission = None
+                self.state = "approved"
+                result = AdmissionResult.READY
+            self._persist()
+            return result
+        except E2eeError as error:
+            if error.code == "device_revoked":
+                if self.state != "revoked":
+                    self._end_key_admission(revoked=True)
+            elif self._device is not None and self.state != "locked":
+                try:
+                    self._admission_current_device()
+                except E2eeError as observation:
+                    if observation.code == "device_revoked":
+                        raise
+            raise
         finally:
-            if self._restoring_recovery is not None:
-                wipe(self._restoring_recovery[1])
-                self._restoring_recovery = None
-            if self._device is not None and self._device.get("recovery_restore"):
-                self.state = "recovery_pending"
-            wipe(context)
-            wipe(plaintext)
-            keys.clear()
+            if self._key_admission is not None and self.state not in {"revoked", "locked"}:
+                self.state = "key_acquisition_pending"
+            if isinstance(keys, dict):
+                keys.clear()
+            code = ""
+
+    def _end_key_admission(self, *, revoked: bool = False) -> None:
+        self._key_admission = None
+        self._last_key_acquisition_progress = {
+            "available": [], "pending": [], "remaining": {},
+        }
+        self._clear_keys()
+        if revoked:
+            self._device_approval = "revoked"
+        self.state = "revoked" if revoked else "pending_approval"
+        if self._device is not None:
+            self._persist()
+
+    def _admission_current_device(
+        self, *, require_approved: bool = False
+    ) -> dict[str, Any] | None:
+        values = self.call("e2eeListDevices")["devices"]
+        self._devices.update({device["device_id"]: device for device in values})
+        current = next((device for device in values if device["device_id"] == self.device_id), None)
+        if current is not None and current["state"] == "revoked":
+            self._end_key_admission(revoked=True)
+            raise E2eeError("device_revoked")
+        if current is not None and public_device(current) != self.public:
+            raise E2eeError("device_key_changed")
+        self._device_approval = current["state"] if current is not None else "unregistered"
+        if require_approved and self.device_approval != "approved":
+            self._clear_keys()
+            raise E2eeError("device_admission_unconfirmed")
+        return current
+
+    def _admission_device_key(self, scope: str, epoch: int) -> bytearray:
+        metadata = self.scope_metadata(scope)
+        organization = metadata.get("owner_org")
+        if organization:
+            if self.owner_access.authority(organization, active=False, proof_scope=scope).owner_subject == self.subject:
+                return self.owner_access.read_key(scope, epoch)
+        envelopes = self.call(
+            "e2eeGetEnvelopes", scope_id=scope, epoch=epoch,
+            recipient_id=self.device_id, recipient_kind="device",
+        )["envelopes"]
+        if not envelopes:
+            raise E2eeError("key_redistribution_required")
+        return self._open_key_envelope(
+            scope, epoch, envelopes[0], recipient=self.device_id, kind="device",
+            secret_key=self._device["encryption_secret_key"],
+        )
+
+    def _verify_admission_scope(self, scope: str, progress: ScopeAcquisition) -> None:
+        metadata = self.scope_metadata(scope, refresh=True)
+        if metadata["key_epoch"] != progress.epoch:
+            raise E2eeError("revision_conflict")
+        owner = self._scope_owner(scope)
+        key = self._admission_device_key(scope, progress.epoch)
+        try:
+            if self.scope_metadata(scope, refresh=True)["key_epoch"] != progress.epoch:
+                raise E2eeError("revision_conflict")
+            self._remember(scope, progress.epoch, key, owner=owner)
+        finally:
+            wipe(key)
+        progress.state = "available"
+        progress.signed_command = None
+
+    def _admission_scope_failure(
+        self, scope: str, attempt: AdmissionAttempt, error: E2eeError
+    ) -> None:
+        if error.code not in {
+            "key_redistribution_required", "rekey_required", "revision_conflict",
+            "scope_read_superseded", "not_found", "project_access_denied",
+            "access_denied", "service_unavailable", "rate_limited",
+            "untrusted_device",
+        }:
+            raise error
+        progress = attempt.scopes[scope]
+        progress.state = "pending"
+        progress.reason = (
+            "trust_verification_required" if error.code == "untrusted_device" else error.code
+        )
+        self._persist()
+
+    def _acquire_admission_scope(
+        self, scope: str, attempt: AdmissionAttempt,
+        recovery: dict[str, Any], keys: dict[str, str],
+    ) -> None:
+        for _ in range(3):
+            key = bytearray()
+            try:
+                current = self._admission_current_device(require_approved=True)
+                metadata = dict(self.scope_metadata(scope, refresh=True))
+                epoch = metadata["key_epoch"]
+                progress = attempt.scopes[scope]
+                if progress.epoch != epoch:
+                    progress = attempt.scopes[scope] = ScopeAcquisition(epoch)
+                if epoch == 0 and metadata["key_state"] == "uninitialized":
+                    progress.state, progress.signed_command = "uninitialized", None
+                    self._persist()
+                    return
+                try:
+                    self._verify_admission_scope(scope, progress)
+                    self._persist()
+                    return
+                except E2eeError as error:
+                    if error.code != "key_redistribution_required":
+                        raise
+                progress.state = "pending"
+                if progress.signed_command is None:
+                    publication = self.owner_access.publications.key(scope, epoch, recovery_secret=keys["encryption_secret_key"])
+                    key = publication.key
+                    recipients = self.trust.current_recipients(
+                        scope, {
+                            "purpose": "distribution",
+                            "devices": [current], "recoveries": [],
+                        },
+                        self._current_device_lookup(scope, [current]),
+                        lambda identifier: self._recovery_material(scope, identifier),
+                    )
+                    target = recipients.devices[0]
+                    if target != self.public:
+                        raise E2eeError("device_key_changed")
+                    envelope = self.wrap_key(
+                        scope, epoch, key, recipient=self.device_id, kind="device",
+                        public_key=target["encryption_public_key"],
+                    )
+                    body = {"scope_id": scope, "key_epoch": epoch, "envelopes": [envelope]}
+                    if publication.generation is not None:
+                        body["owner_authority"] = publication.generation.authority.to_dict()
+                    progress.signed_command = self.sign("envelopes_save", body)
+                    self._persist()
+                body = self.crypto.verify(
+                    self.public["signing_public_key"], "envelopes_save",
+                    progress.signed_command,
+                )
+                envelopes = body.get("envelopes")
+                if (
+                    body.get("scope_id") != scope or body.get("key_epoch") != epoch
+                    or not isinstance(envelopes, list) or len(envelopes) != 1
+                    or not isinstance(envelopes[0], dict)
+                    or envelopes[0].get("recipient_id") != self.device_id
+                    or envelopes[0].get("recipient_kind") != "device"
+                    or progress.signed_command["device_id"] != self.device_id
+                ):
+                    raise E2eeError("invalid_key_admission")
+                self._admission_current_device(require_approved=True)
+                if self.scope_metadata(scope, refresh=True)["key_epoch"] != epoch:
+                    raise E2eeError("revision_conflict")
+                self.call(
+                    "e2eeSaveEnvelopes", body=progress.signed_command, scope_id=scope,
+                )
+                self._verify_admission_scope(scope, progress)
+                self._persist()
+                return
+            except E2eeError as error:
+                self._admission_scope_failure(scope, attempt, error)
+                if error.code not in {"revision_conflict", "scope_read_superseded"}:
+                    return
+            finally:
+                wipe(key)
+
 
     def wrap_key(
         self,
@@ -1013,8 +1276,12 @@ class DeviceSession:
         kind: str,
         public_key: str,
         organization_epoch: int | None = None,
+        owner_key_epoch: int | None = None,
+        owner_binding_digest: str | None = None,
     ) -> dict[str, Any]:
         self.require_approved()
+        if kind == "recovery":
+            self.trust.check_recovery_recipient(scope, recipient, public_key)
         fields = {
             "scope_id": scope,
             "key_epoch": epoch,
@@ -1022,6 +1289,20 @@ class DeviceSession:
             "recipient_id": recipient,
             "recipient_kind": kind,
         }
+        if kind == "owner":
+            if (type(owner_key_epoch) is not int or owner_key_epoch < 1
+                    or not isinstance(owner_binding_digest, str)):
+                raise E2eeError("invalid_envelope")
+            digest = decode(owner_binding_digest)
+            try:
+                if len(digest) != 32:
+                    raise E2eeError("invalid_envelope")
+            finally:
+                wipe(digest)
+            fields["owner_key_epoch"] = owner_key_epoch
+            fields["owner_binding_digest"] = owner_binding_digest
+        elif owner_key_epoch is not None or owner_binding_digest is not None:
+            raise E2eeError("invalid_envelope")
         if kind == "organization":
             if (
                 type(organization_epoch) is not int
@@ -1053,36 +1334,147 @@ class DeviceSession:
         finally:
             wipe(context)
 
-    def device(self, scope: str, identifier: str) -> dict[str, Any]:
-        fetched: set[str] = set()
+    def approved_self_devices(self, organization: str, authority: OwnerAuthorityHead) -> list[dict[str, Any]]:
+        self.require_approved()
+        if self.recovery is None:
+            raise E2eeError("recovery_missing")
+        root = self.owner_access.verifier.root(self.recovery, self.subject)
+        anchor = self.trust._confirmed_head(self.subject)
+        if anchor is None:
+            raise E2eeError("untrusted_recovery")
+        devices = self.call("e2eeListDevices")["devices"]
+        self._check_current()
+        owned = [
+            device
+            for device in devices
+            if device.get("account_subject") == self.subject
+        ]
+        self._devices.update({device["device_id"]: device for device in owned})
+        approved = self.owner_access.current.qualify_self_recipients(
+            organization, [device for device in owned if device.get("state") == "approved"],
+            anchor, authority, root,
+        )
+        if not any(device["device_id"] == self.device_id for device in approved):
+            raise E2eeError("device_approval_required")
+        self.require_approved()
+        return approved
 
-        def fetch(value: str) -> None:
-            if value in fetched:
-                return
-            fetched.add(value)
-            values = self.call("e2eeGetMemberDevices", scope_id=scope, device_id=value)["devices"]
-            for item in values:
-                if item["device_id"] == value:
-                    self._devices[value] = item
+    def _remember_device_material(
+        self, scope: str | None, devices: list[dict[str, Any]]
+    ) -> None:
+        self.trust.observe_devices(devices, scope)
+        if scope is None:
+            for device in devices:
+                if device.get("account_subject") != self.subject:
+                    raise E2eeError("recovery_subject_mismatch")
+                self._devices[device["device_id"]] = device
+        else:
+            self._scope_device_material.update(
+                {(scope, device["device_id"]): device for device in devices}
+            )
+
+    def _current_device_lookup(
+        self, scope: str | None, fresh: Iterable[dict[str, Any]] = ()
+    ) -> Callable[[str], dict[str, Any]]:
+        material = {
+            device["device_id"]: device for device in fresh
+            if scope is None or device.get("account_subject") != self.subject
+        }
+
+        def lookup(identifier: str) -> dict[str, Any]:
+            if identifier not in material:
+                cached = (
+                    self._devices.get(identifier) if scope is None
+                    else self._scope_device_material.get((scope, identifier))
+                )
+                selected_scope = (
+                    None if cached and cached.get("account_subject") == self.subject
+                    else scope
+                )
+                device = self._device_material(selected_scope, identifier, refresh=True)
+                if selected_scope is not None and device.get("account_subject") == self.subject:
+                    device = self._device_material(None, identifier, refresh=True)
+                material[identifier] = device
+            return material[identifier]
+
+        return lookup
+
+    def _device_material(
+        self, scope: str | None, identifier: str, *, refresh: bool = False
+    ) -> dict[str, Any]:
+        context = self._root_read_set or self._proof_read_set
+        if context is not None:
+            return context.device(scope, identifier)
+        cached = (
+            self._devices.get(identifier) if scope is None
+            else self._scope_device_material.get((scope, identifier))
+        )
+        if refresh or cached is None or not cached.get("certificates"):
+            values = (
+                self.call("e2eeListDevices", device_id=identifier)
+                if scope is None
+                else self.call(
+                    "e2eeGetMemberDevices", scope_id=scope, device_id=identifier
+                )
+            )["devices"]
+            found = next(
+                (item for item in values if item["device_id"] == identifier), None
+            )
+            if found is None:
+                raise E2eeError("untrusted_device")
+            return found
+        return cached
+
+    def _recovery_material(
+        self, scope: str | None, identifier: str
+    ) -> dict[str, Any] | None:
+        context = self._root_read_set or self._proof_read_set
+        if context is not None:
+            return context.root(scope, identifier)
+        if scope is None:
+            recovery = self.call("e2eeGetRecovery")
+            if recovery.get("account_subject", self.subject) != self.subject:
+                raise E2eeError("recovery_subject_mismatch")
+            roots = [{**recovery, "account_subject": self.subject}]
+        else:
+            roots = self.call(
+                "e2eeGetScopeRecoveryRoots", scope_id=scope, recovery_id=identifier
+            )["recoveries"]
+        self.trust.remember_recoveries(roots, scope)
+        return self.trust._recovery_proofs.get((scope, identifier))
+
+    def _historical_device_material(self, scope: str | None, identifier: str) -> dict[str, Any]:
+        context = self._root_read_set or self._proof_read_set
+        if context is not None:
+            return context.historical_evidence.device(identifier)
+        return self._device_material(scope, identifier)
+
+    def device(
+        self, scope: str | None, identifier: str, *,
+        key_epoch: int | None = None, envelope: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        attempted: set[str] = set()
 
         def lookup(value: str) -> dict[str, Any]:
-            cached = self._devices.get(value)
-            if cached is None or (
-                not cached.get("certificates")
-                and self.trust._load("devices", value) is None
-            ):
-                fetch(value)
-            if value not in self._devices:
-                raise E2eeError("untrusted_device")
-            return self._devices[value]
+            attempted.add(value)
+            return self._device_material(scope, value)
+
+        def verify() -> dict[str, Any]:
+            return self.trust.verify_device(
+                lookup(identifier),
+                lookup,
+                recovery_lookup=lambda value: self._recovery_material(scope, value),
+                scope=scope, key_epoch=key_epoch, envelope=envelope,
+            )
 
         try:
-            return self.trust.verify_device(lookup(identifier), lookup)
+            return verify()
         except E2eeError as error:
-            if identifier in fetched or error.code != "untrusted_device":
+            if error.code != "untrusted_device":
                 raise
-            fetch(identifier)
-            return self.trust.verify_device(lookup(identifier), lookup)
+            for value in attempted:
+                self._device_material(scope, value, refresh=True)
+            return verify()
 
     def _read_key(
         self,
@@ -1092,7 +1484,6 @@ class DeviceSession:
         recipient: str,
         kind: str,
         secret_key: str | None = None,
-        organization_epoch: int | None = None,
     ) -> bytearray:
         bundle = self._key_bundles.get(scope)
         values = (
@@ -1128,14 +1519,6 @@ class DeviceSession:
             organization_key = bytearray()
             if kind == "organization":
                 bound_epoch = envelope.get("organization_epoch")
-                if bound_epoch is None:
-                    return self._read_legacy_organization_envelope(
-                        scope,
-                        epoch,
-                        envelope,
-                        organization=recipient,
-                        current_epoch=organization_epoch,
-                    )
                 if type(bound_epoch) is not int or not 1 <= bound_epoch <= 2**63 - 1:
                     raise E2eeError("invalid_envelope")
                 try:
@@ -1176,16 +1559,42 @@ class DeviceSession:
         }
         if any(envelope.get(field) != value for field, value in fields.items()):
             raise E2eeError("invalid_envelope")
+        if kind == "owner":
+            owner_epoch = envelope.get("owner_key_epoch")
+            owner_digest = envelope.get("owner_binding_digest")
+            if type(owner_epoch) is not int or owner_epoch < 1 or not isinstance(owner_digest, str):
+                raise E2eeError("invalid_envelope")
+            organization = self.scope_metadata(scope).get("owner_org")
+            self.owner_access.envelope_binding(organization, recipient, owner_epoch, owner_digest)
+            fields["owner_key_epoch"] = owner_epoch
+            fields["owner_binding_digest"] = owner_digest
+        elif "owner_key_epoch" in envelope or "owner_binding_digest" in envelope:
+            raise E2eeError("invalid_envelope")
         organization_epoch = envelope.get("organization_epoch")
-        if organization_epoch is not None:
+        if kind == "organization":
             if (
-                kind != "organization"
-                or type(organization_epoch) is not int
+                type(organization_epoch) is not int
                 or not 1 <= organization_epoch <= 2**63 - 1
             ):
                 raise E2eeError("invalid_envelope")
             fields["organization_epoch"] = organization_epoch
-        sender = self.device(scope, envelope["sender_device_id"])
+        elif organization_epoch is not None:
+            raise E2eeError("invalid_envelope")
+        source_body = SignedEvidence.parse(envelope.get("signed_command")).body
+        owner_source = (envelope.get("operation") in {"owner_envelopes_save", "owner_rotate_scope"}
+                        or source_body.get("owner_key_proof") == OWNER_KEY_PROOF)
+        if owner_source:
+            if not isinstance(secret_key, str):
+                raise E2eeError("invalid_envelope")
+            return self.owner_access.envelopes.open(scope, epoch, envelope, secret_key)
+        sender = (
+            self.owner_access.envelopes.sender(scope, epoch, envelope)
+            if kind == "owner"
+            else self._participants.organization_envelope_sender(scope, recipient, envelope)
+            if kind == "organization" else self.device(
+                scope, envelope["sender_device_id"], key_epoch=epoch, envelope=envelope,
+            )
+        )
         context = self.crypto.canonical(
             {
                 "v": 1,
@@ -1218,85 +1627,10 @@ class DeviceSession:
         finally:
             wipe(context)
 
-    def _read_legacy_organization_envelope(
-        self,
-        scope: str,
-        epoch: int,
-        envelope: dict[str, Any],
-        *,
-        organization: str,
-        current_epoch: int | None,
-    ) -> bytearray:
-        if type(current_epoch) is not int or not 1 <= current_epoch <= 2**63 - 1:
-            raise E2eeError("invalid_envelope")
-
-        def open_project_key(key: bytearray) -> bytearray:
-            return self._open_key_envelope(
-                scope,
-                epoch,
-                envelope,
-                recipient=organization,
-                kind="organization",
-                secret_key=encode(key),
-            )
-
-        current_key = bytearray()
-        try:
-            current_key = self.scope_key(organization, current_epoch)
-            return open_project_key(current_key)
-        except E2eeError as error:
-            if error.code not in {
-                "authentication_failed",
-                "key_redistribution_required",
-            }:
-                raise
-        finally:
-            wipe(current_key)
-
-        recipients = [(self.device_id, "device", self._device["encryption_secret_key"])]
-        if self._restoring_recovery is not None:
-            recipients.append(
-                (
-                    self._restoring_recovery[0],
-                    "recovery",
-                    encode(self._restoring_recovery[1]),
-                )
-            )
-        for recipient, kind, secret_key in recipients:
-            history = self.call("e2eeGetEnvelopes",
-            scope_id=organization,
-            recipient_id=recipient,
-            recipient_kind=kind,)["envelopes"]
-            if any(
-                type(item.get("key_epoch")) is not int
-                or not 1 <= item["key_epoch"] <= 2**63 - 1
-                for item in history
-            ):
-                raise E2eeError("invalid_envelope")
-            for item in sorted(
-                history, key=lambda value: value["key_epoch"], reverse=True
-            ):
-                if item["key_epoch"] >= current_epoch:
-                    continue
-                key = self._open_key_envelope(
-                    organization,
-                    item["key_epoch"],
-                    item,
-                    recipient=recipient,
-                    kind=kind,
-                    secret_key=secret_key,
-                )
-                try:
-                    return open_project_key(key)
-                except E2eeError as error:
-                    if error.code != "authentication_failed":
-                        raise
-                finally:
-                    wipe(key)
-        raise E2eeError("key_redistribution_required")
 
     def scope_key(self, scope: str, epoch: int) -> bytearray:
         self.require_approved()
+        self.require_scope_context(scope)
         owner = self._scope_owner(scope)
         with self._scope_state_lock:
             if self._scope_metadata.get(scope) is not owner:
@@ -1321,20 +1655,25 @@ class DeviceSession:
             current = metadata["key_epoch"]
             if epoch < current:
                 if metadata.get("owner_org") == scope:
-                    raise E2eeError("key_redistribution_required") from None
-                key = self._previous_key(scope, epoch, current)
-            elif metadata.get(
-                "participation_policy"
-            ) == "organization" and metadata.get("owner_org"):
-                org_id = metadata["owner_org"]
-                organization = self.scope_metadata(org_id)
-                key = self._read_key(
-                    scope,
-                    epoch,
-                    recipient=org_id,
-                    kind="organization",
-                    organization_epoch=organization["key_epoch"],
-                )
+                    key = self.owner_access.read_key(scope, epoch)
+                else:
+                    try:
+                        key = self._previous_key(scope, epoch, current)
+                    except E2eeError as historical_error:
+                        if historical_error.code != "key_redistribution_required":
+                            raise
+                        key = self.owner_access.read_key(scope, epoch)
+            elif metadata.get("participation_policy") == "organization" and metadata.get("owner_org"):
+                try:
+                    key = self._read_key(
+                        scope, epoch, recipient=metadata["owner_org"], kind="organization",
+                    )
+                except E2eeError as organization_error:
+                    if organization_error.code != "key_redistribution_required":
+                        raise
+                    key = self.owner_access.read_key(scope, epoch)
+            elif metadata.get("owner_key_maintenance") is True:
+                key = self.owner_access.read_key(scope, epoch)
             else:
                 raise
         try:
@@ -1370,10 +1709,12 @@ class DeviceSession:
                 if link is None:
                     raise E2eeError("incomplete_epoch_chain")
                 signed = link["signed_command"]
-                device = self.device(scope, signed["device_id"])
-                body = self.crypto.verify(
-                    device["signing_public_key"], "rotate_scope", signed
-                )
+                if link.get("operation") == "owner_rotate_scope":
+                    self.owner_access.envelopes.verify(scope, epoch, signed, "owner_rotate_scope")
+                    body = self.trust._body(signed)
+                else:
+                    device = self.device(scope, signed["device_id"], key_epoch=epoch)
+                    body = self.crypto.verify(device["signing_public_key"], "rotate_scope", signed)
                 if (
                     body.get("scope_id") != scope
                     or body.get("expected_epoch") != epoch - 1
@@ -1431,12 +1772,22 @@ class DeviceSession:
             self._clear_keys()
             self._scope_metadata.clear()
             self._key_bundles.clear()
-        if self._restoring_recovery is not None:
-            wipe(self._restoring_recovery[1])
-            self._restoring_recovery = None
+            self._scope_device_material.clear()
+            self.trust.clear_scope_trust()
+            self._proof_read_set = None
+            self._root_read_set = None
+            self.owner_access.reads._operation = None
+        self.owner_access.clear()
         if self._device is not None:
             self._device.clear()
         self._device = None
+        self._device_snapshot = None
+        self._device_observed = False
         self._devices.clear()
+        self._key_admission = None
+        self._last_key_acquisition_progress = {
+            "available": [], "pending": [], "remaining": {},
+        }
+        self._device_approval = "unregistered"
 
         self.state = "locked"

@@ -4,7 +4,6 @@ from collections.abc import Mapping
 from typing import Any, TypeVar
 
 from attrs import define as _attrs_define
-from typing_extensions import Self
 
 from ..models.e2_ee_record_kind import E2EeRecordKind
 
@@ -14,7 +13,7 @@ T = TypeVar("T", bound="E2EeDeletionMarker")
 @_attrs_define
 class E2EeDeletionMarker:
     """Payload-free signed deletion metadata. It is not an AEAD document and has no encryption key or plaintext value.
-    Existing authorization, revision, epoch, immutable-head, maintenance and source-ownership checks still apply.
+    Existing authorization, revision, epoch, immutable-head and source-ownership checks still apply.
 
         Attributes:
             record_id (str):
@@ -56,7 +55,7 @@ class E2EeDeletionMarker:
         return field_dict
 
     @classmethod
-    def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
         record_id = d.pop("record_id")
 

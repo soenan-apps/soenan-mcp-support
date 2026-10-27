@@ -4,10 +4,9 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
-from typing_extensions import Self
 
 if TYPE_CHECKING:
-    from ..models.e2_ee_device import E2EeDevice
+    from ..models.e2_ee_signed_device_input import E2EeSignedDeviceInput
 
 
 T = TypeVar("T", bound="E2EeDeviceRootProof")
@@ -17,11 +16,12 @@ T = TypeVar("T", bound="E2EeDeviceRootProof")
 class E2EeDeviceRootProof:
     """
     Attributes:
-        public_device (E2EeDevice):
+        public_device (E2EeSignedDeviceInput): Immutable public device snapshot bound into a signed request.
+            Certificates are returned separately in E2eeDevice and are not accepted in this input.
         root_signature (str):
     """
 
-    public_device: E2EeDevice
+    public_device: E2EeSignedDeviceInput
     root_signature: str
 
     def to_dict(self) -> dict[str, Any]:
@@ -41,11 +41,11 @@ class E2EeDeviceRootProof:
         return field_dict
 
     @classmethod
-    def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.e2_ee_device import E2EeDevice
+    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.e2_ee_signed_device_input import E2EeSignedDeviceInput
 
         d = dict(src_dict)
-        public_device = E2EeDevice.from_dict(d.pop("public_device"))
+        public_device = E2EeSignedDeviceInput.from_dict(d.pop("public_device"))
 
         root_signature = d.pop("root_signature")
 
