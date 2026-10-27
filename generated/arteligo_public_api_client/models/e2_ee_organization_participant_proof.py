@@ -4,7 +4,6 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
-from typing_extensions import Self
 
 from ..models.e2_ee_organization_participant_proof_kind import (
     E2EeOrganizationParticipantProofKind,
@@ -71,7 +70,7 @@ class E2EeOrganizationParticipantProof:
         return field_dict
 
     @classmethod
-    def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.e2_ee_device import E2EeDevice
         from ..models.e2_ee_signed_command import E2EeSignedCommand
 

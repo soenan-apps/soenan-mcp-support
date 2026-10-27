@@ -4,6 +4,9 @@ from .accept_product_terms_sec_fetch_site import AcceptProductTermsSecFetchSite
 from .authenticated_product_session import AuthenticatedProductSession
 from .authenticated_product_session_kind import AuthenticatedProductSessionKind
 from .e2_ee_add_device_by_key_sec_fetch_site import E2EeAddDeviceByKeySecFetchSite
+from .e2_ee_apply_root_replacement_sec_fetch_site import (
+    E2EeApplyRootReplacementSecFetchSite,
+)
 from .e2_ee_approve_device_sec_fetch_site import E2EeApproveDeviceSecFetchSite
 from .e2_ee_approve_invitation import E2EeApproveInvitation
 from .e2_ee_approve_invitation_sec_fetch_site import E2EeApproveInvitationSecFetchSite
@@ -60,6 +63,14 @@ from .e2_ee_invitation_request import E2EeInvitationRequest
 from .e2_ee_invitation_revoke import E2EeInvitationRevoke
 from .e2_ee_invitation_status import E2EeInvitationStatus
 from .e2_ee_invitations import E2EeInvitations
+from .e2_ee_key_operation_dependency_manifest import E2EeKeyOperationDependencyManifest
+from .e2_ee_key_operation_pending_command import E2EeKeyOperationPendingCommand
+from .e2_ee_key_operation_pending_command_operation import (
+    E2EeKeyOperationPendingCommandOperation,
+)
+from .e2_ee_key_operation_protected_source import E2EeKeyOperationProtectedSource
+from .e2_ee_key_operation_reference import E2EeKeyOperationReference
+from .e2_ee_key_operation_reference_kind import E2EeKeyOperationReferenceKind
 from .e2_ee_member import E2EeMember
 from .e2_ee_member_remove import E2EeMemberRemove
 from .e2_ee_members import E2EeMembers
@@ -124,6 +135,9 @@ from .e2_ee_owner_transfer_decision_state import E2EeOwnerTransferDecisionState
 from .e2_ee_participant_source import E2EeParticipantSource
 from .e2_ee_peer_device_trust import E2EePeerDeviceTrust
 from .e2_ee_peer_recovery_trust import E2EePeerRecoveryTrust
+from .e2_ee_prepare_root_replacement_sec_fetch_site import (
+    E2EePrepareRootReplacementSecFetchSite,
+)
 from .e2_ee_project import E2EeProject
 from .e2_ee_project_archive import E2EeProjectArchive
 from .e2_ee_project_key_state import E2EeProjectKeyState
@@ -144,6 +158,8 @@ from .e2_ee_realtime_event_type_0_type import E2EeRealtimeEventType0Type
 from .e2_ee_realtime_event_type_1 import E2EeRealtimeEventType1
 from .e2_ee_realtime_event_type_1_reason import E2EeRealtimeEventType1Reason
 from .e2_ee_realtime_event_type_1_type import E2EeRealtimeEventType1Type
+from .e2_ee_realtime_event_type_2 import E2EeRealtimeEventType2
+from .e2_ee_realtime_event_type_2_type import E2EeRealtimeEventType2Type
 from .e2_ee_recipient_kind import E2EeRecipientKind
 from .e2_ee_recipient_purpose import E2EeRecipientPurpose
 from .e2_ee_recipients import E2EeRecipients
@@ -164,7 +180,28 @@ from .e2_ee_request_invitation_sec_fetch_site import E2EeRequestInvitationSecFet
 from .e2_ee_requests import E2EeRequests
 from .e2_ee_revoke_device_sec_fetch_site import E2EeRevokeDeviceSecFetchSite
 from .e2_ee_revoke_invitation_sec_fetch_site import E2EeRevokeInvitationSecFetchSite
-from .e2_ee_rotate_recovery_sec_fetch_site import E2EeRotateRecoverySecFetchSite
+from .e2_ee_root_replacement_apply import E2EeRootReplacementApply
+from .e2_ee_root_replacement_event import E2EeRootReplacementEvent
+from .e2_ee_root_replacement_event_fragment_kind import (
+    E2EeRootReplacementEventFragmentKind,
+)
+from .e2_ee_root_replacement_event_kind import E2EeRootReplacementEventKind
+from .e2_ee_root_replacement_input_event import E2EeRootReplacementInputEvent
+from .e2_ee_root_replacement_input_event_kind import E2EeRootReplacementInputEventKind
+from .e2_ee_root_replacement_manifest import E2EeRootReplacementManifest
+from .e2_ee_root_replacement_owner import E2EeRootReplacementOwner
+from .e2_ee_root_replacement_pending_effect import E2EeRootReplacementPendingEffect
+from .e2_ee_root_replacement_pending_effect_reason import (
+    E2EeRootReplacementPendingEffectReason,
+)
+from .e2_ee_root_replacement_prepare import E2EeRootReplacementPrepare
+from .e2_ee_root_replacement_result import E2EeRootReplacementResult
+from .e2_ee_root_replacement_result_phase import E2EeRootReplacementResultPhase
+from .e2_ee_root_replacement_scope import E2EeRootReplacementScope
+from .e2_ee_root_replacement_scope_command import E2EeRootReplacementScopeCommand
+from .e2_ee_root_replacement_scope_command_operation import (
+    E2EeRootReplacementScopeCommandOperation,
+)
 from .e2_ee_rotate_scope_sec_fetch_site import E2EeRotateScopeSecFetchSite
 from .e2_ee_rotation import E2EeRotation
 from .e2_ee_save_envelopes_sec_fetch_site import E2EeSaveEnvelopesSecFetchSite
@@ -203,6 +240,7 @@ __all__ = (
     "AuthenticatedProductSession",
     "AuthenticatedProductSessionKind",
     "E2EeAddDeviceByKeySecFetchSite",
+    "E2EeApplyRootReplacementSecFetchSite",
     "E2EeApproveDeviceSecFetchSite",
     "E2EeApproveInvitation",
     "E2EeApproveInvitationSecFetchSite",
@@ -251,8 +289,14 @@ __all__ = (
     "E2EeInvitationParticipantProofKind",
     "E2EeInvitationRequest",
     "E2EeInvitationRevoke",
-    "E2EeInvitationStatus",
     "E2EeInvitations",
+    "E2EeInvitationStatus",
+    "E2EeKeyOperationDependencyManifest",
+    "E2EeKeyOperationPendingCommand",
+    "E2EeKeyOperationPendingCommandOperation",
+    "E2EeKeyOperationProtectedSource",
+    "E2EeKeyOperationReference",
+    "E2EeKeyOperationReferenceKind",
     "E2EeMember",
     "E2EeMemberRemove",
     "E2EeMembers",
@@ -313,6 +357,7 @@ __all__ = (
     "E2EeParticipantSource",
     "E2EePeerDeviceTrust",
     "E2EePeerRecoveryTrust",
+    "E2EePrepareRootReplacementSecFetchSite",
     "E2EeProject",
     "E2EeProjectArchive",
     "E2EeProjectKeyState",
@@ -331,6 +376,8 @@ __all__ = (
     "E2EeRealtimeEventType1",
     "E2EeRealtimeEventType1Reason",
     "E2EeRealtimeEventType1Type",
+    "E2EeRealtimeEventType2",
+    "E2EeRealtimeEventType2Type",
     "E2EeRecipientKind",
     "E2EeRecipientPurpose",
     "E2EeRecipients",
@@ -351,7 +398,22 @@ __all__ = (
     "E2EeRequests",
     "E2EeRevokeDeviceSecFetchSite",
     "E2EeRevokeInvitationSecFetchSite",
-    "E2EeRotateRecoverySecFetchSite",
+    "E2EeRootReplacementApply",
+    "E2EeRootReplacementEvent",
+    "E2EeRootReplacementEventFragmentKind",
+    "E2EeRootReplacementEventKind",
+    "E2EeRootReplacementInputEvent",
+    "E2EeRootReplacementInputEventKind",
+    "E2EeRootReplacementManifest",
+    "E2EeRootReplacementOwner",
+    "E2EeRootReplacementPendingEffect",
+    "E2EeRootReplacementPendingEffectReason",
+    "E2EeRootReplacementPrepare",
+    "E2EeRootReplacementResult",
+    "E2EeRootReplacementResultPhase",
+    "E2EeRootReplacementScope",
+    "E2EeRootReplacementScopeCommand",
+    "E2EeRootReplacementScopeCommandOperation",
     "E2EeRotateScopeSecFetchSite",
     "E2EeRotation",
     "E2EeSaveEnvelopesSecFetchSite",

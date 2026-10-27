@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, ClassVar, Mapping
 
-from account_public_api_client.models.owner_transfer_decision import OwnerTransferDecision
+from arteligo_public_api_client.models.owner_transfer_decision import OwnerTransferDecision
 from arteligo_public_api_client.models.e2_ee_owner_history_binding import E2EeOwnerHistoryBinding
 from arteligo_public_api_client.models.e2_ee_owner_issuer_evidence import E2EeOwnerIssuerEvidence
 

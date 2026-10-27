@@ -1,7 +1,7 @@
 from enum import Enum
 
 
-class E2EeRotateRecoverySecFetchSite(str, Enum):
+class E2EePrepareRootReplacementSecFetchSite(str, Enum):
     SAME_ORIGIN = "same-origin"
 
     def __str__(self) -> str:

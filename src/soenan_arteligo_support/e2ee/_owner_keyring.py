@@ -38,7 +38,7 @@ class OwnerKeyring:
         if sum(key.public_binding() == active for key in keys) != 1 or manifest.count(active) != 1:
             raise E2eeError("owner_source_key_missing")
         for key in keys:
-            selected = self.verifier.account.selected(organization, key.binding_digest)
+            selected = self.verifier.reads.selected(organization, key.binding_digest)
             if key.public_binding() != {name: selected.head.to_dict()[name] for name in key.public_binding()}:
                 raise E2eeError("owner_keyring_mismatch")
             proof = self.session.call("e2eeGetOwnerBinding", organization_id=organization, binding_digest=key.binding_digest)

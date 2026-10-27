@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
-from account_public_api_client.models.owner_transfer_decision import OwnerTransferDecision
+from arteligo_public_api_client.models.owner_transfer_decision import OwnerTransferDecision
 from arteligo_public_api_client.models.e2_ee_owner_custody import E2EeOwnerCustody
 
 from ._crypto import E2eeError

@@ -49,14 +49,9 @@ def confirm_project_owner(
 ) -> dict[str, str]:
     session.require_approved()
     invitation_id, secret = _invitation_token(session.trust.origin, invitation, invitation_id)
-    metadata = session.scope_metadata(project_id, refresh=True)
-    if metadata.get("owner_org") == project_id:
-        raise E2eeError("project_required")
-    owner = session._scope_owner(project_id)
     binding = session.crypto.execute({"op": "derive_invitation_signing_key", "secret": secret})
     try:
         info = session.call("e2eeGetInvitation", invitation_id=invitation_id)
-        session._check_scope(project_id, owner)
         participants, trust = session._participants, session.trust
         body = participants._invitation(info["signed_command"], project_id, invitation_id)
         if binding["signing_public_key"] != body["binding_public_key"] or any(
@@ -66,6 +61,10 @@ def confirm_project_owner(
             )
         ):
             raise E2eeError("invitation_binding_mismatch")
+        metadata = session.scope_metadata(project_id, refresh=True)
+        if metadata.get("owner_org") == project_id:
+            raise E2eeError("project_required")
+        owner = session._scope_owner(project_id)
         creator = body["creator_device"]
         if public_device(info["creator_device"]) != creator:
             raise E2eeError("device_key_changed")

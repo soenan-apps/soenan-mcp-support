@@ -7,7 +7,7 @@ from urllib.parse import urlsplit
 
 from ._crypto import E2eeError, decode, wipe
 from ._oauth import origin
-from ._owner_account import OwnerAccountReads
+from ._owner_authority import OwnerAuthorityReads
 from ._owner_commands import OwnerCommands
 from ._owner_keyring import OwnerKeyring
 from ._owner_protocol import (
@@ -27,9 +27,9 @@ if TYPE_CHECKING:
 
 class OwnerHandoffs:
     def __init__(self, session: DeviceSession, store: OwnerStateStore,
-                 account: OwnerAccountReads, commands: OwnerCommands,
+                 account: OwnerAuthorityReads, commands: OwnerCommands,
                  verifier: OwnerEvidenceVerifier, capsules: OwnerCapsuleCrypto, keyring: OwnerKeyring):
-        self.session, self.store, self.account = session, store, account
+        self.session, self.store, self.reads = session, store, account
         self.commands, self.verifier, self.capsules = commands, verifier, capsules
         self.crypto = session.crypto
         self.keyring = keyring
@@ -97,7 +97,7 @@ class OwnerHandoffs:
         gate_request = state.journal[gate_slot].command.body
         issuer_admission = OriginalIssuerAdmission.parse(gate_request.get("issuer_admission")).document()
         suggested = object_value(gate_response.get("gate", gate_response))
-        gate = self.account.gate(organization, suggested.get("gate_id"))
+        gate = self.reads.gate(organization, suggested.get("gate_id"))
         gate_document = gate.to_dict()
         if any(gate_document.get(field) != value for field, value in gate_request.items() if field != "issuer_admission"):
             raise E2eeError("owner_gate_mismatch")
@@ -150,10 +150,12 @@ class OwnerHandoffs:
     def import_action(self, action: dict[str, str] | None,
                       authority: Callable[[str], OwnerAuthorityHead]) -> dict[str, str]:
         organization, action = self._select_action(action)
+        self.session.load_owner_context(organization=organization, gate_ids=[action["gate_id"]],
+                                        operation_ids=[action["operation_id"]])
         state = self.store.get(organization)
         if state.source_anchor is None:
             raise E2eeError("owner_source_anchor_missing")
-        decision = committed_decision(self.account.decision(organization, action["operation_id"]), organization)
+        decision = committed_decision(self.reads.decision(organization, action["operation_id"]), organization)
         selected_head = authority_head(decision.head.to_dict(), organization)
         candidates = [*state.retired_candidates, *([state.candidate] if state.candidate is not None else [])]
         for key in state.keys:
@@ -174,7 +176,7 @@ class OwnerHandoffs:
                 or selected_head.public_key != offered.public_key
                 or selected_head.binding_digest != decision.candidate_offer_digest):
             raise E2eeError("owner_receipt_mismatch")
-        gate = self.account.gate(organization, action["gate_id"])
+        gate = self.reads.gate(organization, action["gate_id"])
         if self.capsules.public_key(action["gate_private_key"]) != gate.public_key:
             raise E2eeError("owner_gate_mismatch")
         saved = self.session.call("e2eeGetOwnerPreparation", organization_id=organization,

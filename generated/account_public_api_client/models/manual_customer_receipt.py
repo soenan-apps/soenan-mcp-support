@@ -7,7 +7,6 @@ from uuid import UUID
 
 from attrs import define as _attrs_define
 from dateutil.parser import isoparse
-from typing_extensions import Self
 
 if TYPE_CHECKING:
     from ..models.manual_customer_allocation import ManualCustomerAllocation
@@ -81,7 +80,7 @@ class ManualCustomerReceipt:
         return field_dict
 
     @classmethod
-    def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.manual_customer_allocation import ManualCustomerAllocation
         from ..models.manual_customer_refund import ManualCustomerRefund
 

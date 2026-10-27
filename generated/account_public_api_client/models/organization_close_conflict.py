@@ -4,7 +4,6 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
-from typing_extensions import Self
 
 from ..models.organization_close_conflict_error import OrganizationCloseConflictError
 
@@ -52,9 +51,9 @@ class OrganizationCloseConflict:
         blockers = []
         for blockers_item_data in self.blockers:
             blockers_item: dict[str, Any]
-            if isinstance(
-                blockers_item_data, OrganizationCloseSimpleBlocker
-            ) or isinstance(
+            if isinstance(blockers_item_data, OrganizationCloseSimpleBlocker):
+                blockers_item = blockers_item_data.to_dict()
+            elif isinstance(
                 blockers_item_data, OrganizationCloseSubscriptionCancellationScheduled
             ):
                 blockers_item = blockers_item_data.to_dict()
@@ -75,7 +74,7 @@ class OrganizationCloseConflict:
         return field_dict
 
     @classmethod
-    def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.organization_close_entitlement_pending import (
             OrganizationCloseEntitlementPending,
         )

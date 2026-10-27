@@ -287,7 +287,7 @@ class ScopeParticipants:
                 "owner_key_epoch", "owner_binding_digest", "encapsulated_key", "ciphertext",
             })
             _bytes(envelope["owner_binding_digest"], 32)
-            selected = self.session.owner_access.account.selected(organization, envelope["owner_binding_digest"])
+            selected = self.session.owner_access.reads.selected(organization, envelope["owner_binding_digest"])
             head = selected.head
             if (head.owner_subject != device["account_subject"]
                     or (declared is not None and not selected.matches(declared))

@@ -83,7 +83,7 @@ class OwnerRootHistory:
         if not organizations:
             return None
         organization = sorted(organizations)[0]
-        head = self.owner.account.authority(organization, self.owner.account.capability(organization))
+        head = self.owner.reads.authority(organization, self.owner.reads.capability(organization))
         root = self.owner.verifier.root(self.session.recovery, self.session.subject)
         anchor = self.owner.current.independent_root(organization, self.session.public)
         return self.owner.current.qualify(organization, self.session.public, anchor, head, expected_root=root)
@@ -91,7 +91,7 @@ class OwnerRootHistory:
     def selected(self, organization: str, digest: str):
         proof = self.session.call("e2eeGetOwnerBinding", organization_id=organization, binding_digest=digest)
         head = authority_head(proof.get("owner_authority"), organization)
-        return self.owner.account.selected(organization, digest, capability=head.read_capability), proof
+        return self.owner.reads.selected(organization, digest, capability=head.read_capability), proof
 
     def digest(self) -> str | None:
         root = self.session.recovery
@@ -228,7 +228,7 @@ class OwnerRootHistory:
         references = [ScopeGenerationReference.parse(value) for value in payload["scope_generations"]]
         if len({(value.scope, value.epoch) for value in references}) != len(references):
             raise E2eeError("invalid_owner_custody_backup")
-        issuer = self.session._device_material(None, signed.device_id)
+        issuer = self.session._historical_device_material(None, signed.device_id)
         if issuer["account_subject"] != self.session.subject:
             raise E2eeError("account_mismatch")
         signed.verify(self.crypto, issuer["signing_public_key"], "recovery_rotate")

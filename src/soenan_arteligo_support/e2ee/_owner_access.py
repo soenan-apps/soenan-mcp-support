@@ -4,11 +4,11 @@ import secrets
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Mapping
 
-from account_public_api_client.models.owner_authority_head_state import OwnerAuthorityHeadState
+from arteligo_public_api_client.models.owner_authority_head_state import OwnerAuthorityHeadState
 from arteligo_public_api_client.models.e2_ee_owner_custody import E2EeOwnerCustody
 
 from ._crypto import E2eeError, decode, wipe
-from ._owner_account import OwnerAccountReads
+from ._owner_authority import OwnerAuthorityReads
 from ._owner_commands import OwnerCommands
 from ._owner_envelopes import OWNER_KEY_PROOF, OwnerEnvelopeIssuer
 from ._owner_publication import OwnerPublicationKeys
@@ -56,12 +56,12 @@ class OwnerAccess:
         self.session, self.crypto = session, session.crypto
         self.capsules = OwnerCapsuleCrypto(session.crypto)
         self.store = OwnerStateStore(session, self.capsules)
-        self.account = OwnerAccountReads(session)
+        self.reads = OwnerAuthorityReads(session)
         self.commands = OwnerCommands(session, self.store)
-        self.verifier = OwnerEvidenceVerifier(session, self.store, self.account)
+        self.verifier = OwnerEvidenceVerifier(session, self.store, self.reads)
         self.current = OwnerCurrentCustody(self)
         self.keyring = OwnerKeyring(session, self.store, self.commands, self.verifier, self.capsules)
-        self.handoffs = OwnerHandoffs(session, self.store, self.account, self.commands, self.verifier, self.capsules, self.keyring)
+        self.handoffs = OwnerHandoffs(session, self.store, self.reads, self.commands, self.verifier, self.capsules, self.keyring)
         self.publications = OwnerPublicationKeys(session, self)
         self.recovery = OwnerRecovery(self)
         self.organizations = OwnerOrganizationKeys(self)
@@ -73,7 +73,7 @@ class OwnerAccess:
                   proof_scope: str | None = None) -> OwnerAuthorityHead:
         proof = self.session.call("e2eeGetOwnerAuthority", organization_id=organization)
         suggested = authority_head(proof.get("owner_authority"), organization)
-        head = self.account.authority(organization, suggested.read_capability)
+        head = self.reads.authority(organization, suggested.read_capability)
         if head != suggested:
             raise E2eeError("owner_authority_changed")
         state = self.store.get(organization)
@@ -116,8 +116,8 @@ class OwnerAccess:
         current = custody(self.session.call("e2eeGetOwnerCustody", organization_id=organization))
         proof = self.session.call("e2eeGetOwnerAuthority", organization_id=organization)
         suggested = authority_head(proof.get("owner_authority"), organization)
-        head = self.account.authority(organization, suggested.read_capability)
-        observed = self.account.custody(organization, self.session.subject, head.read_capability)
+        head = self.reads.authority(organization, suggested.read_capability)
+        observed = self.reads.custody(organization, self.session.subject, head.read_capability)
         if (head != suggested or observed.custody_revision != current.custody_revision
                 or observed.head.to_dict() != head.to_dict()):
             raise E2eeError("owner_custody_changed")
@@ -196,7 +196,7 @@ class OwnerAccess:
                            lambda: self.store.save(organization), rejections=frozenset())
         except E2eeError as error:
             try:
-                selected = self.account.selected(organization, digest).head
+                selected = self.reads.selected(organization, digest).head
             except E2eeError as lookup_error:
                 if lookup_error.code == "owner_binding_not_selected" and error.code in {
                     "revision_conflict", "owner_authority_changed", "owner_custody_changed",
@@ -208,7 +208,7 @@ class OwnerAccess:
             pending.outcome = AcceptedCommand(pending.command, selected.to_dict())
             self.store.save(organization)
         current = self.authority(organization, active=False)
-        selected = self.account.selected(organization, digest).head
+        selected = self.reads.selected(organization, digest).head
         binding = OwnerBinding.parse(pending.command.document())
         if (selected.key_id != binding.body.key_id or pending.key is None
                 or selected.public_key != self.capsules.public_key(pending.key)):
@@ -231,7 +231,7 @@ class OwnerAccess:
             "custody_revision": current_custody.custody_revision,
         })
         head = self.authority(organization, active=False)
-        invalidated = self.account.custody(organization, self.session.subject, head.read_capability)
+        invalidated = self.reads.custody(organization, self.session.subject, head.read_capability)
         if (invalidated.custody_revision < current_custody.custody_revision
                 or authority_head(invalidated.head.to_dict(), organization) != head):
             raise E2eeError("owner_invalidation_unconfirmed")
@@ -314,7 +314,7 @@ class OwnerAccess:
             return NoSelectedHistory()
         proof = self.session.call("e2eeGetOwnerAuthority", organization_id=organization)
         suggested = authority_head(proof.get("owner_authority"), organization)
-        snapshot = self.account.authority_snapshot(organization, suggested.read_capability)
+        snapshot = self.reads.authority_snapshot(organization, suggested.read_capability)
         if snapshot.head != suggested:
             raise E2eeError("owner_authority_changed")
         selected = self.verifier.selected_source(organization, snapshot, proof_scope=scope)
@@ -372,7 +372,7 @@ class OwnerAccess:
             raise E2eeError("organization_required")
         proof = self.session.call("e2eeGetOwnerAuthority", organization_id=organization)
         suggested = authority_head(proof.get("owner_authority"), organization)
-        head = self.account.authority(organization, suggested.read_capability)
+        head = self.reads.authority(organization, suggested.read_capability)
         if head != suggested:
             raise E2eeError("owner_authority_changed")
         qualified = self.current.qualify(organization, device, anchor, head,
@@ -428,10 +428,10 @@ class OwnerAccess:
         body = original.body
         if "owner_authority" not in body:
             return None
-        material = self.session._device_material(scope, original.device_id)
+        material = self.session._historical_device_material(scope, original.device_id)
         creator_subject = material["account_subject"]
         endorsed = authority_head(body["owner_authority"], organization)
-        if (not self.account.selected(organization, endorsed.binding_digest,
+        if (not self.reads.selected(organization, endorsed.binding_digest,
                 capability=endorsed.read_capability).matches(endorsed)
                 or (endorsed.owner_subject == creator_subject and body.get("owner_key_proof") != OWNER_KEY_PROOF)
                 or (endorsed.owner_subject != creator_subject and body.get("owner_key_proof") is not None)):
@@ -498,7 +498,7 @@ class OwnerAccess:
             return None
         if "owner_authority" in creation.body:
             self.verifier._project_authority_index(organization, creation, source.links)
-        material = self.session._device_material(scope, creation.device_id)
+        material = self.session._historical_device_material(scope, creation.device_id)
         creator = public_device(material)
         if has_committed_creator(scope) and not committed_creator(scope, creator["signing_public_key"]):
             raise E2eeError("owner_project_source_mismatch")
@@ -561,7 +561,8 @@ class OwnerAccess:
         return independent
 
     def _project_evidence(self, organization: str, project: dict[str, Any],
-                          admission: OriginalIssuerAdmission) -> OwnerSourceDocument:
+                          admission: OriginalIssuerAdmission, *,
+                          previous_admission: OriginalIssuerAdmission | None = None) -> OwnerSourceDocument:
         scope = project["project_id"]
         inherited = self._selected_project(organization, scope)[2]
         if inherited is not None:
@@ -590,11 +591,11 @@ class OwnerAccess:
             "device": self.session.public, "issuer_admission": admission.document(),
         }}
         for command in confirmations:
-            material = self.session._device_material(None, command.device_id)
+            material = self.session._historical_device_material(None, command.device_id)
             if material["account_subject"] != self.session.subject:
                 raise E2eeError("owner_signer_mismatch")
             command.verify(self.crypto, material["signing_public_key"], "peer_trust")
-            original = self.current.capture_original(scope, material, admission.root)
+            original = self.current.capture_original(scope, material, (previous_admission or admission).root)
             issuers[("peer_trust", command.digest(self.crypto, "peer_trust"))] = {
                 "operation": "peer_trust", "command_digest": command.digest(self.crypto, "peer_trust"),
                 "device": public_device(material), "issuer_admission": original.document(),
@@ -654,7 +655,7 @@ class OwnerAccess:
 
     def confirm_authority(self, organization: str, identity: Mapping[str, Any]) -> str:
         proposed = authority_head(identity.get("owner_authority"), organization)
-        current = self.account.authority(organization, proposed.read_capability)
+        current = self.reads.authority(organization, proposed.read_capability)
         if current != proposed:
             raise E2eeError("owner_authority_changed")
         require_active(current)
@@ -749,6 +750,7 @@ class OwnerAccess:
             for scope in self.session.call("e2eeListOrganizations")["projects"]:
                 organization = scope["project_id"]
                 try:
+                    self.session.load_owner_context(organization=organization)
                     self._maintain_organization(organization)
                 except E2eeError as error:
                     if error.code in {"device_session_superseded", "authentication_superseded"}:
@@ -832,4 +834,5 @@ class OwnerAccess:
     def clear(self) -> None:
         self.store.clear()
         self.verifier.clear()
+        self.reads._operation = None
         self.blockers.clear()

@@ -4,7 +4,6 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
-from typing_extensions import Self
 
 from ..models.e2_ee_owner_key_proof import E2EeOwnerKeyProof
 from ..types import UNSET, Unset
@@ -91,7 +90,7 @@ class E2EeCreateProject:
         return field_dict
 
     @classmethod
-    def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.e2_ee_content_record_write import E2EeContentRecordWrite
         from ..models.e2_ee_envelope import E2EeEnvelope
         from ..models.e2_ee_owner_authority import E2EeOwnerAuthority

@@ -5,6 +5,7 @@ import json
 import secrets
 import threading
 from collections.abc import Callable, Iterable, Mapping
+from dataclasses import replace
 from typing import Any
 
 from ._admission import AdmissionAttempt, AdmissionResult, ScopeAcquisition
@@ -19,7 +20,24 @@ from ._owner_envelopes import OWNER_KEY_PROOF
 from ._signed_commands import PublicationJournal, SavedCommand, UncertainCommand
 from ._root_admission import PairedAdmissionProof, RootAdmissions, open_recovery_code
 from ._root_replacement import RootReplacements
+from ._root_read_set import CONTEXT_READS, RootReadSet
+from ._key_operation_proof import OperationProofContext
 from ._device_approval import DeviceApprovals
+
+
+_PROOF_MUTATIONS = frozenset({
+    "e2eeBootstrap", "e2eeApproveDevice", "e2eeAddDeviceByKey", "e2eeRevokeDevice",
+    "e2eeEnrollDevice", "e2eeCreateInvitation", "e2eeRequestInvitation", "e2eeApproveInvitation",
+    "e2eeRevokeInvitation", "e2eeChangeProjectPolicy", "e2eeArchiveProject", "e2eeRemoveMember",
+    "e2eeCreateOrganization", "e2eeCreateProject", "e2eeSaveTrust",
+    "e2eeRegisterOwnerKey", "e2eeRegisterOwnerCandidate", "e2eeInvalidateOwnerCustody",
+    "e2eeSaveOwnerKeyring", "e2eeSaveOwnerManifest", "e2eeCreateOwnerGate", "e2eeSaveOwnerPreparation",
+    "e2eeSaveOwnerEnvelopes", "e2eeSaveEnvelopes", "e2eeRotateOwnerScope", "e2eeRotateScope",
+})
+
+_FLAT_PROOF_MUTATIONS = frozenset({
+    "e2eeWriteRecords", "e2eeBeginObject", "e2eePutObjectCapability", "e2eeFinalizeObject", "e2eeDeleteObject",
+})
 
 
 class _ScopeResponse(dict[str, Any]):
@@ -62,11 +80,13 @@ class DeviceSession:
         }
         self._device_approval = "unregistered"
         self.recovery: dict[str, Any] | None = None
+        self._root_read_set = None
+        self._proof_read_set: RootReadSet | None = None
         self.state = "needs_setup"
         self._participants = ScopeParticipants(self)
         self.trust.participants = self._participants
         self.owner_access = OwnerAccess(self)
-        self.trust.certificate_projection = self.owner_access.account.projection
+        self.trust.certificate_projection = self.owner_access.reads.projection
         self.trust.projected_device = self.owner_access.current.projected_device
         self.trust.current_device = self.owner_access.current.current_device
         self.trust.current_recovery = self.owner_access.current.current_recovery
@@ -91,6 +111,28 @@ class DeviceSession:
     def call(
         self, operation: str, *, body: dict[str, Any] | None = None, **parameters: Any
     ) -> _ScopeResponse:
+        context = self._root_read_set or self._proof_read_set
+        if self._root_read_set is not None and body is not None:
+            raise E2eeError("root_replacement_dependency_missing")
+        if body is None and (self._root_read_set is not None or operation in CONTEXT_READS):
+            organization = parameters.get("organization_id")
+            if context is None and operation.startswith("e2eeGetOwner"):
+                self.load_owner_context(organization=organization)
+                context = self._proof_read_set
+            if context is not None:
+                self._check_current()
+                if operation == "e2eeGetOwnerCustody":
+                    root = context.recovery
+                    proof = self.owner_access.reads._operation
+                    if proof is None:
+                        raise E2eeError("operation_proof_context_missing")
+                    value = {"recovery_id": root["recovery_id"], "recovery_generation": root["generation"],
+                             "root_revision": root["generation"], "custody_revision": proof.subject(self.subject)["custody_revision"]}
+                else:
+                    value = context.read(operation, **parameters)
+                return _ScopeResponse(value, dict(self._scope_metadata))
+        if self._root_read_set is not None:
+            raise E2eeError("root_replacement_dependency_missing")
         scope = parameters.get("scope_id", parameters.get("project_id"))
         identifiers = (
             [scope] if isinstance(scope, str) else
@@ -110,6 +152,26 @@ class DeviceSession:
                 self._deny_scope(scope, captured[scope])
             raise
         self._check_current()
+        if operation in _PROOF_MUTATIONS or operation in _FLAT_PROOF_MUTATIONS or operation == "e2eeApplyRootReplacement":
+            self._proof_read_set = None
+            self.owner_access.reads._operation = None
+        if operation in _PROOF_MUTATIONS and (
+                not isinstance(response.get("proof_delta"), dict) or "result" not in response
+                or response["result"] is not None and not isinstance(response["result"], dict)):
+            raise E2eeError("operation_proof_context_missing")
+        if operation in _FLAT_PROOF_MUTATIONS and not isinstance(response.get("proof_delta"), dict):
+            raise E2eeError("operation_proof_context_missing")
+        proof = response.get("proof_context", response.get("proof_delta"))
+        if isinstance(proof, dict):
+            self.receive_proof_context(proof)
+        elif (operation in {"e2eeWriteRecords", "e2eeGetInvitation", "e2eeGetObject", "e2eeGetObjectCapability"}
+              or operation == "e2eeReadRecords" and (body or {}).get("include_keys") is True):
+            raise E2eeError("operation_proof_context_missing")
+        if "proof_delta" in response and "result" in response:
+            result = response["result"]
+            if not isinstance(response["proof_delta"], dict) or result is not None and not isinstance(result, dict):
+                raise E2eeError("invalid_response")
+            response = result if result is not None else {}
         devices = response.get("devices")
         if isinstance(devices, list):
             if isinstance(scope, str):
@@ -126,6 +188,56 @@ class DeviceSession:
                 self._deny_scope(identifier, captured[identifier])
         return _ScopeResponse(response, captured)
 
+    def receive_proof_context(self, value: Any) -> RootReadSet:
+        self._check_current()
+        context = RootReadSet.from_context(self, value)
+        proof = OperationProofContext.from_wire(self, context.proof_context) if context.proof_context else None
+        context.remember(self, proof)
+        self._proof_read_set = context
+        self.owner_access.reads._operation = proof
+        return context
+
+    def load_owner_context(self, *, organization: str | None = None, subject: str | None = None,
+                           gate_ids: list[str] | None = None, operation_ids: list[str] | None = None) -> RootReadSet:
+        from ._root_operation import ProtectedRootDependencies
+
+        self._check_current()
+        if self._root_read_set is not None:
+            raise E2eeError("root_replacement_dependency_missing")
+        response = self._api.call("e2eeReadOwnerContext", body={
+            **({"organization_ids": [organization]} if organization is not None else {}),
+            "subject_ids": list(dict.fromkeys([self.subject, *([subject] if subject is not None else [])])),
+            "references": [], "gate_ids": gate_ids or [], "operation_ids": operation_ids or [],
+            "dependency_manifest": ProtectedRootDependencies.for_session(self),
+        })
+        return self.receive_proof_context(response)
+
+    def prepare_scope_context(self, scope: str) -> None:
+        if (self._root_read_set is None and self._proof_read_set is not None
+                and scope not in self._proof_read_set.scopes):
+            self._proof_read_set = None
+            self.owner_access.reads._operation = None
+        self.require_scope_context(scope)
+
+    def require_scope_context(self, scope: str, *, acquire: bool = True) -> None:
+        from ._root_operation import ProtectedRootDependencies
+
+        context = self._root_read_set or self._proof_read_set
+        if context is not None:
+            if not context.proof_context:
+                raise E2eeError("operation_proof_context_missing")
+            context.scope(scope)
+            return
+        if not acquire:
+            raise E2eeError("operation_proof_context_missing")
+        self.call("e2eeReadRecords", body={
+            "scopes": [{"scope_id": scope, "record_ids": []}], "include_keys": True,
+            "dependency_manifest": ProtectedRootDependencies.for_session(self),
+        })
+        if self._proof_read_set is None or not self._proof_read_set.proof_context:
+            raise E2eeError("operation_proof_context_missing")
+        self._proof_read_set.scope(scope)
+
     def _deny_scope(self, scope: str, captured: dict[str, Any] | None) -> None:
         with self._scope_state_lock:
             if self._scope_metadata.get(scope) is not captured:
@@ -133,6 +245,11 @@ class DeviceSession:
             self._scope_metadata.pop(scope, None)
             self._key_bundles.pop(scope, None)
             self.trust.forget_scope(scope)
+            self._participants.forget_scope(scope)
+            if self._proof_read_set is not None:
+                self._proof_read_set = replace(self._proof_read_set, scopes={
+                    identifier: value for identifier, value in self._proof_read_set.scopes.items() if identifier != scope
+                })
             for identity in list(self._scope_device_material):
                 if identity[0] == scope:
                     self._scope_device_material.pop(identity)
@@ -237,6 +354,9 @@ class DeviceSession:
 
     def refresh(self) -> str:
         self._check_current()
+        if self._root_read_set is None:
+            self._proof_read_set = None
+            self.owner_access.reads._operation = None
         self.state = "pending_approval"
         self._device_approval = "unregistered"
         with self.store.credential(self._storage_key) as item:
@@ -593,6 +713,10 @@ class DeviceSession:
 
     def scope_metadata(self, scope: str, *, refresh: bool = False) -> dict[str, Any]:
         self.require_approved()
+        if self._root_read_set is not None:
+            return self._root_read_set.scope(scope)["scope"]
+        if self._root_read_set is None and self._proof_read_set is None:
+            self.require_scope_context(scope)
         owner = self._scope_owner(scope)
         if refresh or not owner:
             response = self.call("e2eeGetScope", scope_id=scope)
@@ -1278,6 +1402,9 @@ class DeviceSession:
     def _device_material(
         self, scope: str | None, identifier: str, *, refresh: bool = False
     ) -> dict[str, Any]:
+        context = self._root_read_set or self._proof_read_set
+        if context is not None:
+            return context.device(scope, identifier)
         cached = (
             self._devices.get(identifier) if scope is None
             else self._scope_device_material.get((scope, identifier))
@@ -1301,6 +1428,9 @@ class DeviceSession:
     def _recovery_material(
         self, scope: str | None, identifier: str
     ) -> dict[str, Any] | None:
+        context = self._root_read_set or self._proof_read_set
+        if context is not None:
+            return context.root(scope, identifier)
         if scope is None:
             recovery = self.call("e2eeGetRecovery")
             if recovery.get("account_subject", self.subject) != self.subject:
@@ -1312,6 +1442,12 @@ class DeviceSession:
             )["recoveries"]
         self.trust.remember_recoveries(roots, scope)
         return self.trust._recovery_proofs.get((scope, identifier))
+
+    def _historical_device_material(self, scope: str | None, identifier: str) -> dict[str, Any]:
+        context = self._root_read_set or self._proof_read_set
+        if context is not None:
+            return context.historical_evidence.device(identifier)
+        return self._device_material(scope, identifier)
 
     def device(
         self, scope: str | None, identifier: str, *,
@@ -1494,6 +1630,7 @@ class DeviceSession:
 
     def scope_key(self, scope: str, epoch: int) -> bytearray:
         self.require_approved()
+        self.require_scope_context(scope)
         owner = self._scope_owner(scope)
         with self._scope_state_lock:
             if self._scope_metadata.get(scope) is not owner:
@@ -1637,6 +1774,9 @@ class DeviceSession:
             self._key_bundles.clear()
             self._scope_device_material.clear()
             self.trust.clear_scope_trust()
+            self._proof_read_set = None
+            self._root_read_set = None
+            self.owner_access.reads._operation = None
         self.owner_access.clear()
         if self._device is not None:
             self._device.clear()

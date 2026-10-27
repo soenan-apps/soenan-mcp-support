@@ -4,7 +4,6 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
-from typing_extensions import Self
 
 from ..models.e2_ee_owner_source_manifest_format import E2EeOwnerSourceManifestFormat
 
@@ -70,7 +69,7 @@ class E2EeOwnerSourceManifest:
         return field_dict
 
     @classmethod
-    def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.e2_ee_owner_authority import E2EeOwnerAuthority
         from ..models.e2_ee_owner_issuer_admission import E2EeOwnerIssuerAdmission
         from ..models.e2_ee_owner_source_index_entry import E2EeOwnerSourceIndexEntry

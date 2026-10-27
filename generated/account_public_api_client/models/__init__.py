@@ -258,6 +258,37 @@ from .owner_handoff_gate_response import OwnerHandoffGateResponse
 from .owner_issuer_admission import OwnerIssuerAdmission
 from .owner_issuer_admission_root import OwnerIssuerAdmissionRoot
 from .owner_issuer_certificate_reference import OwnerIssuerCertificateReference
+from .owner_key_candidate import OwnerKeyCandidate
+from .owner_key_custody_target import OwnerKeyCustodyTarget
+from .owner_key_custody_target_purpose import OwnerKeyCustodyTargetPurpose
+from .owner_key_dependency_outcome import OwnerKeyDependencyOutcome
+from .owner_key_gate_offer import OwnerKeyGateOffer
+from .owner_key_gate_slot import OwnerKeyGateSlot
+from .owner_key_gate_slot_result import OwnerKeyGateSlotResult
+from .owner_key_membership import OwnerKeyMembership
+from .owner_key_operation_complete import OwnerKeyOperationComplete
+from .owner_key_operation_event import OwnerKeyOperationEvent
+from .owner_key_operation_prepared import OwnerKeyOperationPrepared
+from .owner_key_operation_proof_event import OwnerKeyOperationProofEvent
+from .owner_key_operation_receipt import OwnerKeyOperationReceipt
+from .owner_key_operation_rejection import OwnerKeyOperationRejection
+from .owner_key_operation_rejection_reason import OwnerKeyOperationRejectionReason
+from .owner_key_organization_state import OwnerKeyOrganizationState
+from .owner_key_reference import OwnerKeyReference
+from .owner_key_reference_kind import OwnerKeyReferenceKind
+from .owner_key_reference_result import OwnerKeyReferenceResult
+from .owner_key_root_receipt import OwnerKeyRootReceipt
+from .owner_key_root_receipt_outcome import OwnerKeyRootReceiptOutcome
+from .owner_key_scope_authorization_result import OwnerKeyScopeAuthorizationResult
+from .owner_key_scope_authorization_target import OwnerKeyScopeAuthorizationTarget
+from .owner_key_scope_authorization_target_basis import (
+    OwnerKeyScopeAuthorizationTargetBasis,
+)
+from .owner_key_scope_authorization_target_operation_class import (
+    OwnerKeyScopeAuthorizationTargetOperationClass,
+)
+from .owner_key_subject_state import OwnerKeySubjectState
+from .owner_key_target_result import OwnerKeyTargetResult
 from .owner_organization_admission_signed_fields import (
     OwnerOrganizationAdmissionSignedFields,
 )
@@ -457,9 +488,6 @@ __all__ = (
     "IssueOrganizationInvitationSecFetchSite",
     "LeaveOrganizationSecFetchSite",
     "LegalTermsVersion",
-    "MCPAuthorization",
-    "MCPAuthorizationList",
-    "MCPOAuthScope",
     "MailLinkAccepted",
     "MailLinkAcceptedStatus",
     "ManualCustomerAllocation",
@@ -475,6 +503,9 @@ __all__ = (
     "ManualInvoiceContractValidity",
     "ManualInvoiceCustomerDetail",
     "ManualInvoicePage",
+    "MCPAuthorization",
+    "MCPAuthorizationList",
+    "MCPOAuthScope",
     "OAuthAuthorizationApproval",
     "OAuthAuthorizationDecision",
     "OAuthAuthorizationRequest",
@@ -553,6 +584,33 @@ __all__ = (
     "OwnerIssuerAdmission",
     "OwnerIssuerAdmissionRoot",
     "OwnerIssuerCertificateReference",
+    "OwnerKeyCandidate",
+    "OwnerKeyCustodyTarget",
+    "OwnerKeyCustodyTargetPurpose",
+    "OwnerKeyDependencyOutcome",
+    "OwnerKeyGateOffer",
+    "OwnerKeyGateSlot",
+    "OwnerKeyGateSlotResult",
+    "OwnerKeyMembership",
+    "OwnerKeyOperationComplete",
+    "OwnerKeyOperationEvent",
+    "OwnerKeyOperationPrepared",
+    "OwnerKeyOperationProofEvent",
+    "OwnerKeyOperationReceipt",
+    "OwnerKeyOperationRejection",
+    "OwnerKeyOperationRejectionReason",
+    "OwnerKeyOrganizationState",
+    "OwnerKeyReference",
+    "OwnerKeyReferenceKind",
+    "OwnerKeyReferenceResult",
+    "OwnerKeyRootReceipt",
+    "OwnerKeyRootReceiptOutcome",
+    "OwnerKeyScopeAuthorizationResult",
+    "OwnerKeyScopeAuthorizationTarget",
+    "OwnerKeyScopeAuthorizationTargetBasis",
+    "OwnerKeyScopeAuthorizationTargetOperationClass",
+    "OwnerKeySubjectState",
+    "OwnerKeyTargetResult",
     "OwnerOrganizationAdmissionSignedFields",
     "OwnerOrganizationAdmissionSignedFieldsOperation",
     "OwnerSourceSelection",

@@ -4,7 +4,6 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
-from typing_extensions import Self
 
 from ..models.authenticated_product_session_kind import AuthenticatedProductSessionKind
 
@@ -63,7 +62,7 @@ class AuthenticatedProductSession:
         return field_dict
 
     @classmethod
-    def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.product_session_metadata import ProductSessionMetadata
         from ..models.product_session_organization import ProductSessionOrganization
         from ..models.product_session_user import ProductSessionUser

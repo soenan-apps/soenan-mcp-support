@@ -4,7 +4,6 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
-from typing_extensions import Self
 
 from ..models.owner_custody_evidence_operation import OwnerCustodyEvidenceOperation
 
@@ -76,9 +75,9 @@ class OwnerCustodyEvidence:
         target_identity_digest = self.target_identity_digest
 
         target: dict[str, Any]
-        if isinstance(self.target, OwnerCustodyDeviceIdentity) or isinstance(
-            self.target, OwnerCustodyRootIdentity
-        ):
+        if isinstance(self.target, OwnerCustodyDeviceIdentity):
+            target = self.target.to_dict()
+        elif isinstance(self.target, OwnerCustodyRootIdentity):
             target = self.target.to_dict()
         else:
             target = self.target.to_dict()
@@ -102,7 +101,7 @@ class OwnerCustodyEvidence:
         return field_dict
 
     @classmethod
-    def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.owner_custody_device_identity import OwnerCustodyDeviceIdentity
         from ..models.owner_custody_organization_admission import (
             OwnerCustodyOrganizationAdmission,

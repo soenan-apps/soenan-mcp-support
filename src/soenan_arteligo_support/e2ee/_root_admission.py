@@ -173,7 +173,7 @@ class RootAdmissions:
                 continue
             digest = public.digest(session.crypto, "recovery_public")
             try:
-                session.owner_access.account.witness(session.subject, digest)
+                session.owner_access.reads.witness(session.subject, digest)
             except E2eeError as error:
                 if (error.code != "owner_custody_evidence_missing"
                         or (root.generation != 1 and not session.trust.has_private_recovery(root))):

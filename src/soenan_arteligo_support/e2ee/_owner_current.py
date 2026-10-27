@@ -4,11 +4,11 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Mapping
 
-from account_public_api_client.models.owner_custody_device_identity import OwnerCustodyDeviceIdentity
-from account_public_api_client.models.owner_custody_evidence import OwnerCustodyEvidence
-from account_public_api_client.models.owner_custody_response import OwnerCustodyResponse
-from account_public_api_client.models.owner_custody_root_identity import OwnerCustodyRootIdentity
-from account_public_api_client.models.owner_custody_organization_admission import OwnerCustodyOrganizationAdmission
+from arteligo_public_api_client.models.owner_custody_device_identity import OwnerCustodyDeviceIdentity
+from arteligo_public_api_client.models.owner_custody_evidence import OwnerCustodyEvidence
+from arteligo_public_api_client.models.owner_custody_response import OwnerCustodyResponse
+from arteligo_public_api_client.models.owner_custody_root_identity import OwnerCustodyRootIdentity
+from arteligo_public_api_client.models.owner_custody_organization_admission import OwnerCustodyOrganizationAdmission
 
 from ._crypto import E2eeError, encode, wipe
 from ._organization_admission import OrganizationAdmission
@@ -83,6 +83,10 @@ class _CustodyProofs:
         if allowed_certificates is not None:
             self.allowed_certificates = (allowed_certificates if self.allowed_certificates is None
                                          else self.allowed_certificates & allowed_certificates)
+        if issuer_evidence is None and self.session._root_read_set is not None and (
+            isinstance(snapshot, _HistoricalCustody) or original is not None
+        ):
+            issuer_evidence = self.session._root_read_set.historical_evidence
         self.issuer_evidence = issuer_evidence
         self.certificates: set[OriginalAdmissionCertificate] = set()
         self.maximum_revision = snapshot.custody_revision if maximum_revision is None else maximum_revision
@@ -97,7 +101,7 @@ class _CustodyProofs:
         if fact is None:
             latest = self.snapshot.latest_root_transition if isinstance(self.snapshot, OwnerCustodyResponse) else None
             fact = (latest if isinstance(latest, OwnerCustodyEvidence) and latest.evidence_digest == digest
-                    else self.owner.account.witness(self.snapshot.account_subject, digest))
+                    else self.owner.reads.witness(self.snapshot.account_subject, digest))
         if (fact.account_subject != self.snapshot.account_subject or fact.evidence_digest != digest
                 or type(fact.accepted_custody_revision) is not int or fact.accepted_custody_revision < 1
                 or (self.maximum_revision is not None and fact.accepted_custody_revision > self.maximum_revision)):
@@ -356,8 +360,9 @@ class OwnerCurrentCustody:
     def __init__(self, owner: OwnerAccess):
         self.owner, self.session = owner, owner.session
 
-    def observe(self, organization: str, subject: str, head: OwnerAuthorityHead) -> OwnerCustodyResponse:
-        snapshot = self.owner.account.custody(organization, subject, head.read_capability)
+    def observe(self, organization: str, subject: str, head: OwnerAuthorityHead,
+                *, proof_scope: str | None = None) -> OwnerCustodyResponse:
+        snapshot = self.owner.reads.custody(organization, subject, head.read_capability, proof_scope=proof_scope)
         if snapshot.head.to_dict() != head.to_dict():
             raise E2eeError("owner_authority_changed")
         return snapshot
@@ -383,8 +388,8 @@ class OwnerCurrentCustody:
         recovery = self.session.call("e2eeGetRecovery")
         if self.owner.verifier.root(recovery, self.session.subject) != root:
             raise E2eeError("owner_custody_changed")
-        head = self.owner.account.authority(
-            organization, self.owner.account.capability(organization),
+        head = self.owner.reads.authority(
+            organization, self.owner.reads.capability(organization),
         )
         current = self.qualify(
             organization, self.session.public, root, head, expected_root=root, proof_scope=scope,
@@ -508,7 +513,7 @@ class OwnerCurrentCustody:
             raise E2eeError("organization_required")
         suggested = authority_head(self.session.call(
             "e2eeGetOwnerAuthority", organization_id=organization)["owner_authority"], organization)
-        head = self.owner.account.authority(organization, suggested.read_capability)
+        head = self.owner.reads.authority(organization, suggested.read_capability)
         if head != suggested:
             raise E2eeError("owner_authority_changed")
         return head
@@ -546,7 +551,7 @@ class OwnerCurrentCustody:
         if scope is not None:
             head = authority or self._scope_authority(scope)
             organization = head.organization_id
-            snapshot = self.observe(organization, root.subject, head)
+            snapshot = self.observe(organization, root.subject, head, proof_scope=scope)
             proofs = _CustodyProofs(self.owner, snapshot, anchor, self._anchors(organization, anchor),
                 proof_scope=scope)
             latest = snapshot.latest_root_transition
@@ -705,7 +710,7 @@ class OwnerCurrentCustody:
         subject, identifier = device["account_subject"], device["device_id"]
         if anchor.subject != subject:
             raise E2eeError("recovery_subject_mismatch")
-        snapshot = self.observe(organization, subject, head)
+        snapshot = self.observe(organization, subject, head, proof_scope=proof_scope)
         proofs = _CustodyProofs(self.owner, snapshot, anchor,
             self._anchors(organization, anchor, known_roots, proof_scope=proof_scope),
             proof_scope=proof_scope, issuer_evidence=issuer_evidence)

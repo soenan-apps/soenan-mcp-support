@@ -7,7 +7,6 @@ from uuid import UUID
 
 from attrs import define as _attrs_define
 from dateutil.parser import isoparse
-from typing_extensions import Self
 
 from ..models.manual_customer_invoice_status import ManualCustomerInvoiceStatus
 
@@ -95,7 +94,7 @@ class ManualCustomerInvoice:
         return field_dict
 
     @classmethod
-    def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.manual_external_reference import ManualExternalReference
         from ..models.manual_invoice_contract import ManualInvoiceContract
 

@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from uuid import UUID
 
 from attrs import define as _attrs_define
-from typing_extensions import Self
 
 from ..models.commerce_channel import CommerceChannel
 from ..models.commerce_purchase_attempt_state import CommercePurchaseAttemptState
@@ -64,7 +63,7 @@ class CommercePurchaseAttempt:
         return field_dict
 
     @classmethod
-    def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.commerce_provider_start import CommerceProviderStart
 
         d = dict(src_dict)

@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from uuid import UUID
 
 from attrs import define as _attrs_define
-from typing_extensions import Self
 
 from ..types import UNSET, Unset
 
@@ -34,9 +33,9 @@ class CommerceVerifyRequest:
         from ..models.commerce_google_evidence import CommerceGoogleEvidence
 
         evidence: dict[str, Any]
-        if isinstance(self.evidence, CommerceAppleEvidence) or isinstance(
-            self.evidence, CommerceGoogleEvidence
-        ):
+        if isinstance(self.evidence, CommerceAppleEvidence):
+            evidence = self.evidence.to_dict()
+        elif isinstance(self.evidence, CommerceGoogleEvidence):
             evidence = self.evidence.to_dict()
         else:
             evidence = self.evidence.to_dict()
@@ -58,7 +57,7 @@ class CommerceVerifyRequest:
         return field_dict
 
     @classmethod
-    def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.commerce_apple_evidence import CommerceAppleEvidence
         from ..models.commerce_google_evidence import CommerceGoogleEvidence
         from ..models.commerce_stripe_evidence import CommerceStripeEvidence

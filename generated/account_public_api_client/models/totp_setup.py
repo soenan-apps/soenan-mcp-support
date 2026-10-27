@@ -6,7 +6,6 @@ from typing import Any, TypeVar
 
 from attrs import define as _attrs_define
 from dateutil.parser import isoparse
-from typing_extensions import Self
 
 T = TypeVar("T", bound="TOTPSetup")
 
@@ -44,7 +43,7 @@ class TOTPSetup:
         return field_dict
 
     @classmethod
-    def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
         secret = d.pop("secret")
 

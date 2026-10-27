@@ -4,7 +4,6 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
-from typing_extensions import Self
 
 from ..models.e2_ee_record_kind import E2EeRecordKind
 
@@ -81,7 +80,7 @@ class E2EeEncryptedRecord:
         return field_dict
 
     @classmethod
-    def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.e2_ee_signed_command import E2EeSignedCommand
 
         d = dict(src_dict)

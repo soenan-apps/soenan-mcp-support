@@ -7,8 +7,8 @@ from ._owner_envelopes import OWNER_KEY_PROOF
 from ._owner_protocol import GENERATION_BLOCKERS, OwnerAuthorityHead, SignedEvidence
 from ._signed_commands import SavedCommand, UncertainCommand
 from ._trust import _CurrentRecipientSet, _TrustPathUnavailable
-from account_public_api_client.models.owner_custody_evidence import OwnerCustodyEvidence
-from account_public_api_client.models.owner_custody_root_identity import OwnerCustodyRootIdentity
+from arteligo_public_api_client.models.owner_custody_evidence import OwnerCustodyEvidence
+from arteligo_public_api_client.models.owner_custody_root_identity import OwnerCustodyRootIdentity
 
 if TYPE_CHECKING:
     from ._owner_access import OwnerAccess
@@ -104,7 +104,7 @@ class OwnerOrganizationKeys:
         subject = device["account_subject"]
         if subject == head.owner_subject:
             raise E2eeError("owner_key_proof_required")
-        permission = self.owner.account.custody(organization, subject, head.read_capability)
+        permission = self.owner.reads.custody(organization, subject, head.read_capability)
         if permission.head.to_dict() != head.to_dict() or permission.can_manage_organization_keys is not True:
             raise E2eeError("organization_key_authority_required")
         scope = None if subject == self.session.subject else organization

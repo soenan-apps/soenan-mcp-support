@@ -4,7 +4,6 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
-from typing_extensions import Self
 
 from ..models.e2_ee_record_batch_format_version import E2EeRecordBatchFormatVersion
 from ..types import UNSET, Unset
@@ -94,7 +93,7 @@ class E2EeRecordBatch:
         return field_dict
 
     @classmethod
-    def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.e2_ee_content_record_write import E2EeContentRecordWrite
         from ..models.e2_ee_deletion_marker import E2EeDeletionMarker
         from ..models.e2_ee_record_precondition import E2EeRecordPrecondition

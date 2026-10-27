@@ -372,7 +372,7 @@ class KeyTrust:
         )
         self._save(kind, identifier, {"device_id": device_id, "scope_id": scope})
 
-    def observe_account_revocations(self, subject: str, device_ids: list[str]) -> None:
+    def observe_custody_revocations(self, subject: str, device_ids: list[str]) -> None:
         for identifier in device_ids:
             if subject == self.owner_subject:
                 self.remember_revoked(identifier)

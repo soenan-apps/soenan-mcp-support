@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from uuid import UUID
 
 from attrs import define as _attrs_define
-from typing_extensions import Self
 
 from ..models.commerce_begin_response_outcome import CommerceBeginResponseOutcome
 from ..types import UNSET, Unset
@@ -64,7 +63,7 @@ class CommerceBeginResponse:
         return field_dict
 
     @classmethod
-    def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.commerce_purchase_attempt import CommercePurchaseAttempt
 
         d = dict(src_dict)

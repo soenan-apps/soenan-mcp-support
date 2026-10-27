@@ -4,7 +4,6 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
-from typing_extensions import Self
 
 from ..models.e2_ee_owner_binding_proof_operation import E2EeOwnerBindingProofOperation
 from ..types import UNSET, Unset
@@ -126,7 +125,7 @@ class E2EeOwnerBindingProof:
         return field_dict
 
     @classmethod
-    def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.e2_ee_device import E2EeDevice
         from ..models.e2_ee_owner_authority import E2EeOwnerAuthority
         from ..models.e2_ee_owner_committed_export_reference import (

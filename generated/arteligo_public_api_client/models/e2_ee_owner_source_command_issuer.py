@@ -4,7 +4,6 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
-from typing_extensions import Self
 
 from ..models.e2_ee_owner_source_command_issuer_operation import (
     E2EeOwnerSourceCommandIssuerOperation,
@@ -58,7 +57,7 @@ class E2EeOwnerSourceCommandIssuer:
         return field_dict
 
     @classmethod
-    def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.e2_ee_owner_issuer_admission import E2EeOwnerIssuerAdmission
         from ..models.e2_ee_signed_device_input import E2EeSignedDeviceInput
 

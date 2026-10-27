@@ -31,50 +31,32 @@ def _require_terminal() -> None:
 def _verify_owner_candidate_references(
     oauth: ProfileVault, organization: str, candidate_id: str
 ) -> dict[str, int | str]:
-    from arteligo_public_api_client.models.e2_ee_owner_candidate_offer import (
-        E2EeOwnerCandidateOffer,
-    )
-
-    from ._api import GeneratedAPI
-    from ._owner_protocol import OwnerBinding, OwnerOperation
-
     if not organization or not candidate_id:
         raise E2eeError("invalid_input")
-    response = GeneratedAPI(oauth.bind()).call(
-        "e2eeGetOwnerCandidates", organization_id=organization
+    session = open_session(
+        account_origin=oauth.account_origin, arteligo_origin=oauth.arteligo_origin,
+        store=oauth.store, maintain_owner_access=False,
     )
-    if not isinstance(response, dict):
-        raise E2eeError("invalid_response")
-    candidates = response.get("candidates")
-    if not isinstance(candidates, list) or not candidates:
-        raise E2eeError("owner_candidate_mismatch")
-    matches = []
-    for candidate in candidates:
-        if not isinstance(candidate, dict):
-            raise E2eeError("invalid_owner_evidence")
-        binding = OwnerBinding.parse(candidate.get("offer"))
-        if (binding.operation is not OwnerOperation.OFFER
-                or not isinstance(binding.body, E2EeOwnerCandidateOffer)):
-            raise E2eeError("invalid_owner_evidence")
-        if not binding.body.candidate_id:
-            raise E2eeError("invalid_owner_evidence")
-        if binding.body.candidate_id == candidate_id:
-            matches.append((candidate, binding))
-    if len(matches) != 1:
-        raise E2eeError("owner_candidate_mismatch")
-    candidate, binding = matches[0]
-    if (candidate.get("state") != "qualified"
-            or binding.body.organization_id != organization):
-        raise E2eeError("owner_candidate_mismatch")
-    admission = binding.original_admission
-    return {
-        "status": "passed",
-        "scope": "production_issuer_reference_resolution",
-        "candidate_count": 1,
-        "root_generation": binding.body.recovery_generation,
-        "reference_count": len(admission.certificates)
-        + (admission.root_evidence_digest is not None),
-    }
+    try:
+        session.load_owner_context(organization=organization)
+        candidates = session.call("e2eeGetOwnerCandidates", organization_id=organization).get("candidates")
+        if not isinstance(candidates, list):
+            raise E2eeError("invalid_response")
+        from ._owner_protocol import OwnerBinding
+
+        matches = [candidate for candidate in candidates
+                   if OwnerBinding.parse(candidate.get("offer")).body.candidate_id == candidate_id]
+        if len(matches) != 1 or matches[0].get("state") != "qualified":
+            raise E2eeError("owner_candidate_mismatch")
+        binding = session.owner_access.verifier.candidate(organization, matches[0])
+        admission = binding.original_admission
+        return {
+            "status": "passed", "scope": "production_issuer_reference_resolution", "candidate_count": 1,
+            "root_generation": binding.body.recovery_generation,
+            "reference_count": len(admission.certificates) + (admission.root_evidence_digest is not None),
+        }
+    finally:
+        session.lock()
 
 
 def main() -> int:
@@ -186,7 +168,7 @@ def main() -> int:
                 profile=args.profile,
                 store=store,
                 recover=recover,
-                maintain_owner_access=args.command not in {"import-owner-handoff", "resume-owner-import"},
+                maintain_owner_access=args.command not in {"import-owner-handoff", "resume-owner-import", "replace-addition-key"},
             )
 
         if args.command == "mcp-grant":

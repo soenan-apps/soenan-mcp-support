@@ -46,7 +46,7 @@ def open_session(
     except BaseException:
         session.lock()
         raise
-    if maintain_owner_access and session.state == "approved":
+    if maintain_owner_access and session.state == "approved" and not session.recovery_replacement_pending:
         try:
             session.owner_access.maintain()
         except BaseException:

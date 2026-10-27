@@ -99,6 +99,7 @@ class EncryptedRecords:
         value: dict[str, Any],
         immutable: bool = False,
     ) -> dict[str, Any]:
+        self.session.prepare_scope_context(scope)
         with self.session.owner_access.publications.key(scope, key_epoch) as publication:
             return self._seal(
                 scope, key=publication.key, record_id=record_id, kind=kind, expected_revision=expected_revision,
@@ -180,6 +181,7 @@ class EncryptedRecords:
         verified: dict[tuple[str, ...], dict[str, Any]] | None = None,
     ) -> OpenedRecord:
         proof = (commands or {}).get(wire.get("command_id"))
+        self.session.require_scope_context(scope, acquire=False)
         if proof is not None:
             signed = proof["command"]
             operation = proof["operation"]
@@ -297,6 +299,8 @@ class EncryptedRecords:
 
     def _open_page(self, scope: str, page: _ScopeResponse) -> list[dict[str, Any]]:
         context = page.get("key_context")
+        if not isinstance(page.get("proof_context"), dict):
+            raise E2eeError("operation_proof_context_missing")
         if context is not None:
             for bundle in context.get("key_scopes", []) + context.get("scopes", []):
                 if "error" not in bundle:
@@ -333,6 +337,7 @@ class EncryptedRecords:
         self, scopes: dict[str, list[str]], *, capture_signed_records: bool = False,
     ) -> tuple[dict[str, dict[str, Any]], list[dict[str, Any]] | None]:
         signed_records = None
+        from ._root_operation import ProtectedRootDependencies
         self.session.require_approved()
         if (
             not scopes
@@ -349,6 +354,7 @@ class EncryptedRecords:
                     for scope, ids in pending.items()
                 ],
                 "include_keys": True,
+                "dependency_manifest": ProtectedRootDependencies.for_session(self.session),
             },)
             returned = response["scopes"]
             if {value["scope_id"] for value in returned} != set(pending) or len(
@@ -521,6 +527,7 @@ class EncryptedRecords:
         publication: VerifiedPublicationKey | None = None,
     ) -> list[dict[str, Any]]:
         self.session.require_approved()
+        self.session.prepare_scope_context(scope)
         if not records or len(
             {value["record_id"] for value in records}
         ) != len(records):
@@ -574,6 +581,7 @@ class EncryptedRecords:
 
     def resume_write(self, scope: str) -> list[dict[str, Any]]:
         self.session.require_approved()
+        self.session.prepare_scope_context(scope)
         pending = self.session.publications.pending("record_publications", scope, "records_write")
         if pending is None:
             raise E2eeError("record_publication_not_pending")

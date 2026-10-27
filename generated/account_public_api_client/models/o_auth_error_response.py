@@ -4,7 +4,6 @@ from collections.abc import Mapping
 from typing import Any, TypeVar
 
 from attrs import define as _attrs_define
-from typing_extensions import Self
 
 from ..models.o_auth_error_response_error import OAuthErrorResponseError
 from ..types import UNSET, Unset
@@ -47,7 +46,7 @@ class OAuthErrorResponse:
         return field_dict
 
     @classmethod
-    def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
         error = OAuthErrorResponseError(d.pop("error"))
 

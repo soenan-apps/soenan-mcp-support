@@ -27,7 +27,8 @@ def generate(contract: Path, output: Path) -> None:
     subprocess.run(
         ["uvx", "--from", "openapi-python-client==0.28.0", "--with", "ruff==0.16.9",
          "openapi-python-client", "generate", "--path", str(contract), "--meta", "none",
-         "--output-path", str(output), "--overwrite"],
+         "--output-path", str(output), "--overwrite",
+         "--config", str(ROOT / "tool" / "public-contract-config.json")],
         cwd=ROOT, env=environment, check=True,
     )
 

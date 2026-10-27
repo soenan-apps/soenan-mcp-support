@@ -7,7 +7,6 @@ from uuid import UUID
 
 from attrs import define as _attrs_define
 from dateutil.parser import isoparse
-from typing_extensions import Self
 
 from ..types import UNSET, Unset
 
@@ -65,7 +64,7 @@ class PasskeyView:
         return field_dict
 
     @classmethod
-    def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
         passkey_id = UUID(d.pop("passkeyId"))
 

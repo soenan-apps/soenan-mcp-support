@@ -99,7 +99,7 @@ class OwnerRecovery:
 
     def capture_confirmations(self, organization: str) -> None:
         scopes = {value["project_id"]: value.get("owner_org") for value in self.session.scopes()}
-        head = self.owner.account.authority(organization, self.owner.account.capability(organization))
+        head = self.owner.reads.authority(organization, self.owner.reads.capability(organization))
         qualified: set[str] = set()
         for value in self.session.trust._endorsements:
             statement = SignedEvidence.parse(value)
@@ -126,20 +126,27 @@ class OwnerRecovery:
                 state.confirmed_sources.append(anchor)
                 self.owner.store.save(organization)
 
-    def source_evidence(self, organization: str, *, qualified: VerifiedCurrentDevice | None = None) -> OwnerSourceEvidence:
+    def source_evidence(self, organization: str, *, qualified: VerifiedCurrentDevice | None = None,
+                        historical_admission: OriginalIssuerAdmission | None = None) -> OwnerSourceEvidence:
         from ._owner_protocol import OwnerPreparation
 
         self.capture_confirmations(organization)
         state = self.owner.store.get(organization)
-        head = self.owner.account.authority(organization, self.owner.account.capability(organization))
+        head = self.owner.reads.authority(organization, self.owner.reads.capability(organization))
         if self.session.recovery is None:
             raise E2eeError("recovery_missing")
         root = self.owner.verifier.root(self.session.recovery, self.session.subject)
-        anchor = self.owner.current.independent_root(organization, self.session.public)
-        if qualified is None:
-            qualified = self.owner.current.qualify(organization, self.session.public, anchor, head, expected_root=root)
-        if qualified.root != root or qualified.device != self.session.public:
-            raise E2eeError("owner_custody_changed")
+        if historical_admission is None:
+            anchor = self.owner.current.independent_root(organization, self.session.public)
+            if qualified is None:
+                qualified = self.owner.current.qualify(organization, self.session.public, anchor, head, expected_root=root)
+            if qualified.root != root or qualified.device != self.session.public:
+                raise E2eeError("owner_custody_changed")
+            admission = qualified.original_admission
+        else:
+            admission = historical_admission
+            if admission.root.subject != self.session.subject or admission.root.origin != self.session.trust.origin:
+                raise E2eeError("owner_custody_changed")
         references = []
         covered: set[str] = set()
         for saved in state.manifests.values():
@@ -164,7 +171,7 @@ class OwnerRecovery:
                     or anchor.command.digest(self.crypto, "peer_trust") not in covered],
                  "manifests": [reference.document() for reference in references], "receipts": list(state.receipts),
                  "key_bindings": [key.public_binding() for key in state.keys],
-                 "issuer_admission": qualified.original_admission.document()}
+                 "issuer_admission": admission.document()}
         if state.source_anchor is not None:
             value["source_anchor"] = state.source_anchor.document()
         snapshot = self.root_history.digest()
@@ -183,9 +190,10 @@ class OwnerRecovery:
             "source_evidence": self.source_evidence(body["organization_id"], qualified=qualified).document(),
         }, body["recovery_root"]["encryption_public_key"])
 
-    def history(self, organization: str, *, qualified: VerifiedCurrentDevice | None = None) -> dict[str, Any]:
+    def history(self, organization: str, *, qualified: VerifiedCurrentDevice | None = None,
+                historical_admission: OriginalIssuerAdmission | None = None) -> dict[str, Any]:
         state = self.owner.store.get(organization)
-        sources = self.source_evidence(organization, qualified=qualified)
+        sources = self.source_evidence(organization, qualified=qualified, historical_admission=historical_admission)
         manifests = []
         for saved in state.manifests.values():
             manifests.append(OwnerStoredManifestReference(
@@ -300,12 +308,13 @@ class OwnerRecovery:
         self._restore_retained_bindings(recovery_secret)
         for scope in self._current_organizations():
             organization = scope["project_id"]
+            self.session.load_owner_context(organization=organization)
             proof = self.session.call("e2eeGetOwnerAuthority", organization_id=organization)
             suggested = authority_head(proof.get("owner_authority"), organization)
-            head = self.owner.account.authority(organization, suggested.read_capability)
+            head = self.owner.reads.authority(organization, suggested.read_capability)
             if head != suggested:
                 raise E2eeError("owner_authority_changed")
-            observed = self.owner.account.custody(organization, self.session.subject, head.read_capability)
+            observed = self.owner.reads.custody(organization, self.session.subject, head.read_capability)
             current_custody = custody(self.session.call("e2eeGetOwnerCustody", organization_id=organization))
             if observed.custody_revision != current_custody.custody_revision:
                 raise E2eeError("owner_custody_changed")
@@ -318,13 +327,13 @@ class OwnerRecovery:
                     private, sources = self._root_secret(binding, recovery_secret, OwnerIssuerEvidence.parse(proof.get("issuer_evidence")))
                 else:
                     private, sources = existing.secret_key, None
-                selected = self.owner.account.selected(organization, head.binding_digest)
+                selected = self.owner.reads.selected(organization, head.binding_digest)
                 if (not selected.matches(head) or binding.command.digest(self.crypto, binding.operation) != head.binding_digest):
                     raise E2eeError("owner_binding_mismatch")
                 if sources is not None:
                     self.restore_sources(organization, sources, binding)
                 self.owner.verifier.binding(organization, proof, head)
-                selected = self.owner.account.selected(organization, head.binding_digest).head
+                selected = self.owner.reads.selected(organization, head.binding_digest).head
                 self.owner.keyring.merge(organization, [OwnerKey(head.key_id, head.key_epoch, head.public_key, head.binding_digest, private, binding)])
                 if sources is not None:
                     self._restore_selected_history(organization, sources, recovery_secret)
@@ -340,7 +349,7 @@ class OwnerRecovery:
                         or binding.command.digest(self.crypto, OwnerOperation.OFFER) != entry.get("offer_digest")):
                     continue
                 try:
-                    self.owner.account.selected(organization, entry["offer_digest"])
+                    self.owner.reads.selected(organization, entry["offer_digest"])
                 except E2eeError as error:
                     if error.code != "owner_binding_not_selected":
                         raise
@@ -364,7 +373,7 @@ class OwnerRecovery:
         for reference in sources.key_bindings:
             if any(key.binding_digest == reference.binding_digest for key in self.owner.store.get(organization).keys):
                 continue
-            selected = self.owner.account.selected(organization, reference.binding_digest).head
+            selected = self.owner.reads.selected(organization, reference.binding_digest).head
             if reference.to_dict() != {name: selected.to_dict()[name] for name in reference.to_dict()}:
                 raise E2eeError("owner_keyring_mismatch")
             proof = self.session.call("e2eeGetOwnerBinding", organization_id=organization, binding_digest=reference.binding_digest)
@@ -441,7 +450,7 @@ class OwnerRecovery:
             self.root_history.verify_reference(sources.issuer_admission.root, sources.root_snapshot_digest)
         trusted_self_roots = self.owner.store.self_roots()
         for anchor in (*((sources.anchor,) if sources.anchor is not None else ()), *sources.confirmations):
-            issuer = self.session._device_material(None, anchor.command.device_id)
+            issuer = self.session._historical_device_material(None, anchor.command.device_id)
             if issuer["account_subject"] != self.session.subject:
                 raise E2eeError("account_mismatch")
             self.owner.verifier.signer(organization, anchor.command, issuer, root,
@@ -452,7 +461,7 @@ class OwnerRecovery:
                       if reference.operation_id is not None]
         restored = self._manifests(organization, references, sources=sources)
         for key in sources.key_bindings:
-            selected = self.owner.account.selected(organization, key.binding_digest)
+            selected = self.owner.reads.selected(organization, key.binding_digest)
             if key.to_dict() != {name: selected.head.to_dict()[name] for name in key.to_dict()}:
                 raise E2eeError("owner_keyring_mismatch")
         receipts = [self._receipt(organization, identifier) for identifier in sources.receipts]
@@ -472,7 +481,7 @@ class OwnerRecovery:
         self.owner.store.save(organization)
 
     def _receipt(self, organization: str, identifier: str):
-        receipt = committed_decision(self.owner.account.decision(organization, identifier), organization)
+        receipt = committed_decision(self.owner.reads.decision(organization, identifier), organization)
         if receipt.target_subject != self.session.subject:
             raise E2eeError("owner_receipt_mismatch")
         return receipt
@@ -493,7 +502,7 @@ class OwnerRecovery:
             manifest, evidence = retained.manifest, retained.issuer_evidence
         if manifest.body.manifest_id != reference.manifest_id or manifest.digest != reference.manifest_digest:
             raise E2eeError("owner_source_manifest_mismatch")
-        receipt = committed_decision(self.owner.account.decision(organization, reference.operation_id), organization)
+        receipt = committed_decision(self.owner.reads.decision(organization, reference.operation_id), organization)
         if receipt.preparation_id != reference.preparation_id:
             raise E2eeError("owner_receipt_mismatch")
         if retained is not None and retained.selection is not None:
@@ -600,7 +609,7 @@ class OwnerRecovery:
         restored = self._manifests(organization, references)
         keys = [OwnerKey.parse(value, organization, self.owner.capsules) for value in payload.get("keys", [])]
         for key in keys:
-            selected = self.owner.account.selected(organization, key.binding_digest)
+            selected = self.owner.reads.selected(organization, key.binding_digest)
             if key.public_binding() != {name: selected.head.to_dict()[name] for name in key.public_binding()}:
                 raise E2eeError("owner_keyring_mismatch")
         self.owner.keyring.merge(organization, keys)
@@ -629,7 +638,7 @@ class OwnerRecovery:
                 "device_id", "encryption_public_key", "signing_public_key",
             )) or body.get("challenge") != self.session._device.get("challenge"):
                 raise E2eeError("pairing_mismatch")
-            issuer = self.session._device_material(None, signed.device_id)
+            issuer = self.session._historical_device_material(None, signed.device_id)
             if issuer["account_subject"] != self.session.subject:
                 raise E2eeError("account_mismatch")
             signed.verify(self.crypto, issuer["signing_public_key"], "device_approve")

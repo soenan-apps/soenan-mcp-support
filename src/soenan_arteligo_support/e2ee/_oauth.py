@@ -189,6 +189,8 @@ class ProfileVault:
     store: ProfileSecureStore
     _storage_key: str
     _transport: httpx.BaseTransport | None
+    _authorization_lock: Any
+    _authorized_tokens: set[str]
 
     def __init__(self, *, account_origin: str, arteligo_origin: str, store: ProfileSecureStore, transport: httpx.BaseTransport | None = None):
         if not callable(getattr(store, "credential", None)):
@@ -200,6 +202,7 @@ class ProfileVault:
             "account_origin": account, "arteligo_origin": arteligo,
             "resource": resource, "store": store, "_transport": transport,
             "_storage_key": "oauth:" + hashlib.sha256((account + "\n" + resource).encode()).hexdigest(),
+            "_authorization_lock": threading.Lock(), "_authorized_tokens": set(),
         }.items():
             object.__setattr__(self, name, value)
 
@@ -265,7 +268,7 @@ class ProfileVault:
         except httpx.HTTPError:
             raise E2eeError("authentication_uncertain") from None
 
-    def _access_token(self, identity: str) -> str:
+    def _credential_token(self, identity: str, *, expired_token: str | None = None) -> tuple[str, bool]:
         with self.store.credential(self._storage_key) as item:
             record = self._load(item)
             self._check(record, identity)
@@ -277,11 +280,11 @@ class ProfileVault:
             if isinstance(state, SignedOut):
                 raise E2eeError("authentication_required")
             if isinstance(state, AccessOnly):
-                if state.access_expires_at > time.time():
-                    return state.access_token
+                if state.access_expires_at > time.time() and state.access_token != expired_token:
+                    return state.access_token, False
                 raise E2eeError("authentication_required")
-            if state.pair.access_expires_at > time.time() + 15:
-                return state.pair.access_token
+            if state.pair.access_expires_at > time.time() + 15 and state.pair.access_token != expired_token:
+                return state.pair.access_token, False
             if state.pair.refresh_expires_at <= time.time():
                 raise E2eeError("authentication_required")
             pending = replace(record, state=RefreshUncertain(state.pair.refresh_token))
@@ -291,7 +294,28 @@ class ProfileVault:
                 raise E2eeError("secure_store_unavailable")
             pair = self._token({"grant_type": "refresh_token", "refresh_token": state.pair.refresh_token})
             self._save(item, replace(record, state=Ready(pair)))
-            return pair.access_token
+            return pair.access_token, True
+
+    def _access_token(self, identity: str) -> str:
+        from ._api import await_session_authorization
+
+        token, refreshed = self._credential_token(identity)
+        digest = hashlib.sha256(token.encode()).hexdigest()
+        with self._authorization_lock:
+            if digest not in self._authorized_tokens:
+                try:
+                    await_session_authorization(self.arteligo_origin, token, self._transport)
+                except E2eeError as error:
+                    if error.code != "authorization_expired" or refreshed:
+                        raise
+                    token, _ = self._credential_token(identity, expired_token=token)
+                    digest = hashlib.sha256(token.encode()).hexdigest()
+                    await_session_authorization(self.arteligo_origin, token, self._transport)
+                self._authorized_tokens.clear()
+                self._authorized_tokens.add(digest)
+        with self.store.credential(self._storage_key) as item:
+            self._check(self._load(item), identity)
+        return token
 
     def login(self, *, open_browser: Callable[[str], Any] = webbrowser.open, timeout: float = 300) -> None:
         intent = secrets.token_urlsafe(32)
@@ -359,9 +383,8 @@ class ProfileVault:
                         "grant_type": "authorization_code", "code": received.pop("code"),
                         "redirect_uri": redirect, "code_verifier": verifier,
                     })
-                    self._save(item, CredentialRecord(
-                        secrets.token_urlsafe(32), None, Ready(pair),
-                    ))
+                    accepted = CredentialRecord(secrets.token_urlsafe(32), None, Ready(pair))
+                    self._save(item, accepted)
                 except E2eeError as error:
                     if error.code == "authentication_required":
                         raise
@@ -375,6 +398,7 @@ class ProfileVault:
                 current = self._load(item)
                 if current.login_intent == intent:
                     self._save(item, replace(current, login_intent=None))
+        self._access_token(accepted.identity)
 
     def logout(self) -> LogoutOutcome:
         with self.store.credential(self._storage_key) as item:

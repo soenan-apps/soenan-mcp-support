@@ -1,22 +1,23 @@
 from http import HTTPStatus
-from typing import Any, cast
+from io import BytesIO
+from typing import Any
 
 import httpx
 
 from ...client import AuthenticatedClient, Client
-from ...models.e2_ee_rotate_recovery_sec_fetch_site import (
-    E2EeRotateRecoverySecFetchSite,
+from ...models.e2_ee_prepare_root_replacement_sec_fetch_site import (
+    E2EePrepareRootReplacementSecFetchSite,
 )
-from ...models.e2_ee_signed_command import E2EeSignedCommand
+from ...models.e2_ee_root_replacement_prepare import E2EeRootReplacementPrepare
 from ...models.error_envelope import ErrorEnvelope
-from ...types import UNSET, Response, Unset
+from ...types import UNSET, File, Response, Unset
 
 
 def _get_kwargs(
     *,
-    body: E2EeSignedCommand,
+    body: E2EeRootReplacementPrepare | File | Unset = UNSET,
     origin: str | Unset = UNSET,
-    sec_fetch_site: E2EeRotateRecoverySecFetchSite | Unset = UNSET,
+    sec_fetch_site: E2EePrepareRootReplacementSecFetchSite | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
     if not isinstance(origin, Unset):
@@ -27,12 +28,17 @@ def _get_kwargs(
 
     _kwargs: dict[str, Any] = {
         "method": "post",
-        "url": "/api/e2ee/recovery",
+        "url": "/api/e2ee/root-replacements/prepare",
     }
 
-    _kwargs["json"] = body.to_dict()
+    if isinstance(body, E2EeRootReplacementPrepare):
+        _kwargs["json"] = body.to_dict()
 
-    headers["Content-Type"] = "application/json"
+        headers["Content-Type"] = "application/json"
+    if isinstance(body, File):
+        _kwargs["content"] = body.payload
+
+        headers["Content-Type"] = "application/x-ndjson"
 
     _kwargs["headers"] = headers
     return _kwargs
@@ -40,10 +46,11 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Any | ErrorEnvelope:
-    if response.status_code == 204:
-        response_204 = cast(Any, None)
-        return response_204
+) -> ErrorEnvelope | File:
+    if response.status_code == 200:
+        response_200 = File(payload=BytesIO(response.content))
+
+        return response_200
 
     response_default = ErrorEnvelope.from_dict(response.json())
 
@@ -52,7 +59,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[Any | ErrorEnvelope]:
+) -> Response[ErrorEnvelope | File]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -64,22 +71,23 @@ def _build_response(
 def sync_detailed(
     *,
     client: AuthenticatedClient,
-    body: E2EeSignedCommand,
+    body: E2EeRootReplacementPrepare | File | Unset = UNSET,
     origin: str | Unset = UNSET,
-    sec_fetch_site: E2EeRotateRecoverySecFetchSite | Unset = UNSET,
-) -> Response[Any | ErrorEnvelope]:
+    sec_fetch_site: E2EePrepareRootReplacementSecFetchSite | Unset = UNSET,
+) -> Response[ErrorEnvelope | File]:
     """
     Args:
         origin (str | Unset):
-        sec_fetch_site (E2EeRotateRecoverySecFetchSite | Unset):
-        body (E2EeSignedCommand):
+        sec_fetch_site (E2EePrepareRootReplacementSecFetchSite | Unset):
+        body (E2EeRootReplacementPrepare):
+        body (File):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Any | ErrorEnvelope]
+        Response[ErrorEnvelope | File]
     """
 
     kwargs = _get_kwargs(
@@ -98,22 +106,23 @@ def sync_detailed(
 def sync(
     *,
     client: AuthenticatedClient,
-    body: E2EeSignedCommand,
+    body: E2EeRootReplacementPrepare | File | Unset = UNSET,
     origin: str | Unset = UNSET,
-    sec_fetch_site: E2EeRotateRecoverySecFetchSite | Unset = UNSET,
-) -> Any | ErrorEnvelope | None:
+    sec_fetch_site: E2EePrepareRootReplacementSecFetchSite | Unset = UNSET,
+) -> ErrorEnvelope | File | None:
     """
     Args:
         origin (str | Unset):
-        sec_fetch_site (E2EeRotateRecoverySecFetchSite | Unset):
-        body (E2EeSignedCommand):
+        sec_fetch_site (E2EePrepareRootReplacementSecFetchSite | Unset):
+        body (E2EeRootReplacementPrepare):
+        body (File):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Any | ErrorEnvelope
+        ErrorEnvelope | File
     """
 
     return sync_detailed(
@@ -127,22 +136,23 @@ def sync(
 async def asyncio_detailed(
     *,
     client: AuthenticatedClient,
-    body: E2EeSignedCommand,
+    body: E2EeRootReplacementPrepare | File | Unset = UNSET,
     origin: str | Unset = UNSET,
-    sec_fetch_site: E2EeRotateRecoverySecFetchSite | Unset = UNSET,
-) -> Response[Any | ErrorEnvelope]:
+    sec_fetch_site: E2EePrepareRootReplacementSecFetchSite | Unset = UNSET,
+) -> Response[ErrorEnvelope | File]:
     """
     Args:
         origin (str | Unset):
-        sec_fetch_site (E2EeRotateRecoverySecFetchSite | Unset):
-        body (E2EeSignedCommand):
+        sec_fetch_site (E2EePrepareRootReplacementSecFetchSite | Unset):
+        body (E2EeRootReplacementPrepare):
+        body (File):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Any | ErrorEnvelope]
+        Response[ErrorEnvelope | File]
     """
 
     kwargs = _get_kwargs(
@@ -159,22 +169,23 @@ async def asyncio_detailed(
 async def asyncio(
     *,
     client: AuthenticatedClient,
-    body: E2EeSignedCommand,
+    body: E2EeRootReplacementPrepare | File | Unset = UNSET,
     origin: str | Unset = UNSET,
-    sec_fetch_site: E2EeRotateRecoverySecFetchSite | Unset = UNSET,
-) -> Any | ErrorEnvelope | None:
+    sec_fetch_site: E2EePrepareRootReplacementSecFetchSite | Unset = UNSET,
+) -> ErrorEnvelope | File | None:
     """
     Args:
         origin (str | Unset):
-        sec_fetch_site (E2EeRotateRecoverySecFetchSite | Unset):
-        body (E2EeSignedCommand):
+        sec_fetch_site (E2EePrepareRootReplacementSecFetchSite | Unset):
+        body (E2EeRootReplacementPrepare):
+        body (File):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Any | ErrorEnvelope
+        ErrorEnvelope | File
     """
 
     return (

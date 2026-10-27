@@ -40,6 +40,7 @@ class DeviceApprovals:
         pending = session.publications.pending("device_approvals", identifier, "device_approve")
         if pending is not None and not self._matches(pending.command, pairing):
             raise E2eeError("device_approval_pending")
+        context = session.load_owner_context()
         devices = session.call("e2eeListDevices")["devices"]
         registered = next((item for item in devices if item["device_id"] == identifier), None)
         if registered is not None:
@@ -64,7 +65,8 @@ class DeviceApprovals:
             qualified = session.owner_access.recovery.root_history.qualified()
             admission = qualified.original_admission if qualified is not None else session.root_admissions.original_current()
             envelopes, references = [], []
-            for scope in session.scopes():
+            for captured in context.scopes.values():
+                scope = captured["scope"]
                 if scope["key_epoch"] == 0 and scope["key_state"] == "uninitialized":
                     continue
                 organization = scope.get("owner_org")

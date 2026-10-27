@@ -7,7 +7,6 @@ from uuid import UUID
 
 from attrs import define as _attrs_define
 from dateutil.parser import isoparse
-from typing_extensions import Self
 
 T = TypeVar("T", bound="LegalTermsVersion")
 
@@ -70,7 +69,7 @@ class LegalTermsVersion:
         return field_dict
 
     @classmethod
-    def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
         id = UUID(d.pop("id"))
 

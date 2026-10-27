@@ -8,7 +8,7 @@ from arteligo_public_api_client.models.e2_ee_owner_committed_export_reference im
 from arteligo_public_api_client.models.e2_ee_owner_source_project import E2EeOwnerSourceProject
 
 from ._crypto import E2eeError
-from ._owner_account import OwnerAccountReads, OwnerSourceSelection, SelectedOwnerHead
+from ._owner_authority import OwnerAuthorityReads, OwnerSourceSelection, SelectedOwnerHead
 from ._owner_current import CustodyPurpose
 from ._owner_protocol import (
     OwnerAuthorityHead, OwnerBinding, OwnerManifest, OwnerOperation, OwnerPreparation,
@@ -91,7 +91,7 @@ class SelectedBindingLink:
 
 
 @dataclass(frozen=True)
-class AccountSelectedBinding:
+class SelectedBinding:
     binding: OwnerBinding
     authority: OwnerAuthorityHead
     root: _RootIdentity
@@ -105,7 +105,7 @@ class AccountSelectedBinding:
 
 
 @dataclass(frozen=True)
-class VerifiedBinding(AccountSelectedBinding):
+class VerifiedBinding(SelectedBinding):
     independent_anchor: _RootIdentity
     positive_lineage_start: int
 
@@ -115,8 +115,8 @@ class VerifiedBinding(AccountSelectedBinding):
 
 
 class OwnerEvidenceVerifier:
-    def __init__(self, session: DeviceSession, store: OwnerStateStore, account: OwnerAccountReads):
-        self.session, self.store, self.account = session, store, account
+    def __init__(self, session: DeviceSession, store: OwnerStateStore, account: OwnerAuthorityReads):
+        self.session, self.store, self.reads = session, store, account
         self.crypto = session.crypto
         self._project_origins: dict[tuple[str, str], dict[str, FrozenProjectOrigin | VerifiedProjectOrigin]] = {}
         self._constraints: dict[tuple[str, str, str], ProjectOriginConstraint] = {}
@@ -138,6 +138,8 @@ class OwnerEvidenceVerifier:
         scope = proof_scope if proof_scope is not None else (
             None if public["account_subject"] == self.session.subject else organization
         )
+        if issuer_evidence is None and not current and self.session._root_read_set is not None:
+            issuer_evidence = self.session._root_read_set.historical_evidence
         if issuer_evidence is None:
             material = self.session._device_material(scope, command.device_id)
             lookup = self.session._current_device_lookup(scope)
@@ -153,7 +155,7 @@ class OwnerEvidenceVerifier:
         if current:
             context = self.session.owner_access
             suggested = authority_head(self.session.call("e2eeGetOwnerAuthority", organization_id=organization)["owner_authority"], organization)
-            head = self.account.authority(organization, suggested.read_capability)
+            head = self.reads.authority(organization, suggested.read_capability)
             identity = self.root(root, public["account_subject"])
             return context.current.qualify(organization, material, identity, head, expected_root=identity,
                 proof_scope=scope).device
@@ -215,7 +217,7 @@ class OwnerEvidenceVerifier:
 
     def selected_binding(self, organization: str, proof: Mapping[str, Any], head: OwnerAuthorityHead,
                          *, sources: OwnerSourceEvidence | None = None,
-                         proof_scope: str | None = None) -> AccountSelectedBinding:
+                         proof_scope: str | None = None) -> SelectedBinding:
         evidence_scope = organization if proof_scope is None else proof_scope
         newest: list[SelectedBindingLink] = []
         preparations: dict[str, tuple[OwnerPreparation, str]] = {}
@@ -225,7 +227,7 @@ class OwnerEvidenceVerifier:
             if current_head.binding_digest in visiting:
                 raise E2eeError("invalid_owner_evidence")
             visiting.add(current_head.binding_digest)
-            selected = self.account.selected(organization, current_head.binding_digest, capability=current_head.read_capability)
+            selected = self.reads.selected(organization, current_head.binding_digest, capability=current_head.read_capability)
             if not selected.matches(current_head):
                 raise E2eeError("owner_binding_mismatch")
             binding = OwnerBinding.parse(current.get("signed_binding"))
@@ -257,7 +259,7 @@ class OwnerEvidenceVerifier:
                 operation_id = offered.get("operation_id")
                 if not isinstance(operation_id, str) or not operation_id:
                     raise E2eeError("owner_receipt_missing")
-                decision = self.verify_decision(organization, self.account.decision(organization, operation_id),
+                decision = self.verify_decision(organization, self.reads.decision(organization, operation_id),
                     prepared, body, selected.head)
                 preparations[current_head.binding_digest] = (prepared, decision.operation_id)
             else:
@@ -274,7 +276,7 @@ class OwnerEvidenceVerifier:
                 if not predecessor.key_id:
                     if selected.source_selection is None:
                         break
-                    predecessor = self.account.selected(organization, selected.source_selection.successor_binding_digest).head
+                    predecessor = self.reads.selected(organization, selected.source_selection.successor_binding_digest).head
                     if predecessor.ownership_revision > current_head.ownership_revision:
                         raise E2eeError("owner_binding_mismatch")
             current_head = predecessor
@@ -293,7 +295,7 @@ class OwnerEvidenceVerifier:
                 OwnerSourceManifestReference(prepared.body.source_manifest_id, prepared.body.source_manifest_digest,
                     operation_id, prepared.body.preparation_id),
                 previous.authority, previous.root, index, prepared, link.issuer_evidence))
-        return AccountSelectedBinding(links[-1].binding, head, links[-1].root,
+        return SelectedBinding(links[-1].binding, head, links[-1].root,
             tuple(link.binding for link in links), tuple(manifests), links)
 
     def _project_authority_index(self, organization: str, creation: SignedEvidence,
@@ -461,7 +463,7 @@ class OwnerEvidenceVerifier:
             selected.selected_manifests, selected.links, independent_anchor, start)
 
     def preparation_issuer(self, organization: str, preparation: OwnerPreparation,
-                           source: AccountSelectedBinding | SelectedBindingLink, issuer_evidence: OwnerIssuerEvidence,
+                           source: SelectedBinding | SelectedBindingLink, issuer_evidence: OwnerIssuerEvidence,
                            *, purpose: CustodyPurpose = CustodyPurpose.IDENTITY,
                            proof_scope: str | None = None) -> dict[str, Any]:
         admission = preparation.original_admission
@@ -529,11 +531,11 @@ class OwnerEvidenceVerifier:
         return binding
 
     def selected_source(self, organization: str, snapshot: SelectedOwnerHead,
-                        *, proof_scope: str | None = None) -> AccountSelectedBinding | None:
+                        *, proof_scope: str | None = None) -> SelectedBinding | None:
         selection = snapshot.source_selection
         if selection is None:
             return None
-        selected = self.account.selected(organization, selection.successor_binding_digest,
+        selected = self.reads.selected(organization, selection.successor_binding_digest,
             capability=snapshot.head.read_capability)
         proof = self.session.call("e2eeGetOwnerBinding", organization_id=organization,
             binding_digest=selection.successor_binding_digest)
@@ -641,7 +643,7 @@ class OwnerEvidenceVerifier:
         if creation.body.get("owner_key_proof") == OWNER_KEY_PROOF:
             if generated is None or generated.owner_subject != creator["account_subject"]:
                 raise E2eeError("owner_project_source_mismatch")
-            if not self.account.selected(organization, generated.binding_digest).matches(generated):
+            if not self.reads.selected(organization, generated.binding_digest).matches(generated):
                 raise E2eeError("owner_project_source_mismatch")
             proof = self.session.call("e2eeGetOwnerBinding", organization_id=organization, binding_digest=generated.binding_digest)
             binding = OwnerBinding.parse(proof.get("signed_binding"))
@@ -675,7 +677,7 @@ class OwnerEvidenceVerifier:
         generated = authority_head(creation.body["owner_authority"], organization)
         if generated.key_epoch <= previous_epoch or maximum_epoch is not None and generated.key_epoch > maximum_epoch:
             raise E2eeError("owner_identity_verification_required")
-        if not self.account.selected(organization, generated.binding_digest).matches(generated):
+        if not self.reads.selected(organization, generated.binding_digest).matches(generated):
             raise E2eeError("owner_project_source_mismatch")
 
     def _require_new_project(self, organization: str, project: E2EeOwnerSourceProject,
@@ -691,7 +693,7 @@ class OwnerEvidenceVerifier:
                 or command.body.get("owner_authority") != proof.get("owner_authority")):
             raise E2eeError("owner_project_source_mismatch")
         self._require_creation_epoch(organization, command, absence.last_source_epoch, None)
-        creator = public_device(self.session._device_material(scope, command.device_id))
+        creator = public_device(self.session._historical_device_material(scope, command.device_id))
         command.verify(self.crypto, creator["signing_public_key"], "project_create")
         if has_committed_creator(scope) and not committed_creator(scope, creator["signing_public_key"]):
             raise E2eeError("owner_project_source_mismatch")
@@ -715,7 +717,7 @@ class OwnerEvidenceVerifier:
             proof_scope=proof_scope)
         manifest.command.verify(self.crypto, sender["signing_public_key"], OwnerOperation.MANIFEST)
 
-    def source_indexes(self, organization: str, source: AccountSelectedBinding,
+    def source_indexes(self, organization: str, source: SelectedBinding,
                        *, purpose: CustodyPurpose, proof_scope: str | None = None) -> tuple[tuple[SelectedSourceManifest, OwnerManifest], ...]:
         result = []
         previous: dict[str, str] = {}
@@ -739,7 +741,7 @@ class OwnerEvidenceVerifier:
             result.append((selected, manifest))
         return tuple(result)
 
-    def origin_constraint(self, organization: str, scope: str, source: AccountSelectedBinding,
+    def origin_constraint(self, organization: str, scope: str, source: SelectedBinding,
                           *, proof_scope: str | None = None) -> ProjectOriginConstraint:
         key = (organization, source.authority.binding_digest, scope)
         if key in self._constraints:
@@ -923,7 +925,7 @@ class OwnerEvidenceVerifier:
         candidate = OwnerBinding.parse(target_proof.get("signed_binding"))
         if candidate.operation != OwnerOperation.OFFER:
             raise E2eeError("owner_receipt_mismatch")
-        decision = self.verify_decision(organization, self.account.decision(organization, selection.decision.operation_id),
+        decision = self.verify_decision(organization, self.reads.decision(organization, selection.decision.operation_id),
             preparation, candidate.body, selected_head)
         if decision.to_dict() != selection.decision.to_dict():
             raise E2eeError("owner_receipt_mismatch")
@@ -939,11 +941,11 @@ class OwnerEvidenceVerifier:
                           retained: SavedManifest | None = None) -> SavedManifest:
         if source.authority.owner_subject != self.session.subject:
             raise E2eeError("owner_receipt_mismatch")
-        selected = self.account.selected(organization, reference.successor_binding_digest,
+        selected = self.reads.selected(organization, reference.successor_binding_digest,
             capability=source.authority.read_capability)
         if selected.source_selection != OwnerSourceSelection.parse(reference.to_dict()):
             raise E2eeError("owner_source_manifest_mismatch")
-        decision = committed_decision(self.account.decision(organization, reference.operation_id,
+        decision = committed_decision(self.reads.decision(organization, reference.operation_id,
             capability=source.authority.read_capability), organization)
         head = selected.head
         if (decision.actor_subject != self.session.subject or decision.target_subject != head.owner_subject
