@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-import importlib
 import json
-import re
-from enum import Enum
-from typing import Any, Iterator, Protocol, get_args, get_type_hints
+from typing import Any, Iterator, Protocol
 
 import httpx
 
@@ -37,7 +34,6 @@ class E2eeAPI(Protocol):
     def call(
         self, operation: str, *, body: dict[str, Any] | None = None, **parameters: Any
     ) -> dict[str, Any]: ...
-    def stream(self, operation: str, *, body: dict[str, Any]) -> Iterator[dict[str, Any]]: ...
 
 
 def await_session_authorization(arteligo_origin: str, token: str,
@@ -85,97 +81,14 @@ class GeneratedAPI:
         self.credentials = credentials
         self.transport = transport
 
-    def stream(self, operation: str, *, body: dict[str, Any]) -> Iterator[dict[str, Any]]:
-        if operation != "e2eePrepareRootReplacement":
-            raise E2eeError("unsupported_operation")
-        from arteligo_public_api_client.client import AuthenticatedClient
-        from ._root_wire import root_events, root_input
-
-        try:
-            content = root_input(body["operation_id"], body, prepare=True)
-            client = AuthenticatedClient(
-                base_url=self.credentials.arteligo_origin,
-                token=self.credentials.access_token(), timeout=httpx.Timeout(30),
-                follow_redirects=False, raise_on_unexpected_status=False,
-                httpx_args={"transport": self.transport},
-            )
-            with client, client.get_httpx_client().stream(
-                "POST", "/api/e2ee/root-replacements/prepare", content=content,
-                headers={"Content-Type": "application/x-ndjson", "Accept": "text/event-stream"},
-            ) as response:
-                if response.status_code != 200:
-                    raise E2eeError("root_replacement_preparation_failed")
-                yield from root_events(sse_documents(response))
-        except E2eeError:
-            raise
-        except (httpx.HTTPError, ValueError, KeyError, TypeError, AttributeError, ImportError):
-            raise E2eeError("service_unavailable") from None
-
-    def _apply_root(self, operation_id: str, body: dict[str, Any]) -> dict[str, Any]:
-        from arteligo_public_api_client.client import AuthenticatedClient
-        from ._root_wire import root_input
-
-        if re.fullmatch(r"[A-Za-z0-9_-]{1,128}", operation_id) is None:
-            raise E2eeError("invalid_recovery_replacement")
-        try:
-            client = AuthenticatedClient(
-                base_url=self.credentials.arteligo_origin, token=self.credentials.access_token(),
-                timeout=httpx.Timeout(30), follow_redirects=False, raise_on_unexpected_status=False,
-                httpx_args={"transport": self.transport},
-            )
-            with client:
-                response = client.get_httpx_client().post(
-                    f"/api/e2ee/root-replacements/{operation_id}/apply",
-                    content=root_input(operation_id, body, prepare=False),
-                    headers={"Content-Type": "application/x-ndjson", "Accept": "application/json"},
-                )
-            if response.status_code != 200:
-                raise E2eeError("recovery_replacement_pending")
-            value = response.json()
-            if not isinstance(value, dict):
-                raise E2eeError("invalid_response")
-            return value
-        except (httpx.HTTPError, ValueError, KeyError, TypeError, AttributeError):
-            raise E2eeError("recovery_replacement_pending") from None
 
     def call(
         self, operation: str, *, body: dict[str, Any] | None = None, **parameters: Any
     ) -> dict[str, Any]:
         from arteligo_public_api_client.client import AuthenticatedClient
-        if operation == "e2eeApplyRootReplacement" and body is not None:
-            return self._apply_root(parameters["operation_id"], body)
-
-        if operation == "getProductSession":
-            module_name = "session.get_product_session"
-        elif operation == "awaitSessionAuthorization":
-            module_name = "session.await_session_authorization"
-        elif operation.startswith("e2ee") and operation.isalnum():
-            module_name = (
-                "e2ee.e_2_ee" + re.sub(r"(?=[A-Z])", "_", operation[4:]).lower()
-            )
-        else:
-            raise E2eeError("unsupported_operation")
+        from arteligo_public_api_client.operations import OPERATIONS
         try:
-            endpoint = importlib.import_module(
-                "arteligo_public_api_client.api." + module_name
-            )
-            hints = get_type_hints(endpoint.sync_detailed)
-            for name, value in parameters.items():
-                hint = hints.get(name)
-                candidates = get_args(hint) or (hint,)
-                enum = next(
-                    (
-                        candidate
-                        for candidate in candidates
-                        if isinstance(candidate, type) and issubclass(candidate, Enum)
-                    ),
-                    None,
-                )
-                if enum is not None:
-                    parameters[name] = enum(value)
-            if body is not None:
-                model = hints["body"]
-                parameters["body"] = model.from_dict(body)
+            endpoint = OPERATIONS[operation]
             client = AuthenticatedClient(
                 base_url=self.credentials.arteligo_origin,
                 token=self.credentials.access_token(),
@@ -185,7 +98,7 @@ class GeneratedAPI:
                 httpx_args={"transport": self.transport},
             )
             with client:
-                response = endpoint.sync_detailed(client=client, **parameters)
+                response = endpoint(client=client, body=body, **parameters)
             status = int(response.status_code)
             if not 200 <= status < 300:
                 codes = {

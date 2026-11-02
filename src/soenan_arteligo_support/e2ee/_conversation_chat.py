@@ -3,9 +3,9 @@ from __future__ import annotations
 import re
 
 from ._conversation_context import (
-    CHAT_HEADER,
     FORMAT,
     ascending,
+    chat_header_id,
     conflict_retry,
     descending,
     number,
@@ -14,6 +14,7 @@ from ._conversation_context import (
     write,
 )
 from ._crypto import E2eeError
+from ._signed_commands import AcceptedCommand
 
 
 def valid_chat_body(body):
@@ -223,7 +224,7 @@ class ChatOperations:
             raise E2eeError("invalid_cursor")
         if before_sequence is not None:
             number(before_sequence, 1)
-        header = self._load_header(CHAT_HEADER, "chat", "chat_header")
+        header = self._load_header(chat_header_id(self.scope), "chat", "chat_header")
         latest = number(header["value"].get("sequence"))
         entries, following = self._index("chat").page(
             reference(header["value"].get("messages")),
@@ -275,7 +276,7 @@ class ChatOperations:
 
     @conflict_retry
     def chat_message(self, message_id):
-        header = self._load_header(CHAT_HEADER, "chat", "chat_header")
+        header = self._load_header(chat_header_id(self.scope), "chat", "chat_header")
         originals = self._read([message_id])
         if message_id not in originals:
             self._check_chat_header(header)
@@ -299,7 +300,7 @@ class ChatOperations:
         number(after)
         if type(limit) is not int or limit < 1:
             raise E2eeError("invalid_cursor")
-        header = self._load_header(CHAT_HEADER, "chat", "chat_header")
+        header = self._load_header(chat_header_id(self.scope), "chat", "chat_header")
         latest = number(header["value"].get("sequence"))
         if after > latest:
             raise E2eeError("invalid_cursor")
@@ -351,7 +352,7 @@ class ChatOperations:
 
     @conflict_retry
     def chat_operation(self, operation_id):
-        header = self._load_header(CHAT_HEADER, "chat", "chat_header")
+        header = self._load_header(chat_header_id(self.scope), "chat", "chat_header")
         binding = self._read(["cop_" + text(operation_id)]).get("cop_" + operation_id)
         if binding is None:
             self._check_chat_header(header)
@@ -388,7 +389,7 @@ class ChatOperations:
         body=None,
         references=None,
         expected_revision=None,
-    ):
+    ) -> dict | AcceptedCommand:
         references = [] if references is None else references
         if (
             type not in {"sent", "edited", "deleted"}
@@ -444,7 +445,7 @@ class ChatOperations:
             return self._verify_endpoint(
                 self._message_contexts({message_id})[message_id], existing
             )
-        header = self._load_header(CHAT_HEADER, "chat", "chat_header")
+        header = self._load_header(chat_header_id(self.scope), "chat", "chat_header")
         sequence = number(header["value"].get("sequence")) + 1
         number(sequence, 1)
         context, previous = None, None
@@ -548,7 +549,7 @@ class ChatOperations:
             *events_writes,
             *messages_writes,
             write(
-                CHAT_HEADER,
+                chat_header_id(self.scope),
                 "chat",
                 {
                     **header["value"],
@@ -575,16 +576,18 @@ class ChatOperations:
                     immutable=True,
                 )
             )
-        self._write(
+        outcome = self._write(
             writes,
             [{"record_id": message_id, "expected_revision": 1}] if context else [],
         )
+        if isinstance(outcome, AcceptedCommand):
+            return outcome
         return event
 
     @conflict_retry
     def chat_message_history(self, message_id):
         """Explicitly verify every revision without retaining the full history."""
-        header = self._load_header(CHAT_HEADER, "chat", "chat_header")
+        header = self._load_header(chat_header_id(self.scope), "chat", "chat_header")
         context = self._message_contexts({message_id})[message_id]
         self._latest_message(context)
         total = context["head"]["value"]["messageRevision"]

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from ._conversation_context import (
-    COMMENT_HEADER,
     FORMAT,
     anchor_key,
     ascending,
+    comment_header_id,
     conflict_retry,
     descending,
     number,
@@ -14,6 +14,7 @@ from ._conversation_context import (
     write,
 )
 from ._crypto import E2eeError
+from ._signed_commands import AcceptedCommand
 
 
 class CommentOperations:
@@ -133,7 +134,7 @@ class CommentOperations:
     def comment_threads(self, *, anchor=None, after=None, limit=100):
         if type(limit) is not int or limit < 1:
             raise E2eeError("invalid_cursor")
-        header = self._load_header(COMMENT_HEADER, "comment", "comment_header")
+        header = self._load_header(comment_header_id(self.scope), "comment", "comment_header")
         key = anchor_key(anchor) if anchor is not None else None
         if key is not None and after and not after[0].startswith(key + "\0"):
             raise E2eeError("invalid_cursor")
@@ -263,7 +264,7 @@ class CommentOperations:
         verify_actor({"value": value, "author_subject": self.subject}, "author")
 
     @conflict_retry
-    def create_comment(self, identifier, value):
+    def create_comment(self, identifier, value) -> dict | AcceptedCommand | None:
         text(identifier)
         self._validate_author(value)
         existing = self._read([identifier]).get(identifier)
@@ -272,7 +273,7 @@ class CommentOperations:
             if not self._same_comment_input(original, value):
                 raise E2eeError("idempotency_conflict")
             return self.comment_thread(identifier)
-        header = self._load_header(COMMENT_HEADER, "comment", "comment_header")
+        header = self._load_header(comment_header_id(self.scope), "comment", "comment_header")
         sequence = number(header["value"].get("sequence")) + 1
         number(sequence, 1)
         key = anchor_key(value.get("anchor"))
@@ -296,7 +297,7 @@ class CommentOperations:
                 "sequence": sequence,
             },
         )
-        self._write(
+        outcome = self._write(
             [
                 write(identifier, "comment", original, immutable=True),
                 self._initial_text_head(identifier, "comment", body_id),
@@ -315,13 +316,15 @@ class CommentOperations:
                 ),
                 *nodes,
                 write(
-                    COMMENT_HEADER,
+                    comment_header_id(self.scope),
                     "comment",
                     {**header["value"], "sequence": sequence, "threads": root},
                     revision=header["revision"],
                 ),
             ]
         )
+        if isinstance(outcome, AcceptedCommand):
+            return outcome
         return {
             **original,
             "resolved": False,
@@ -332,7 +335,7 @@ class CommentOperations:
         }
 
     @conflict_retry
-    def create_reply(self, identifier, *, parent_id, value):
+    def create_reply(self, identifier, *, parent_id, value) -> dict | AcceptedCommand | None:
         text(identifier)
         self._validate_author(value)
         existing = self._read([identifier]).get(identifier)
@@ -361,7 +364,7 @@ class CommentOperations:
             reference(context["head"]["value"].get("replies")),
             {"name": ascending(sequence), "id": identifier, "sequence": sequence},
         )
-        self._write(
+        outcome = self._write(
             [
                 write(identifier, "comment", original, immutable=True),
                 self._initial_text_head(identifier, "reply", body_id),
@@ -379,10 +382,12 @@ class CommentOperations:
             ],
             [{"record_id": parent_id, "expected_revision": 1}],
         )
+        if isinstance(outcome, AcceptedCommand):
+            return outcome
         return {**original, "revision": 1}
 
     @conflict_retry
-    def set_resolution(self, parent_id, *, resolved, actor, operation_id):
+    def set_resolution(self, parent_id, *, resolved, actor, operation_id) -> dict | AcceptedCommand | None:
         text(operation_id)
         if type(resolved) is not bool:
             raise E2eeError("invalid_request")
@@ -409,7 +414,7 @@ class CommentOperations:
             "operationID": operation_id,
             "actor": actor,
         }
-        self._write(
+        outcome = self._write(
             [
                 write(event_id, "comment", event, immutable=True),
                 write(
@@ -424,4 +429,6 @@ class CommentOperations:
             ],
             [{"record_id": parent_id, "expected_revision": 1}],
         )
+        if isinstance(outcome, AcceptedCommand):
+            return outcome
         return {**self._thread_view(context), "resolved": resolved}

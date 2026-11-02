@@ -6,7 +6,7 @@ from typing import ContextManager, Iterator, Protocol
 
 from ._credential_lock import credential_lock
 
-from ._crypto import E2eeCrypto, E2eeError
+from ._crypto import LocalDocumentCrypto, E2eeError
 
 
 class SecureStore(Protocol):
@@ -59,7 +59,7 @@ class SystemSecureStore:
         except (ImportError, RuntimeError):
             raise E2eeError("secure_store_unavailable") from None
         self._service = f"app.soenan.arteligo.local.v1:{profile}"
-        self._document_crypto: E2eeCrypto | None = None
+        self._document_crypto: LocalDocumentCrypto | None = None
 
     @staticmethod
     def _windows_value(name: str, credential) -> str:
@@ -178,7 +178,7 @@ class SystemSecureStore:
                         from ._protected_document import protected_document
 
                         if self._document_crypto is None:
-                            self._document_crypto = E2eeCrypto()
+                            self._document_crypto = LocalDocumentCrypto()
                         document = resources.enter_context(protected_document(
                             self._service, name, item, self._document_crypto,
                         ))

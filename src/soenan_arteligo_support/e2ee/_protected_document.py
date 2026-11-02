@@ -11,7 +11,7 @@ import sys
 from typing import Iterator, Protocol
 
 from ._credential_lock import private_directory, private_subdirectory, validate_private_handle
-from ._crypto import E2eeCrypto, E2eeError, decode, encode, wipe
+from ._crypto import LocalDocumentCrypto, E2eeError, decode, encode, wipe
 
 
 _PREFIX = "soenan:protected-document:1:"
@@ -111,7 +111,7 @@ def _document_files(namespace: str) -> Iterator[_DocumentFiles]:
 
 class _ProtectedDocument:
     def __init__(self, namespace: bytes, native: _NativeItem,
-                 files: _DocumentFiles, crypto: E2eeCrypto):
+                 files: _DocumentFiles, crypto: LocalDocumentCrypto):
         self._namespace, self._native, self._files, self._crypto = namespace, native, files, crypto
         self._head: str | None = None
         self._descriptor: _Descriptor | None = None
@@ -250,7 +250,7 @@ class _ProtectedDocument:
 
 @contextmanager
 def protected_document(service: str, name: str, native: _NativeItem,
-                       crypto: E2eeCrypto) -> Iterator[_ProtectedDocument]:
+                       crypto: LocalDocumentCrypto) -> Iterator[_ProtectedDocument]:
     if sys.platform == "win32":
         from ._windows_item import canonical_target
 

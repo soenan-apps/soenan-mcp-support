@@ -7,7 +7,7 @@ from typing import Any
 
 from ._crypto import E2eeError
 from ._records import EncryptedRecords
-from ._owner_envelopes import VerifiedPublicationKey
+from ._signed_commands import AcceptedCommand
 
 
 def _id() -> str:
@@ -323,15 +323,11 @@ class EncryptedDirectory:
         self,
         entry: dict[str, Any],
         *,
-        key_epoch: int,
         additional_records: list[dict[str, Any]],
-        publication: VerifiedPublicationKey | None = None,
-    ) -> list[dict[str, Any]]:
+    ) -> list[dict[str, Any]] | AcceptedCommand:
         writes, preconditions = self.insertion([entry])
         return self.records.write(
             self.scope,
-            key_epoch=key_epoch,
             records=additional_records + writes,
             preconditions=preconditions,
-            publication=publication,
         )

@@ -1,6 +1,6 @@
 # Arteligo のローカル E2EE クライアント
 
-この SDK と local MCP は、利用者の承認済み端末として Arteligo の内容を暗号化・復号します。プロジェクト名、ファイル名、フォルダー構成、提出物、コメント、チャットなどは送信前に暗号化します。Arteligo と remote MCP は平文の鍵や内容を受け取りません。
+この SDK と local MCP はユーザの承認済み端末として Arteligo の内容を暗号化・復号します。プロジェクト名、ファイル名、フォルダー構成、提出物、コメント、チャットなどは送信前に暗号化します。Arteligo と remote MCP は平文の鍵や内容を受け取りません。
 
 Account が本人確認と OAuth を管理し、Arteligo が端末の承認状態、所属、権限、署名済み暗号文、revision、Bucket capability を管理します。暗号処理は Flutter と同じ `arteligo/native/e2ee` の Rust ライブラリーを使います。Python に別の HPKE や AES-GCM 実装はありません。
 
@@ -30,7 +30,7 @@ arteligo --account-origin ACCOUNT_ORIGIN --arteligo-origin ARTELIGO_ORIGIN login
 arteligo --account-origin ACCOUNT_ORIGIN --arteligo-origin ARTELIGO_ORIGIN status
 ```
 
-`login` はブラウザーで Account の承認を開き、PKCE を使って loopback callback を受け取ります。ブラウザーへの認証情報入力は利用者が行います。CLI は固定の `arteligo-native-cli` public client と `arteligo:app` scope を使います。
+`login` はブラウザーで Account の承認を開き、PKCE を使って loopback callback を受け取ります。ブラウザーへの認証情報入力はユーザが行います。CLI は固定の `arteligo-native-cli` public client と `arteligo:app` scope を使います。
 
 同じ profile の OAuth 資格情報は、session や process ごとのコピーではなく、OS の保護領域にある一つの項目で管理します。refresh はその profile の process 間で調整し、単回利用の proof を送る前に保留状態を保存します。応答や最終保存の結果が不明な場合は、古い proof を再送しません。保護ストアが使えない場合も、平文ファイルやメモリーだけの保存へ切り替えません。
 
@@ -38,25 +38,15 @@ arteligo --account-origin ACCOUNT_ORIGIN --arteligo-origin ARTELIGO_ORIGIN statu
 
 session の置換を検出したら、その session が保持する署名・復旧・scope の鍵を利用できなくします。既に受付済みの要求まで取り消されたことにはせず、保存が確定した結果は保持します。project の読取り権限を失ったことが明示された場合は、その scope だけを回収します。一般の認証エラー、利用権の不足、見つからない応答を、project 全体の権限喪失とは扱いません。
 
-最初の端末では `setup` を実行します。端末内で 256 bit の端末追加キーと独立した復旧鍵を生成し、キーから導出した鍵で暗号化した復旧 bundle だけを送信します。画面に表示された端末追加キーを安全な場所へ保存し、保存したキーを入力すると初期設定が完了します。キーを command argument、環境変数、MCP tool に渡しません。
+最初の端末では `setup` を実行します。コアが端末固有の鍵、Root、受信鍵 U、端末追加キーを生成し、Account の署名と結び付けた genesis を登録します。表示された端末追加キーを安全な場所へ保存し、保存確認後に初期設定を確定します。キーを command argument、環境変数、MCP tool に渡しません。
 
-追加端末では `add-by-key` を実行し、端末追加キーを入力します。新しい端末だけを `device_add_by_key` で登録し、既存端末・復旧 root・scope 世代は変えません。他の端末のオンライン承認、失効、追加キーの交換は要求しません。確認済みの復旧 root が既にある profile では、鍵束を開く前に現行 root の署名と両公開鍵を検証します。初めて追加する PC は、復号した鍵束の両公開鍵を照合した後にだけ現行 root を確定します。
+追加端末では `add-by-key` を実行し、端末追加キーを入力します。コアは公開 Identity の署名系譜と pin、封印済み bootstrap の digest を検証してから復号し、秘密鍵から導出した公開鍵が証明と一致することを確認します。既存端末を失効させず、同じ Identity へ新端末を追加します。
 
-`status` が `key_acquisition_pending` を返した場合は、同じ profile で `add-by-key` を再実行し、同じ端末から鍵の取得を再開します。入力を中断しても端末 ID と challenge を作り直しません。鍵取得が完了する前に端末が失効した場合、次の追加は新しい端末 ID と独立した鍵になります。
+QR 承認では、追加端末の `enroll` が生成した署名付き公開情報を承認済み端末へ直接渡します。既存端末で `approve --pairing-json pairing.json` を実行し、その receipt を追加端末へ戻します。追加端末の `accept-approval --receipt-json approval.json` は共通コアで受理結果と配送された鍵を検証します。Flutter と同じ生成 protobuf 型を使います。
 
-`add-by-key` が追加完了を表示するのは、端末内で署名と鍵取得を確認し、利用可能になった場合だけです。server の承認状態が `approved` でも、QR receipt の検証が済んでいなければ完了とは扱いません。Python API の `add_by_key` は `AdmissionResult.READY` または `AdmissionResult.KEY_ACQUISITION_PENDING` を返します。
+`replace-addition-key` は新しい Root、受信鍵 U、端末追加キーを準備し、保存確認後に同じ operation として公開します。明示的な失効対象に含めていない承認済み端末は維持します。準備済み state と元の署名付き要求を保護領域へ保存し、応答が不明な場合は同じ要求で再開します。`reanchor` による通常の Root 更新でも、確認済み Identity と pin の検証を省略しません。
 
-既存端末で QR 承認を使う場合は、追加端末で `enroll` を実行し、出力された公開情報を承認済み端末へ直接渡します。既存端末で `approve --pairing-json pairing.json` を実行し、その receipt を追加端末へ戻します。追加端末で `accept-approval --receipt-json approval.json` を実行すると、challenge と両端末の公開鍵、承認署名を照合し、鍵転送を確認できます。Flutter の承認画面と同じ receipt を使います。
-
-保存済みのheadから現行rootへの署名連鎖を検証できない場合は、`reanchor`を実行します。この端末の鍵素材だけを新しい端末IDで置き換え、確認済みの相手、rootの履歴、失効の観測は保持します。出力した公開情報を、新しいrootを確認済みの別端末で`approve`し、receiptを`accept-approval`へ戻します。検証できる正当なroot交換は通常の署名連鎖で追跡するため、交換のたびに再登録する必要はありません。
-
-端末追加キーを交換する場合は、承認済み端末で `replace-addition-key` を実行します。新しいキーの保存確認後、新しい復旧 root 宛の envelope を現在読める organization と project の現行世代へ配り、復旧情報の交換と同時に保存します。viewer と archived の project も含めます。続けて、管理権限がある scope の鍵を更新します。承認済みの他端末は失効せず、新しい root へ進みます。
-
-交換の途中で失敗すると、`status` の `recovery_replacement_pending` が `true` になります。同じ profile で `replace-addition-key` を再実行し、保存した新しいキーを入力すると、同じ交換を再開します。OS の保護領域に残すのは公開情報、暗号化した復旧 bundle、公開署名だけです。入力したキーや復旧鍵の秘密部分は保存しません。
-
-中断中に別の承認済み端末が端末追加キーを交換していた場合は、最新の復旧情報の署名を確認して中断情報を解消し、`recovery_replacement_superseded` を返します。入力した古いキーの交換完了とは表示しません。必要なら `replace-addition-key` を再実行し、最新の復旧情報から新しいキーを発行します。
-
-他の利用者の端末を直接確認したときは、その公開鍵への信頼を `peer_trust` の署名付き記録として保存します。端末追加キーや QR で追加した端末も、自分の承認済み端末の証明からこの記録を検証するため、server が返した未知の公開鍵を自動的に信頼しません。公開証明には暗号化済みの復旧 bundle を含めません。
+`catalog` は現在利用できる組織とプロジェクトを取得します。組織の現在 Owner と Owner 候補は生成型の oneof で区別し、組織の購入権限がない外部プロジェクトへの参加はプロジェクト側だけに表します。Account の所属一覧から全組織へ順に認可要求を送る処理はありません。
 
 ## local MCP
 
@@ -68,9 +58,11 @@ arteligo --account-origin ACCOUNT_ORIGIN --arteligo-origin ARTELIGO_ORIGIN \
   [--input-dir INPUT_DIRECTORY] [--output-dir OUTPUT_DIRECTORY]
 ```
 
-`mcp-grant` は前景で許可対象を表示し、人が `authorize` を入力した後だけ handle を発行します。対象は明示した既存 project、`read-only` または `update` の範囲、期限、任意の入出力 directory に固定し、実行中に拡大できません。端末の承認状態は各操作の前に再確認し、失効した端末の session を使い続けません。worker は通常の OAuth token や端末追加キーを受け取りません。出力先 directory には新規ファイルだけを作り、既存ファイルの置換や root 外の path を拒否します。
+`mcp-grant` は前景で許可対象を表示し、人が `authorize` を入力した後だけ handle を発行します。対象は明示した既存 project、`read-only` または `update` の範囲、期限、任意の入出力 directory に固定し、実行中に拡大できません。worker は通常の OAuth token や端末追加キーを受け取りません。出力先 directory には新規ファイルだけを作り、既存ファイルの置換や root 外の path を拒否します。
 
-local MCPは許可したprojectだけを一覧に返し、復号したrecordと会話の読み取り、許可した場合の更新、原本転送、WAVプレビュー作成を提供します。project作成、端末承認、端末追加キー、OAuth token、秘密鍵、任意署名、許可拡大を扱うtoolはありません。各操作の前に現在の端末承認と認可を確認します。定期ポーリングは行いません。
+local MCPは許可したprojectだけを一覧に返し、復号したrecordと会話の読み取り、許可した場合の更新、原本転送、WAVプレビュー作成を提供します。project作成、端末承認、端末追加キー、OAuth token、秘密鍵、任意署名、許可拡大を扱うtoolはありません。各操作はローカルの許可・期限・端末状態を確認し、実APIがその要求の現在認可と失効を判定します。暗号処理は必要な操作で取得した同じ生成型の`CryptoReadBundle`を使い、独立した端末生存確認GETや毎操作のrefresh、定期ポーリングを挟みません。
+
+catalogとrecord readは共通コアで公開鍵の系譜、署名、受理receiptを検証します。保持履歴を理由に無関係なprojectへの現在権限を要求しません。Root交換も同じコアのIdentity更新で処理し、準備済みstateと元の署名付き要求から再開します。scopeやgateのproof graph、Root交換専用manifestは使いません。
 
 入力と出力は別のdirectoryを指定し、toolにはその配下の相対pathを渡します。絶対path、親参照、symlinkによる逸脱、既存出力の上書きを拒否します。安全なdescriptor操作を提供できないOSではfile toolを利用できません。Ctrl+C、期限切れ、worker切断で新規操作を止め、受付済みの処理を待ちます。更新が既に確定している可能性は残ります。復号した内容はMCP hostへ渡り、外部LLMを使えばその提供者にも開示されます。同じOSユーザーの悪意あるプログラムからの隔離は保証しません。
 
@@ -78,58 +70,77 @@ local MCP の汎用 `arteligo_write_record` と `arteligo_delete_record` は cha
 
 broker は一つの AnyIO 実行環境と worker で操作を直列実行します。会話とファイル操作で実行寿命を切り替えず、受付済みの処理結果を返してから session を lock します。
 
-内容の書き込みは、chat/comment を含む batch が形式 3、その他が形式 2 です。初回受付の期限と読み取った record の期待 revision を署名に含めます。SDK が設定する期限は作成から 29 日後で、確定結果はサーバーが 30 日間保持します。保存応答が分割された場合は cursor の進行を確認しながら残りを読み取り、送信した全 record の revision、暗号文、署名を検証してから成功を返します。応答を揃えられない場合は更新を再送せず、保存結果が未確認であることを返します。record の平文や署名する command body に、512 KiB や 1 MiB の受付上限は設けません。
+内容の書き込みは生成型の`ValueMutation`と`RecordMutationBinding`で定義し、共通コアの`prepare`で署名付きprotobuf要求を作ります。recordの期待revisionとProtectionKeyを指定し、headと索引の更新を同じcommandへ含めます。受理receiptと元のCipherValueを検証してから復号し、保存済みの要求は同じoperation IDと元のbytesで再送します。
 
-record の削除は `record_id`、`kind`、`expected_revision`、`key_epoch`、`deleted: true` のみを持つ署名済み marker です。marker には暗号文や `value` がなく、以前の有料の内容を一度だけ退役させます。marker を含む command 全体には公開された canonical JSON 表現を使います。以前に保存した暗号文付きの削除 record は、元の署名と暗号文のまま検証・復号し、読み取り専用の履歴として扱います。
+recordの削除は`deleted`属性を持つ新しいrevisionです。元のCipherValueと署名は書き換えません。署名対象を独自のcanonical JSONとして組み立てる処理や、旧形式を通常処理へ変換する経路はありません。
 
-record の `expected_revision` と鍵世代は競合を検出するために必要です。`revision_conflict` の場合は現在の record を読み直してから利用者の変更を適用します。汎用 record 更新は自動的に再実行しません。会話 API は署名済みの操作 ID を確認し、競合した head と索引を読み直して最大 3 回まで再試行します。
+record の `expected_revision` と鍵世代は競合を検出するために必要です。`revision_conflict` の場合は現在の record を読み直してからユーザの変更を適用します。汎用 record 更新は自動的に再実行しません。会話 API は署名済みの操作 ID を確認し、競合した head と索引を読み直して最大 3 回まで再試行します。
 
 ## Python API
 
 ```python
-from soenan_arteligo_support.e2ee import EncryptedDirectory, EncryptedRecords, open_session
+from soenan_arteligo_support.e2ee import AcceptedCommand, EncryptedRecords, open_session
 from soenan_arteligo_support.transfer import download_file, upload_file, upload_wav_preview
 
-session = open_session(
-    account_origin="https://account.example",
-    arteligo_origin="https://arteligo.example",
-)
-try:
-    records = EncryptedRecords(session)
-    page = EncryptedDirectory(records, "prj_example").page(limit=100)
-    selected = records.read("prj_example", ["fil_example"])
-    result = upload_file(session, project_id="prj_example", source="./recording.wav")
-    upload_wav_preview(
-        session,
-        project_id="prj_example",
-        file_id=result["file_id"],
-        source="./recording.wav",
+
+def main():
+    session = open_session(
+        account_origin="https://account.example",
+        arteligo_origin="https://arteligo.example",
     )
-    download_file(
-        session,
-        project_id="prj_example",
-        file_id=result["file_id"],
-        destination="./downloaded.wav",
-    )
-finally:
-    session.lock()
+    try:
+        records = EncryptedRecords(session)
+        selected = records.read("prj_example", ["fil_example"])
+        result = upload_file(session, project_id="prj_example", source="./recording.wav")
+        if isinstance(result, AcceptedCommand):
+            print("保存済みですが、端末内の後処理は未完了です。")
+            return
+        preview = upload_wav_preview(
+            session,
+            project_id="prj_example",
+            file_id=result["file_id"],
+            source="./recording.wav",
+        )
+        if isinstance(preview, AcceptedCommand):
+            print("保存済みですが、端末内の後処理は未完了です。")
+            return
+        downloaded = download_file(
+            session,
+            project_id="prj_example",
+            file_id=result["file_id"],
+            destination="./downloaded.wav",
+        )
+        if isinstance(downloaded, AcceptedCommand):
+            print("保存済みの操作がありますが、原本の公開は完了していません。")
+            return
+    finally:
+        session.lock()
+
+
+main()
 ```
 
-`open_session` が失敗した場合は、作成途中の session を lock して例外を返します。正常に返された session は、呼び出し側が `finally` で lock します。
+`open_session`は認証と設定の取得を行い、保存済み端末があれば共通コアで設定のbundleを開いて`DeviceSession`を返します。途中で失敗した場合はsessionをlockして例外を返します。呼び出し側は返されたsessionを`finally`でlockします。起動時のOwner保守は行いません。
+
+保存を伴う公開APIは、正常な値と`AcceptedCommand`を区別します。後者は検証済みの元command・resultと、後続処理の最初の例外を`finalization_error`に保持します。保存後の失敗を未保存へ戻したり、正常なproject ID・空配列・取得完了で代用したりしません。受理済みの場合は後続業務を止め、同じ保存済みoperationから再開します。
+
+`AcceptedCommand`は要求された一連の処理全体の完了を意味しません。CLIとMCPは保存済みの事実と公開IDだけを表示し、署名証拠、例外原文、鍵を出力しません。
 
 `download_file` の出力先は `destination` の path に限ります。認証・復号を終えた一時ファイルを新規出力として公開し、既存ファイルは上書きしません。内部の stream 復号処理は公開 API ではありません。MCP の出力は、許可済み directory の検証と公開を行う専用経路を使います。
 
-`read` は指定した record だけを取得・復号します。`read_many` は複数 scope の概要などを一括で取得でき、ある scope の認可・鍵・検証の失敗を他の scope の結果から分離します。同じ署名付き command は応答内で一度検証します。鍵と証明は読み取り応答から受け取り、scope ごとの内容取得で全 project 一覧を読み直しません。
+`read` は指定した record だけを取得・復号します。`read_many` は指定した scope ごとに `read` を実行し、失敗した場合は例外を呼び出し側へ返します。鍵と証明は読み取り応答から受け取り、scope ごとの内容取得で全 project 一覧を読み直しません。
 
 `current(scope, kind=..., after_record_id=..., limit=256)` は種類ごとの現在値、`changes(scope, after=..., limit=256)` は内容を含まない変更ページを返します。変更 cursor は署名・復号を確認済みの record revision ではありません。利用する内容は `read` で取得・検証します。
 
 フォルダーは暗号化した header と B+tree を端末で解釈します。`EncryptedDirectory.page` は正の `limit` 件まで名前順で返し、既定の処理単位は 100 件です。続きは返却された `cursor` を渡します。folder の revision が変わると `revision_conflict` になるため、その folder の先頭から取り直します。アップロードは対象 folder の索引の枝と file record を一つの batch で更新し、他の folder の内容を読みません。
 
-新規projectの鍵は作成中の一端末だけでなく、検証済みの承認済み自己端末と現行の復旧先へ同じcommandで配ります。現在の端末状態と署名証明を区別し、初期配布の完全性・組織envelope・確定済み再送は[鍵配布契約](../arteligo/docs/E2EE.md)に従います。
+新規 project の独立した ProtectionKey は、現在の読者の受信鍵 U と、Owner 候補向けの事前配送先へ同じ command で封印します。候補向けの `owner_prepared` 配送は、その候補が現在 Owner になったときだけ取得できます。端末ごとに project 鍵を配り直さず、端末と U の配送、過去 P への直接配送、確定済み要求の再送は [鍵配布契約](../arteligo/docs/E2EE.md) に従います。
 
 ### 会話 API
 
 `EncryptedConversations(records, scope, checkpoint=...)` は Flutter と同じ会話形式 3 を読み書きします。新規 project は、空の会話 header 2 個と folder の索引を project 作成と同じ command で保存します。header がない project の通常操作は `content_format_update_required` を返します。`initialize()` は空の検証用 scope に header を明示作成する操作です。既存の会話を変換する機能はありません。
+
+会話 header の ID は `conversation_chat_header_<project ID>` と `conversation_comment_header_<project ID>` です。不変の project ID を使い、異なる P の初期 record を同じ ID にしません。
 
 chat の message ID は `cmsg_` と32桁の小文字 hex です。新しい operation ID は英数字・`_`・`-` の1〜123文字で、`cevt_` を付けた record ID が公開契約の128 byte 内に収まる形式を使います。本文や参照の件数で内容を打ち切りません。タブ・改行以外の制御文字、不正な参照と重複した参照は拒否します。参照は `kind` と対応する `fileId`、`stageId`、`commentId`、`replyId` を持つ形式を使い、既存の署名済み本文や識別子を書き換えません。
 
@@ -167,9 +178,11 @@ conversation.write_chat(
 
 DEK はアップロードごとに端末で生成します。ProjectKey で包んだ DEK と詳細 manifest は encrypted file record に保存し、server の object manifest には object ID、鍵世代、暗号文サイズ、chunk index と checksum だけを送ります。Bucket へは暗号文だけを直接送信し、OAuth token は転送しません。
 
-アップロード途中の情報は暗号化した`upl_` recordに保存します。ready前の再開では、`upload_id`と同じローカルファイルを指定し、内容の変更をchecksumで拒否します。objectが`ready`なら原本を開き直さず、再暗号化・再PUTをせずに、確定fileとdirectory recordの公開を同じrevision batchで完了します。保存の完了応答を失った場合も同じfile IDを返し、一覧の項目を増やしません。directoryとの競合では同じ`upload_id`で再実行します。ダウンロードは全chunkのchecksumとAES-GCM認証を終えてから、新しい保存先へ公開し、既存fileを上書きしません。
+アップロード途中の情報はimmutableな暗号化`upl_` planに保存します。beginとpublishの元署名commandを送信前に保護保存し、応答を失った場合は同じbytesを再送します。Bucket PUT後のpublishは、objectのready状態、完成file・locator・directoryとplan終端を同じrevision batchで確定します。公開済みなら原本を開き直さず、再暗号化・再PUTもしません。確定的なdirectory revision競合を、元publishの再署名で回避しません。ダウンロードは全chunkのchecksumとAES-GCM認証を終えてから、新しい保存先へ公開し、既存fileを上書きしません。
 
-`upload_wav_preview` と local MCP の `arteligo_upload_wav_preview` は、元ファイルの暗号文 checksum と手元の WAV が一致することを確認し、ローカルの FFmpeg / FFprobe で Opus に変換します。プレビュー専用の DEK を生成し、送信前に object ID、manifest、包んだ DEK を暗号化した file record に保存します。再生情報と音量解析も同じ record に保存するため、Flutter でも同じプレビューを再生できます。転送や保存の応答を失った場合は、同じ file ID と WAV を指定して再開します。object が `ready` なら変換と転送を繰り返さず、record の保存を完了します。転送途中の再開では変換後の checksum を照合し、同じ鍵と nonce で異なる内容を送ることを防ぎます。変換の失敗は元ファイルの保存を取り消しません。
+FlutterとSDKは同じ形式3の暗号化`file_locator`へ、leafと同一のentryを保存します。entryの日時・media・未知metadataを保持し、breadcrumbsは永続化しません。locationだけを持つ旧形式へfallbackせず、保存済みの旧署名commandも新形式へ作り直しません。形式切替のLocal検証では、新writerが作成した原本と旧形式の保留publishを分離します。
+
+`upload_wav_preview`とlocal MCPの`arteligo_upload_wav_preview`は、元ファイルの暗号文checksumと手元のWAVが一致することを確認し、ローカルのFFmpeg / FFprobeでOpusへ変換します。プレビュー専用のDEK・manifest・Owner checkpointと元fileのrevisionを暗号化planへ保存し、publishでfileのpreview情報とobjectのready状態を原子的に更新します。応答を失った場合は、同じfile IDとWAVから元のプレビューcommandを再送します。保留中の原本publishをプレビュー公開済みとは判定しません。転送途中の再開では変換後のchecksumを照合し、同じ鍵とnonceで異なる内容を送ることを防ぎます。プレビューの失敗は原本の保存を取り消しません。
 
 転送は 8 MiB を既定の chunk 単位として進め、1,024 chunks や 8 GiB では打ち切りません。各 chunk の nonce と AAD が使う 32 bit の chunk index と、共通 wire 整数の正確な表現範囲は暗号契約として検証します。各 Bucket 要求には接続、読み取り、要求全体の期限があります。プレビューの変換と解析にも期限を設けます。暗号処理中のメモリは chunk 単位に限定し、使用後の可変バッファーは上書きします。Python の文字列や GC 内の複製まで消去できるとは保証しません。
 
@@ -196,6 +209,6 @@ arteligo --account-origin ACCOUNT_ORIGIN --arteligo-origin ARTELIGO_ORIGIN \
 
 通常のOAuth refreshを除き、鍵の取得・更新、Owner準備、gate作成は行いません。クライアント側の信頼経路、Owner引継ぎ、ファイル復号をまとめて検証するコマンドではありません。メタCLIの`bin/soenan arteligo verify-owner`も同じ引数を受け取り、`PATH`上のこのSDKへ委譲します。
 
-SDKの業務検証には、配布packageとRust crypto runtime、実際のAccount・Arteligo・PostgreSQL・Bucketを使います。通常構成にValkeyはありません。通常クライアントでOAuthのブラウザー認証、OSの保護ストアへの保存、端末設定を行い、実際のファイルを保存・取得して内容を確認します。[workspaceの利用者フロー](../docs/local-development.md#利用者フローの確認)を参照してください。
+SDKの業務検証には、配布packageとRust crypto runtime、実際のAccount・Arteligo・PostgreSQL・Bucketを使います。通常構成にValkeyはありません。通常クライアントでOAuthのブラウザー認証、OSの保護ストアへの保存、端末設定を行い、実際のファイルを保存・取得して内容を確認します。[workspaceのユーザフロー](../docs/local-development.md#利用者フローの確認)を参照してください。
 
 micro・mock・fakeのsuite、大量metadataの生成・測定driver、専用DBus・keyring・native library環境、identity・source hash・証跡台帳を使うacceptance helperは削除しました。このリポジトリには、通常の認証からファイル転送までを自動確認するstandalone suiteはありません。

@@ -1,28 +1,32 @@
 """Trusted local Arteligo client; secret material never crosses the MCP boundary."""
 
-from ._admission import AdmissionResult
 from ._client import open_session
 from ._conversations import EncryptedConversations
-from ._crypto import E2eeCrypto, E2eeError
+from ._core import CryptoCore
+from ._crypto import E2eeError
 from ._directory import EncryptedDirectory
-from ._owner_access import OwnerAccess, OwnerAuthorityHead
+from ._invitations import approve_invitation, confirm_project_owner, create_invitation, request_invitation, revoke_invitation
 from ._records import EncryptedRecords
 from ._session import DeviceSession
+from ._signed_commands import AcceptedCommand
 from ._storage import CredentialItem, ProfileSecureStore, SecureStore, SystemSecureStore
 
 __all__ = [
-    "AdmissionResult",
+    "AcceptedCommand",
     "CredentialItem",
     "ProfileSecureStore",
     "DeviceSession",
-    "E2eeCrypto",
+    "CryptoCore",
     "E2eeError",
     "EncryptedConversations",
     "EncryptedDirectory",
     "EncryptedRecords",
-    "OwnerAccess",
-    "OwnerAuthorityHead",
     "SecureStore",
     "SystemSecureStore",
     "open_session",
+    "approve_invitation",
+    "confirm_project_owner",
+    "create_invitation",
+    "request_invitation",
+    "revoke_invitation",
 ]
