@@ -7,11 +7,18 @@ from functools import wraps
 
 from ._crypto import E2eeError
 from ._ordered_index import OrderedIndex
+from ._signed_commands import AcceptedCommand
 
 FORMAT = 3
-CHAT_HEADER = "conversation_chat_header"
-COMMENT_HEADER = "conversation_comment_header"
 MAX_INTEGER = 9_007_199_254_740_991
+
+
+def chat_header_id(scope):
+    return f"conversation_chat_header_{scope}"
+
+
+def comment_header_id(scope):
+    return f"conversation_comment_header_{scope}"
 
 
 def conflict_retry(method):
@@ -91,10 +98,10 @@ def write(identifier, kind, value, revision=0, immutable=False):
     }
 
 
-def initial_records():
+def initial_records(scope):
     return [
         write(
-            CHAT_HEADER,
+            chat_header_id(scope),
             "chat",
             {
                 "format": FORMAT,
@@ -105,7 +112,7 @@ def initial_records():
             },
         ),
         write(
-            COMMENT_HEADER,
+            comment_header_id(scope),
             "comment",
             {
                 "format": FORMAT,
@@ -149,17 +156,17 @@ class ConversationContext:
         self.checkpoint()
         return result
 
-    def _write(self, writes, preconditions=None):
+    def _write(self, writes, preconditions=None) -> AcceptedCommand | None:
         self.checkpoint()
         if not writes:
             raise E2eeError("conversation_write_limit")
-        epoch = self.records.session.scope_metadata(self.scope)["key_epoch"]
-        self.records.write(
+        outcome = self.records.write(
             self.scope,
-            key_epoch=epoch,
             records=writes,
             preconditions=preconditions or [],
         )
+        if isinstance(outcome, AcceptedCommand):
+            return outcome
         self.checkpoint()
 
     def _retry(self, operation):
@@ -230,10 +237,12 @@ class ConversationContext:
         ):
             raise E2eeError("revision_conflict")
 
-    def initialize(self):
-        existing = self._read([CHAT_HEADER, COMMENT_HEADER])
+    def initialize(self) -> AcceptedCommand | None:
+        chat_header = chat_header_id(self.scope)
+        comment_header = comment_header_id(self.scope)
+        existing = self._read([chat_header, comment_header])
         if not existing:
-            self._write(initial_records())
+            return self._write(initial_records(self.scope))
         else:
-            self._header(existing.get(CHAT_HEADER), "chat", "chat_header")
-            self._header(existing.get(COMMENT_HEADER), "comment", "comment_header")
+            self._header(existing.get(chat_header), "chat", "chat_header")
+            self._header(existing.get(comment_header), "comment", "comment_header")

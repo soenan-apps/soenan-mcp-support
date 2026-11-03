@@ -1,0 +1,264 @@
+from http import HTTPStatus
+from typing import Any
+from urllib.parse import quote
+
+import httpx
+
+from ... import errors
+from ...client import AuthenticatedClient, Client
+from ...models.error_response import ErrorResponse
+from ...models.organization_mutation import OrganizationMutation
+from ...models.update_organization_role_request import UpdateOrganizationRoleRequest
+from ...models.update_organization_role_sec_fetch_site import (
+    UpdateOrganizationRoleSecFetchSite,
+)
+from ...types import UNSET, Response, Unset
+
+
+def _get_kwargs(
+    organization_id: str,
+    role_key: str,
+    *,
+    body: UpdateOrganizationRoleRequest,
+    origin: str,
+    sec_fetch_site: UpdateOrganizationRoleSecFetchSite | Unset = UNSET,
+) -> dict[str, Any]:
+    headers: dict[str, Any] = {}
+    headers["Origin"] = origin
+
+    if not isinstance(sec_fetch_site, Unset):
+        headers["Sec-Fetch-Site"] = str(sec_fetch_site)
+
+    _kwargs: dict[str, Any] = {
+        "method": "patch",
+        "url": "/api/organizations/{organization_id}/roles/{role_key}".format(
+            organization_id=quote(str(organization_id), safe=""),
+            role_key=quote(str(role_key), safe=""),
+        ),
+    }
+
+    _kwargs["json"] = body.to_dict()
+
+    headers["Content-Type"] = "application/json"
+
+    _kwargs["headers"] = headers
+    return _kwargs
+
+
+def _parse_response(
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> ErrorResponse | OrganizationMutation | None:
+    if response.status_code == 200:
+        response_200 = OrganizationMutation.from_dict(response.json())
+
+        return response_200
+
+    if response.status_code == 400:
+        response_400 = ErrorResponse.from_dict(response.json())
+
+        return response_400
+
+    if response.status_code == 401:
+        response_401 = ErrorResponse.from_dict(response.json())
+
+        return response_401
+
+    if response.status_code == 403:
+        response_403 = ErrorResponse.from_dict(response.json())
+
+        return response_403
+
+    if response.status_code == 404:
+        response_404 = ErrorResponse.from_dict(response.json())
+
+        return response_404
+
+    if response.status_code == 409:
+        response_409 = ErrorResponse.from_dict(response.json())
+
+        return response_409
+
+    if response.status_code == 413:
+        response_413 = ErrorResponse.from_dict(response.json())
+
+        return response_413
+
+    if response.status_code == 415:
+        response_415 = ErrorResponse.from_dict(response.json())
+
+        return response_415
+
+    if response.status_code == 503:
+        response_503 = ErrorResponse.from_dict(response.json())
+
+        return response_503
+
+    if client.raise_on_unexpected_status:
+        raise errors.UnexpectedStatus(response.status_code, response.content)
+    else:
+        return None
+
+
+def _build_response(
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> Response[ErrorResponse | OrganizationMutation]:
+    return Response(
+        status_code=HTTPStatus(response.status_code),
+        content=response.content,
+        headers=response.headers,
+        parsed=_parse_response(client=client, response=response),
+    )
+
+
+def sync_detailed(
+    organization_id: str,
+    role_key: str,
+    *,
+    client: AuthenticatedClient,
+    body: UpdateOrganizationRoleRequest,
+    origin: str,
+    sec_fetch_site: UpdateOrganizationRoleSecFetchSite | Unset = UNSET,
+) -> Response[ErrorResponse | OrganizationMutation]:
+    """Update an active custom organization role.
+
+    Args:
+        organization_id (str):
+        role_key (str):
+        origin (str):
+        sec_fetch_site (UpdateOrganizationRoleSecFetchSite | Unset):
+        body (UpdateOrganizationRoleRequest):
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        Response[ErrorResponse | OrganizationMutation]
+    """
+
+    kwargs = _get_kwargs(
+        organization_id=organization_id,
+        role_key=role_key,
+        body=body,
+        origin=origin,
+        sec_fetch_site=sec_fetch_site,
+    )
+
+    response = client.get_httpx_client().request(
+        **kwargs,
+    )
+
+    return _build_response(client=client, response=response)
+
+
+def sync(
+    organization_id: str,
+    role_key: str,
+    *,
+    client: AuthenticatedClient,
+    body: UpdateOrganizationRoleRequest,
+    origin: str,
+    sec_fetch_site: UpdateOrganizationRoleSecFetchSite | Unset = UNSET,
+) -> ErrorResponse | OrganizationMutation | None:
+    """Update an active custom organization role.
+
+    Args:
+        organization_id (str):
+        role_key (str):
+        origin (str):
+        sec_fetch_site (UpdateOrganizationRoleSecFetchSite | Unset):
+        body (UpdateOrganizationRoleRequest):
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        ErrorResponse | OrganizationMutation
+    """
+
+    return sync_detailed(
+        organization_id=organization_id,
+        role_key=role_key,
+        client=client,
+        body=body,
+        origin=origin,
+        sec_fetch_site=sec_fetch_site,
+    ).parsed
+
+
+async def asyncio_detailed(
+    organization_id: str,
+    role_key: str,
+    *,
+    client: AuthenticatedClient,
+    body: UpdateOrganizationRoleRequest,
+    origin: str,
+    sec_fetch_site: UpdateOrganizationRoleSecFetchSite | Unset = UNSET,
+) -> Response[ErrorResponse | OrganizationMutation]:
+    """Update an active custom organization role.
+
+    Args:
+        organization_id (str):
+        role_key (str):
+        origin (str):
+        sec_fetch_site (UpdateOrganizationRoleSecFetchSite | Unset):
+        body (UpdateOrganizationRoleRequest):
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        Response[ErrorResponse | OrganizationMutation]
+    """
+
+    kwargs = _get_kwargs(
+        organization_id=organization_id,
+        role_key=role_key,
+        body=body,
+        origin=origin,
+        sec_fetch_site=sec_fetch_site,
+    )
+
+    response = await client.get_async_httpx_client().request(**kwargs)
+
+    return _build_response(client=client, response=response)
+
+
+async def asyncio(
+    organization_id: str,
+    role_key: str,
+    *,
+    client: AuthenticatedClient,
+    body: UpdateOrganizationRoleRequest,
+    origin: str,
+    sec_fetch_site: UpdateOrganizationRoleSecFetchSite | Unset = UNSET,
+) -> ErrorResponse | OrganizationMutation | None:
+    """Update an active custom organization role.
+
+    Args:
+        organization_id (str):
+        role_key (str):
+        origin (str):
+        sec_fetch_site (UpdateOrganizationRoleSecFetchSite | Unset):
+        body (UpdateOrganizationRoleRequest):
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        ErrorResponse | OrganizationMutation
+    """
+
+    return (
+        await asyncio_detailed(
+            organization_id=organization_id,
+            role_key=role_key,
+            client=client,
+            body=body,
+            origin=origin,
+            sec_fetch_site=sec_fetch_site,
+        )
+    ).parsed

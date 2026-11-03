@@ -1,0 +1,223 @@
+from http import HTTPStatus
+from typing import Any
+from urllib.parse import quote
+from uuid import UUID
+
+import httpx
+
+from ... import errors
+from ...client import AuthenticatedClient, Client
+from ...models.commerce_management_session import CommerceManagementSession
+from ...models.create_personal_plan_change_session_sec_fetch_site import (
+    CreatePersonalPlanChangeSessionSecFetchSite,
+)
+from ...models.error_response import ErrorResponse
+from ...types import UNSET, Response, Unset
+
+
+def _get_kwargs(
+    purchase_id: UUID,
+    *,
+    origin: str,
+    sec_fetch_site: CreatePersonalPlanChangeSessionSecFetchSite | Unset = UNSET,
+) -> dict[str, Any]:
+    headers: dict[str, Any] = {}
+    headers["Origin"] = origin
+
+    if not isinstance(sec_fetch_site, Unset):
+        headers["Sec-Fetch-Site"] = str(sec_fetch_site)
+
+    _kwargs: dict[str, Any] = {
+        "method": "post",
+        "url": "/api/me/contracts/{purchase_id}/plan-change-session".format(
+            purchase_id=quote(str(purchase_id), safe=""),
+        ),
+    }
+
+    _kwargs["headers"] = headers
+    return _kwargs
+
+
+def _parse_response(
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> CommerceManagementSession | ErrorResponse | None:
+    if response.status_code == 200:
+        response_200 = CommerceManagementSession.from_dict(response.json())
+
+        return response_200
+
+    if response.status_code == 400:
+        response_400 = ErrorResponse.from_dict(response.json())
+
+        return response_400
+
+    if response.status_code == 401:
+        response_401 = ErrorResponse.from_dict(response.json())
+
+        return response_401
+
+    if response.status_code == 403:
+        response_403 = ErrorResponse.from_dict(response.json())
+
+        return response_403
+
+    if response.status_code == 404:
+        response_404 = ErrorResponse.from_dict(response.json())
+
+        return response_404
+
+    if response.status_code == 409:
+        response_409 = ErrorResponse.from_dict(response.json())
+
+        return response_409
+
+    if response.status_code == 503:
+        response_503 = ErrorResponse.from_dict(response.json())
+
+        return response_503
+
+    if client.raise_on_unexpected_status:
+        raise errors.UnexpectedStatus(response.status_code, response.content)
+    else:
+        return None
+
+
+def _build_response(
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> Response[CommerceManagementSession | ErrorResponse]:
+    return Response(
+        status_code=HTTPStatus(response.status_code),
+        content=response.content,
+        headers=response.headers,
+        parsed=_parse_response(client=client, response=response),
+    )
+
+
+def sync_detailed(
+    purchase_id: UUID,
+    *,
+    client: AuthenticatedClient,
+    origin: str,
+    sec_fetch_site: CreatePersonalPlanChangeSessionSecFetchSite | Unset = UNSET,
+) -> Response[CommerceManagementSession | ErrorResponse]:
+    """Open a scoped subscription plan, quantity, and discount change.
+
+    Args:
+        purchase_id (UUID):
+        origin (str):
+        sec_fetch_site (CreatePersonalPlanChangeSessionSecFetchSite | Unset):
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        Response[CommerceManagementSession | ErrorResponse]
+    """
+
+    kwargs = _get_kwargs(
+        purchase_id=purchase_id,
+        origin=origin,
+        sec_fetch_site=sec_fetch_site,
+    )
+
+    response = client.get_httpx_client().request(
+        **kwargs,
+    )
+
+    return _build_response(client=client, response=response)
+
+
+def sync(
+    purchase_id: UUID,
+    *,
+    client: AuthenticatedClient,
+    origin: str,
+    sec_fetch_site: CreatePersonalPlanChangeSessionSecFetchSite | Unset = UNSET,
+) -> CommerceManagementSession | ErrorResponse | None:
+    """Open a scoped subscription plan, quantity, and discount change.
+
+    Args:
+        purchase_id (UUID):
+        origin (str):
+        sec_fetch_site (CreatePersonalPlanChangeSessionSecFetchSite | Unset):
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        CommerceManagementSession | ErrorResponse
+    """
+
+    return sync_detailed(
+        purchase_id=purchase_id,
+        client=client,
+        origin=origin,
+        sec_fetch_site=sec_fetch_site,
+    ).parsed
+
+
+async def asyncio_detailed(
+    purchase_id: UUID,
+    *,
+    client: AuthenticatedClient,
+    origin: str,
+    sec_fetch_site: CreatePersonalPlanChangeSessionSecFetchSite | Unset = UNSET,
+) -> Response[CommerceManagementSession | ErrorResponse]:
+    """Open a scoped subscription plan, quantity, and discount change.
+
+    Args:
+        purchase_id (UUID):
+        origin (str):
+        sec_fetch_site (CreatePersonalPlanChangeSessionSecFetchSite | Unset):
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        Response[CommerceManagementSession | ErrorResponse]
+    """
+
+    kwargs = _get_kwargs(
+        purchase_id=purchase_id,
+        origin=origin,
+        sec_fetch_site=sec_fetch_site,
+    )
+
+    response = await client.get_async_httpx_client().request(**kwargs)
+
+    return _build_response(client=client, response=response)
+
+
+async def asyncio(
+    purchase_id: UUID,
+    *,
+    client: AuthenticatedClient,
+    origin: str,
+    sec_fetch_site: CreatePersonalPlanChangeSessionSecFetchSite | Unset = UNSET,
+) -> CommerceManagementSession | ErrorResponse | None:
+    """Open a scoped subscription plan, quantity, and discount change.
+
+    Args:
+        purchase_id (UUID):
+        origin (str):
+        sec_fetch_site (CreatePersonalPlanChangeSessionSecFetchSite | Unset):
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        CommerceManagementSession | ErrorResponse
+    """
+
+    return (
+        await asyncio_detailed(
+            purchase_id=purchase_id,
+            client=client,
+            origin=origin,
+            sec_fetch_site=sec_fetch_site,
+        )
+    ).parsed

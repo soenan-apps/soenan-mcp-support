@@ -1,14 +1,24 @@
-"""Generate the public SDK client from Arteligo's canonical OpenAPI."""
+"""Generate public SDK clients from the product-owned canonical OpenAPI."""
 
 from __future__ import annotations
 
+import ast
+import json
 import argparse
 import os
 from pathlib import Path
 import subprocess
+import re
+import shutil
+import tempfile
+
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
-GENERATED = ROOT / "generated/arteligo_public_api_client"
+CLIENT_PACKAGES = {
+    "arteligo": "arteligo_public_api_client",
+    "account": "account_public_api_client",
+}
 
 
 def generate(contract: Path, output: Path) -> None:
@@ -21,21 +31,123 @@ def generate(contract: Path, output: Path) -> None:
         )
         if name in os.environ
     }
-    subprocess.run(
-        ["uvx", "--from", "openapi-python-client==0.28.0", "--with", "ruff==0.16.9",
-         "openapi-python-client", "generate", "--path", str(contract), "--meta", "none",
-         "--output-path", str(output), "--overwrite"],
-        cwd=ROOT, env=environment, check=True,
-    )
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=f".{output.name}-", dir=output.parent) as temporary:
+        staged = Path(temporary) / output.name
+        subprocess.run(
+            ["uvx", "--from", "openapi-python-client==0.28.0", "--with", "ruff==0.16.9",
+             "openapi-python-client", "generate", "--path", str(contract), "--meta", "none",
+             "--output-path", str(staged),
+             "--config", str(ROOT / "tool" / "public-contract-config.json")],
+            cwd=ROOT, env=environment, check=True,
+        )
+        emit_operations(contract, staged)
+        previous = Path(temporary) / "previous"
+        if output.exists():
+            output.rename(previous)
+        try:
+            staged.rename(output)
+        except BaseException:
+            if previous.exists():
+                previous.rename(output)
+            raise
+        if previous.exists():
+            shutil.rmtree(previous)
+
+
+def route_identity(method: str, path: str) -> tuple[str, str]:
+    # Generated Python identifiers normalize canonical path parameter spelling.
+    return method.lower(), re.sub(r"\{[^{}]+\}", "{}", path)
+
+
+def emit_operations(contract: Path, output: Path) -> None:
+    """Bind canonical operation IDs to the actual generated typed endpoints."""
+    document = yaml.safe_load(contract.read_text())
+    operations = {
+        route_identity(method, path): operation["operationId"]
+        for path, item in document["paths"].items()
+        for method, operation in item.items()
+        if isinstance(operation, dict) and "operationId" in operation
+    }
+    expected_count = sum(
+        1 for item in document["paths"].values() for operation in item.values()
+        if isinstance(operation, dict) and "operationId" in operation)
+    if len(operations) != expected_count:
+        raise ValueError("Canonical routes collide after path parameter normalization")
+    imports = ["from .types import File"]
+    entries = []
+    for index, path in enumerate(sorted((output / "api").glob("*/*.py"))):
+        tree = ast.parse(path.read_text())
+        kwargs = next((node for node in tree.body
+                       if isinstance(node, ast.FunctionDef) and node.name == "_get_kwargs"), None)
+        if kwargs is None:
+            continue
+        route = next((node.value for node in ast.walk(kwargs)
+                      if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
+                      and node.target.id == "_kwargs" and isinstance(node.value, ast.Dict)), None)
+        if route is None:
+            continue
+        literals = {key.value: value.value for key, value in zip(route.keys, route.values)
+                    if isinstance(key, ast.Constant) and isinstance(value, ast.Constant)}
+        # Parameterized URLs are f-strings in the generated source.
+        for key, value in zip(route.keys, route.values):
+            if isinstance(key, ast.Constant) and key.value == "url" and isinstance(value, ast.JoinedStr):
+                literals["url"] = "".join(
+                    part.value if isinstance(part, ast.Constant)
+                    else "{" + ast.unparse(part.value) + "}" for part in value.values)
+            elif (isinstance(key, ast.Constant) and key.value == "url"
+                  and isinstance(value, ast.Call) and isinstance(value.func, ast.Attribute)
+                  and value.func.attr == "format" and isinstance(value.func.value, ast.Constant)):
+                literals["url"] = value.func.value.value
+        operation = operations[route_identity(literals["method"], literals["url"])]
+        alias = f"_endpoint_{index}"
+        imports.append(f"from .api.{path.parent.name} import {path.stem} as {alias}")
+        conversions = []
+        for argument in kwargs.args.args + kwargs.args.kwonlyargs:
+            if argument.annotation is None:
+                continue
+            names = [node.id for node in ast.walk(argument.annotation) if isinstance(node, ast.Name)]
+            model = next((name for name in names
+                          if name not in {"str", "int", "bool", "float", "list", "dict", "Any", "Unset"}), None)
+            if model is not None:
+                if argument.arg == "body":
+                    conversion = ("File(payload=body)" if model == "File"
+                                  else f"{alias}.{model}.from_dict(body)")
+                    conversions.append(f"    parameters['body'] = {conversion}")
+                else:
+                    conversions.append(
+                        f"    if {argument.arg!r} in parameters:\n"
+                        f"        parameters[{argument.arg!r}] = {alias}.{model}(parameters[{argument.arg!r}])")
+        name = f"_call_{index}"
+        entries.append((operation, name, alias))
+        imports.extend([
+            "", f"def {name}(client, body=None, **parameters):",
+            *conversions,
+            f"    return {alias}.sync_detailed(client=client, **parameters)",
+        ])
+    imports.extend(["", "OPERATIONS = {", *[
+        f"    {json.dumps(operation)}: {name}," for operation, name, _ in entries], "}", "",
+        "STREAM_OPERATIONS = {", *[
+        f"    {json.dumps(operation)}: {alias}._get_kwargs,"
+        for operation, _, alias in entries
+        if any(item.get("operationId") == operation and
+               "application/x-ndjson" in item.get("requestBody", {}).get("content", {})
+               for paths in document["paths"].values() for item in paths.values()
+               if isinstance(item, dict))], "}", ""])
+    (output / "operations.py").write_text("\n".join(imports))
+    emitted = {operation for operation, _, _ in entries}
+    if emitted != set(operations.values()) or len(entries) != len(emitted):
+        raise ValueError("Generated endpoints do not exactly cover canonical operation IDs")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("generate",))
     parser.add_argument("--contract", required=True, type=Path)
+    parser.add_argument("--product", choices=CLIENT_PACKAGES, default="arteligo")
     args = parser.parse_args()
     contract = args.contract.resolve(strict=True)
-    generate(contract, GENERATED)
+    generate(contract, ROOT / "generated" / CLIENT_PACKAGES[args.product])
 
 
 if __name__ == "__main__":

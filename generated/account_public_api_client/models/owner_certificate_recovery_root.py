@@ -1,0 +1,66 @@
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import Any, TypeVar
+
+from attrs import define as _attrs_define
+
+T = TypeVar("T", bound="OwnerCertificateRecoveryRoot")
+
+
+@_attrs_define
+class OwnerCertificateRecoveryRoot:
+    """
+    Attributes:
+        recovery_id (str):
+        encryption_public_key (str):
+        signing_public_key (str):
+        generation (int):
+    """
+
+    recovery_id: str
+    encryption_public_key: str
+    signing_public_key: str
+    generation: int
+
+    def to_dict(self) -> dict[str, Any]:
+        recovery_id = self.recovery_id
+
+        encryption_public_key = self.encryption_public_key
+
+        signing_public_key = self.signing_public_key
+
+        generation = self.generation
+
+        field_dict: dict[str, Any] = {}
+
+        field_dict.update(
+            {
+                "recovery_id": recovery_id,
+                "encryption_public_key": encryption_public_key,
+                "signing_public_key": signing_public_key,
+                "generation": generation,
+            }
+        )
+
+        return field_dict
+
+    @classmethod
+    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        d = dict(src_dict)
+        recovery_id = d.pop("recovery_id")
+
+        encryption_public_key = d.pop("encryption_public_key")
+
+        signing_public_key = d.pop("signing_public_key")
+
+        generation = d.pop("generation")
+
+        owner_certificate_recovery_root = cls(
+            recovery_id=recovery_id,
+            encryption_public_key=encryption_public_key,
+            signing_public_key=signing_public_key,
+            generation=generation,
+        )
+
+        return owner_certificate_recovery_root

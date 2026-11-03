@@ -12,6 +12,7 @@ from ._conversation_context import (
     write,
 )
 from ._crypto import E2eeError
+from ._signed_commands import AcceptedCommand
 
 
 def valid_body(original, body):
@@ -125,7 +126,7 @@ class TextOperations:
         body,
         committed_at,
         parent_id=None,
-    ):
+    ) -> AcceptedCommand | None:
         number(expected_revision, 1)
         text(operation_id)
         try:
@@ -174,7 +175,7 @@ class TextOperations:
             reference(head["value"].get("edits")),
             {"name": ascending(revision + 1), "id": event_id, "revision": revision + 1},
         )
-        self._write(
+        return self._write(
             [
                 write(event_id, "comment", event, immutable=True),
                 *nodes,
@@ -195,10 +196,12 @@ class TextOperations:
 
     def edit_comment(
         self, identifier, *, operation_id, expected_revision, body, committed_at
-    ):
-        self._edit_text(
+    ) -> dict | AcceptedCommand | None:
+        outcome = self._edit_text(
             identifier, "comment", operation_id, expected_revision, body, committed_at
         )
+        if isinstance(outcome, AcceptedCommand):
+            return outcome
         return self.comment_thread(identifier)
 
     def edit_reply(
@@ -210,8 +213,8 @@ class TextOperations:
         expected_revision,
         body,
         committed_at,
-    ):
-        self._edit_text(
+    ) -> dict | AcceptedCommand | None:
+        outcome = self._edit_text(
             identifier,
             "reply",
             operation_id,
@@ -220,4 +223,6 @@ class TextOperations:
             committed_at,
             parent_id,
         )
+        if isinstance(outcome, AcceptedCommand):
+            return outcome
         return self.comment_reply(identifier)

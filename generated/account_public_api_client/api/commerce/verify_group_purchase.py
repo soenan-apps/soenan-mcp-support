@@ -1,0 +1,236 @@
+from http import HTTPStatus
+from typing import Any
+from urllib.parse import quote
+
+import httpx
+
+from ... import errors
+from ...client import AuthenticatedClient, Client
+from ...models.commerce_verify_request import CommerceVerifyRequest
+from ...models.commerce_verify_response import CommerceVerifyResponse
+from ...models.error_response import ErrorResponse
+from ...models.verify_group_purchase_sec_fetch_site import (
+    VerifyGroupPurchaseSecFetchSite,
+)
+from ...types import UNSET, Response, Unset
+
+
+def _get_kwargs(
+    organization_id: str,
+    *,
+    body: CommerceVerifyRequest,
+    origin: str,
+    sec_fetch_site: VerifyGroupPurchaseSecFetchSite | Unset = UNSET,
+) -> dict[str, Any]:
+    headers: dict[str, Any] = {}
+    headers["Origin"] = origin
+
+    if not isinstance(sec_fetch_site, Unset):
+        headers["Sec-Fetch-Site"] = str(sec_fetch_site)
+
+    _kwargs: dict[str, Any] = {
+        "method": "post",
+        "url": "/api/organizations/{organization_id}/store-purchases/verify".format(
+            organization_id=quote(str(organization_id), safe=""),
+        ),
+    }
+
+    _kwargs["json"] = body.to_dict()
+
+    headers["Content-Type"] = "application/json"
+
+    _kwargs["headers"] = headers
+    return _kwargs
+
+
+def _parse_response(
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> CommerceVerifyResponse | ErrorResponse | None:
+    if response.status_code == 200:
+        response_200 = CommerceVerifyResponse.from_dict(response.json())
+
+        return response_200
+
+    if response.status_code == 400:
+        response_400 = ErrorResponse.from_dict(response.json())
+
+        return response_400
+
+    if response.status_code == 401:
+        response_401 = ErrorResponse.from_dict(response.json())
+
+        return response_401
+
+    if response.status_code == 403:
+        response_403 = ErrorResponse.from_dict(response.json())
+
+        return response_403
+
+    if response.status_code == 404:
+        response_404 = ErrorResponse.from_dict(response.json())
+
+        return response_404
+
+    if response.status_code == 409:
+        response_409 = ErrorResponse.from_dict(response.json())
+
+        return response_409
+
+    if response.status_code == 503:
+        response_503 = ErrorResponse.from_dict(response.json())
+
+        return response_503
+
+    if client.raise_on_unexpected_status:
+        raise errors.UnexpectedStatus(response.status_code, response.content)
+    else:
+        return None
+
+
+def _build_response(
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> Response[CommerceVerifyResponse | ErrorResponse]:
+    return Response(
+        status_code=HTTPStatus(response.status_code),
+        content=response.content,
+        headers=response.headers,
+        parsed=_parse_response(client=client, response=response),
+    )
+
+
+def sync_detailed(
+    organization_id: str,
+    *,
+    client: AuthenticatedClient,
+    body: CommerceVerifyRequest,
+    origin: str,
+    sec_fetch_site: VerifyGroupPurchaseSecFetchSite | Unset = UNSET,
+) -> Response[CommerceVerifyResponse | ErrorResponse]:
+    """
+    Args:
+        organization_id (str):
+        origin (str):
+        sec_fetch_site (VerifyGroupPurchaseSecFetchSite | Unset):
+        body (CommerceVerifyRequest):
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        Response[CommerceVerifyResponse | ErrorResponse]
+    """
+
+    kwargs = _get_kwargs(
+        organization_id=organization_id,
+        body=body,
+        origin=origin,
+        sec_fetch_site=sec_fetch_site,
+    )
+
+    response = client.get_httpx_client().request(
+        **kwargs,
+    )
+
+    return _build_response(client=client, response=response)
+
+
+def sync(
+    organization_id: str,
+    *,
+    client: AuthenticatedClient,
+    body: CommerceVerifyRequest,
+    origin: str,
+    sec_fetch_site: VerifyGroupPurchaseSecFetchSite | Unset = UNSET,
+) -> CommerceVerifyResponse | ErrorResponse | None:
+    """
+    Args:
+        organization_id (str):
+        origin (str):
+        sec_fetch_site (VerifyGroupPurchaseSecFetchSite | Unset):
+        body (CommerceVerifyRequest):
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        CommerceVerifyResponse | ErrorResponse
+    """
+
+    return sync_detailed(
+        organization_id=organization_id,
+        client=client,
+        body=body,
+        origin=origin,
+        sec_fetch_site=sec_fetch_site,
+    ).parsed
+
+
+async def asyncio_detailed(
+    organization_id: str,
+    *,
+    client: AuthenticatedClient,
+    body: CommerceVerifyRequest,
+    origin: str,
+    sec_fetch_site: VerifyGroupPurchaseSecFetchSite | Unset = UNSET,
+) -> Response[CommerceVerifyResponse | ErrorResponse]:
+    """
+    Args:
+        organization_id (str):
+        origin (str):
+        sec_fetch_site (VerifyGroupPurchaseSecFetchSite | Unset):
+        body (CommerceVerifyRequest):
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        Response[CommerceVerifyResponse | ErrorResponse]
+    """
+
+    kwargs = _get_kwargs(
+        organization_id=organization_id,
+        body=body,
+        origin=origin,
+        sec_fetch_site=sec_fetch_site,
+    )
+
+    response = await client.get_async_httpx_client().request(**kwargs)
+
+    return _build_response(client=client, response=response)
+
+
+async def asyncio(
+    organization_id: str,
+    *,
+    client: AuthenticatedClient,
+    body: CommerceVerifyRequest,
+    origin: str,
+    sec_fetch_site: VerifyGroupPurchaseSecFetchSite | Unset = UNSET,
+) -> CommerceVerifyResponse | ErrorResponse | None:
+    """
+    Args:
+        organization_id (str):
+        origin (str):
+        sec_fetch_site (VerifyGroupPurchaseSecFetchSite | Unset):
+        body (CommerceVerifyRequest):
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        CommerceVerifyResponse | ErrorResponse
+    """
+
+    return (
+        await asyncio_detailed(
+            organization_id=organization_id,
+            client=client,
+            body=body,
+            origin=origin,
+            sec_fetch_site=sec_fetch_site,
+        )
+    ).parsed

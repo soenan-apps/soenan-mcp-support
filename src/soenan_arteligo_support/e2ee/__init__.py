@@ -2,25 +2,31 @@
 
 from ._client import open_session
 from ._conversations import EncryptedConversations
-from ._crypto import E2eeCrypto, E2eeError
+from ._core import CryptoCore
+from ._crypto import E2eeError
 from ._directory import EncryptedDirectory
-from ._directory_migration import abort_directory_migration, migrate_directory
+from ._invitations import approve_invitation, confirm_project_owner, create_invitation, request_invitation, revoke_invitation
 from ._records import EncryptedRecords
 from ._session import DeviceSession
+from ._signed_commands import AcceptedCommand
 from ._storage import CredentialItem, ProfileSecureStore, SecureStore, SystemSecureStore
 
 __all__ = [
+    "AcceptedCommand",
     "CredentialItem",
     "ProfileSecureStore",
     "DeviceSession",
-    "E2eeCrypto",
+    "CryptoCore",
     "E2eeError",
     "EncryptedConversations",
     "EncryptedDirectory",
     "EncryptedRecords",
     "SecureStore",
     "SystemSecureStore",
-    "abort_directory_migration",
-    "migrate_directory",
     "open_session",
+    "approve_invitation",
+    "confirm_project_owner",
+    "create_invitation",
+    "request_invitation",
+    "revoke_invitation",
 ]

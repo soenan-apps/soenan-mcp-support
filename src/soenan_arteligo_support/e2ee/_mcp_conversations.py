@@ -52,9 +52,6 @@ class ConversationCursor(BaseModel):
 
 
 def register_conversation_tools(server, run):
-    async def invoke(operation):
-        return await anyio.to_thread.run_sync(run, operation)
-
     def cursor_page(result):
         key = result["next_key"]
         return {**result, "next_key": {"name": key[0], "id": key[1]} if key else None}
@@ -88,64 +85,64 @@ def register_conversation_tools(server, run):
         }
 
     @server.tool()
-    async def arteligo_chat_messages(
+    def arteligo_chat_messages(
         project_id: Identifier,
         before_sequence: Revision | None = None,
         limit: PageLimit = 100,
     ) -> dict[str, Any]:
         """Read a verified newest-first chat page without enumerating edit history."""
-        return await invoke(
+        return run(
             lambda session: conversations(session, project_id).chat_messages(
                 before_sequence=before_sequence, limit=limit
             )
         )
 
     @server.tool()
-    async def arteligo_chat_events(
+    def arteligo_chat_events(
         project_id: Identifier, after: Position = 0, limit: EventLimit = 200
     ) -> dict[str, Any]:
         """Read a bounded contiguous event page after the saved sequence."""
-        return await invoke(
+        return run(
             lambda session: conversations(session, project_id).chat_events(
                 after=after, limit=limit
             )
         )
 
     @server.tool()
-    async def arteligo_chat_message(
+    def arteligo_chat_message(
         project_id: Identifier, message_id: MessageID
     ) -> dict[str, Any]:
         """Read one signed current message, including a terminal deletion proof."""
-        return await invoke(
+        return run(
             lambda session: {
                 "message": conversations(session, project_id).chat_message(message_id)
             }
         )
 
     @server.tool()
-    async def arteligo_chat_message_history(
+    def arteligo_chat_message_history(
         project_id: Identifier, message_id: MessageID
     ) -> dict[str, Any]:
         """Explicitly verify every message revision and return the verified final event."""
-        return await invoke(
+        return run(
             lambda session: conversations(session, project_id).chat_message_history(
                 message_id
             )
         )
 
     @server.tool()
-    async def arteligo_chat_operation(
+    def arteligo_chat_operation(
         project_id: Identifier, operation_id: ChatOperationID
     ) -> dict[str, Any]:
         """Confirm an immutable operation after a lost response, reusing its operation ID."""
-        return await invoke(
+        return run(
             lambda session: {
                 "event": conversations(session, project_id).chat_operation(operation_id)
             }
         )
 
     @server.tool()
-    async def arteligo_chat_send(
+    def arteligo_chat_send(
         project_id: Identifier,
         message_id: MessageID,
         operation_id: ChatOperationID,
@@ -154,7 +151,7 @@ def register_conversation_tools(server, run):
         references: References | None = None,
     ) -> dict[str, Any]:
         """Send a chat message and indexes atomically; retain both IDs for retries."""
-        return await invoke(
+        return run(
             lambda session: conversations(session, project_id).write_chat(
                 type="sent",
                 message_id=message_id,
@@ -166,7 +163,7 @@ def register_conversation_tools(server, run):
         )
 
     @server.tool()
-    async def arteligo_chat_edit(
+    def arteligo_chat_edit(
         project_id: Identifier,
         message_id: MessageID,
         operation_id: ChatOperationID,
@@ -175,7 +172,7 @@ def register_conversation_tools(server, run):
         committed_at: Timestamp,
     ) -> dict[str, Any]:
         """Edit a message authored by this account using its current content revision."""
-        return await invoke(
+        return run(
             lambda session: conversations(session, project_id).write_chat(
                 type="edited",
                 message_id=message_id,
@@ -187,7 +184,7 @@ def register_conversation_tools(server, run):
         )
 
     @server.tool()
-    async def arteligo_chat_delete(
+    def arteligo_chat_delete(
         project_id: Identifier,
         message_id: MessageID,
         operation_id: ChatOperationID,
@@ -195,7 +192,7 @@ def register_conversation_tools(server, run):
         committed_at: Timestamp,
     ) -> dict[str, Any]:
         """Append an immutable deletion event and terminal proof in the same batch."""
-        return await invoke(
+        return run(
             lambda session: conversations(session, project_id).write_chat(
                 type="deleted",
                 message_id=message_id,
@@ -206,14 +203,14 @@ def register_conversation_tools(server, run):
         )
 
     @server.tool()
-    async def arteligo_comment_threads(
+    def arteligo_comment_threads(
         project_id: Identifier,
         anchor: dict[str, Any] | None = None,
         after: ConversationCursor | None = None,
         limit: PageLimit = 100,
     ) -> dict[str, Any]:
         """Read a verified comment page, optionally restricted to one encrypted anchor."""
-        return await invoke(
+        return run(
             lambda session: cursor_page(
                 conversations(session, project_id).comment_threads(
                     anchor=anchor, after=after.key() if after else None, limit=limit
@@ -222,25 +219,25 @@ def register_conversation_tools(server, run):
         )
 
     @server.tool()
-    async def arteligo_comment_thread(
+    def arteligo_comment_thread(
         project_id: Identifier, comment_id: Identifier
     ) -> dict[str, Any]:
         """Read a current comment body, reply count and resolution without fetching replies."""
-        return await invoke(
+        return run(
             lambda session: {
                 "comment": conversations(session, project_id).comment_thread(comment_id)
             }
         )
 
     @server.tool()
-    async def arteligo_comment_replies(
+    def arteligo_comment_replies(
         project_id: Identifier,
         comment_id: Identifier,
         after: ConversationCursor | None = None,
         limit: PageLimit = 100,
     ) -> dict[str, Any]:
         """Read one contiguous verified reply page and the total reply count."""
-        return await invoke(
+        return run(
             lambda session: cursor_page(
                 conversations(session, project_id).comment_replies(
                     comment_id, after=after.key() if after else None, limit=limit
@@ -249,18 +246,18 @@ def register_conversation_tools(server, run):
         )
 
     @server.tool()
-    async def arteligo_comment_reply(
+    def arteligo_comment_reply(
         project_id: Identifier, reply_id: Identifier
     ) -> dict[str, Any]:
         """Read one reply and verify its membership in the signed parent index."""
-        return await invoke(
+        return run(
             lambda session: {
                 "reply": conversations(session, project_id).comment_reply(reply_id)
             }
         )
 
     @server.tool()
-    async def arteligo_comment_create(
+    def arteligo_comment_create(
         project_id: Identifier,
         comment_id: Identifier,
         body: Body,
@@ -269,14 +266,14 @@ def register_conversation_tools(server, run):
         display_name: str = "",
     ) -> dict[str, Any]:
         """Create an immutable comment, body head and thread index atomically."""
-        return await invoke(
+        return run(
             lambda session: conversations(session, project_id).create_comment(
                 comment_id, value(session, body, [], display_name, created_at, anchor)
             )
         )
 
     @server.tool()
-    async def arteligo_comment_reply_create(
+    def arteligo_comment_reply_create(
         project_id: Identifier,
         reply_id: Identifier,
         comment_id: Identifier,
@@ -286,7 +283,7 @@ def register_conversation_tools(server, run):
         display_name: str = "",
     ) -> dict[str, Any]:
         """Create a reply and update its parent index atomically; retain the reply ID for retries."""
-        return await invoke(
+        return run(
             lambda session: conversations(session, project_id).create_reply(
                 reply_id,
                 parent_id=comment_id,
@@ -295,7 +292,7 @@ def register_conversation_tools(server, run):
         )
 
     @server.tool()
-    async def arteligo_comment_edit(
+    def arteligo_comment_edit(
         project_id: Identifier,
         comment_id: Identifier,
         operation_id: Identifier,
@@ -304,7 +301,7 @@ def register_conversation_tools(server, run):
         committed_at: Timestamp,
     ) -> dict[str, Any]:
         """Append a signed comment edit, preserving its immutable origin and author."""
-        return await invoke(
+        return run(
             lambda session: conversations(session, project_id).edit_comment(
                 comment_id,
                 operation_id=operation_id,
@@ -315,7 +312,7 @@ def register_conversation_tools(server, run):
         )
 
     @server.tool()
-    async def arteligo_comment_reply_edit(
+    def arteligo_comment_reply_edit(
         project_id: Identifier,
         reply_id: Identifier,
         comment_id: Identifier,
@@ -325,7 +322,7 @@ def register_conversation_tools(server, run):
         committed_at: Timestamp,
     ) -> dict[str, Any]:
         """Append a signed reply edit after verifying its author and parent."""
-        return await invoke(
+        return run(
             lambda session: conversations(session, project_id).edit_reply(
                 reply_id,
                 parent_id=comment_id,
@@ -337,7 +334,7 @@ def register_conversation_tools(server, run):
         )
 
     @server.tool()
-    async def arteligo_comment_resolution(
+    def arteligo_comment_resolution(
         project_id: Identifier,
         comment_id: Identifier,
         resolved: bool,
@@ -345,7 +342,7 @@ def register_conversation_tools(server, run):
         display_name: str = "",
     ) -> dict[str, Any]:
         """Append a signed resolution event and update the comment head atomically."""
-        return await invoke(
+        return run(
             lambda session: conversations(session, project_id).set_resolution(
                 comment_id,
                 resolved=resolved,
