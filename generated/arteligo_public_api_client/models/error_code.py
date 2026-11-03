@@ -48,8 +48,6 @@ class ErrorCode(str, Enum):
     RESPONSIBILITY_REVISION_CONFLICT = "responsibility_revision_conflict"
     RESPONSIBILITY_TARGET_UNAVAILABLE = "responsibility_target_unavailable"
     REVISION_CONFLICT = "revision_conflict"
-    SERVICE_TERMS_ACCEPTANCE_REQUIRED = "service_terms_acceptance_required"
-    SERVICE_TERMS_VERSION_CONFLICT = "service_terms_version_conflict"
     SERVICE_UNAVAILABLE = "service_unavailable"
     SESSION_INVALID = "session_invalid"
     SESSION_REFRESH_REQUIRED = "session_refresh_required"
