@@ -34,6 +34,12 @@ def failure(error):
     diagnostic = f"{type(error).__name__} at {' -> '.join(frames)}"
     import httpx
 
+    if sys.platform == "linux":
+        from jeepney.wrappers import DBusErrorResponse
+
+        if isinstance(error, DBusErrorResponse):
+            diagnostic += f" D-Bus name={error.name}"
+
     if isinstance(error, httpx.HTTPStatusError):
         diagnostic += f" HTTP {error.response.status_code}"
         try:
