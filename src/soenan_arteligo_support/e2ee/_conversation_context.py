@@ -1,29 +1,36 @@
 from __future__ import annotations
 
-import json
 import secrets
 from collections.abc import Callable, Iterable
 from functools import wraps
+from typing import Concatenate, ParamSpec, TypeVar, cast, overload
+
+from google.protobuf.message import Message
+from soenan.arteligo.application.v1 import application_pb2 as app
+from soenan.arteligo.domain.v1 import domain_pb2 as domain
 
 from ._crypto import E2eeError
 from ._ordered_index import OrderedIndex
+from ._records import EncryptedRecords, ReadRecord
 from ._signed_commands import AcceptedCommand
 
-FORMAT = 3
 MAX_INTEGER = 9_007_199_254_740_991
+
+P = ParamSpec("P")
+R = TypeVar("R")
+C = TypeVar("C", bound="ConversationContext")
+M = TypeVar("M", bound=Message)
 
 
 def chat_header_id(scope):
     return f"conversation_chat_header_{scope}"
 
 
-def comment_header_id(scope):
-    return f"conversation_comment_header_{scope}"
-
-
-def conflict_retry(method):
+def conflict_retry(
+    method: Callable[Concatenate[C, P], R],
+) -> Callable[Concatenate[C, P], R]:
     @wraps(method)
-    def invoke(self, *args, **kwargs):
+    def invoke(self: C, /, *args: P.args, **kwargs: P.kwargs) -> R:
         return self._retry(lambda: method(self, *args, **kwargs))
 
     return invoke
@@ -42,11 +49,7 @@ def text(value):
 
 
 def reference(value):
-    if value is None:
-        return None
-    if not isinstance(value, dict) or set(value) != {"id", "revision"}:
-        raise E2eeError("invalid_conversation")
-    return {"id": text(value["id"]), "revision": number(value["revision"], 1)}
+    return value if value is not None and value.IsInitialized() else None
 
 
 def ascending(value):
@@ -57,33 +60,11 @@ def descending(value):
     return ascending(MAX_INTEGER - number(value))
 
 
-def anchor_key(value):
-    if not isinstance(value, dict):
-        raise E2eeError("invalid_conversation")
-
-    def canonical(item):
-        if isinstance(item, dict):
-            return {
-                key: canonical(item[key])
-                for key in sorted(item, key=lambda key: key.encode("utf-16-be"))
-            }
-        if isinstance(item, list):
-            return [canonical(child) for child in item]
-        return item
-
-    return json.dumps(
-        canonical(value), ensure_ascii=False, separators=(",", ":"), allow_nan=False
-    )
-
-
 def verify_actor(record, field):
-    actor = record["value"].get(field)
-    member = actor.get("member") if isinstance(actor, dict) else None
+    actor = getattr(record["value"], field)
     if (
-        not isinstance(member, dict)
-        or actor.get("kind") != "member"
-        or member.get("membershipId") != record["author_subject"]
-        or member.get("userId") != record["author_subject"]
+        actor.membership_id != record["author_subject"]
+        or actor.user_id != record["author_subject"]
     ):
         raise E2eeError("invalid_conversation_author")
 
@@ -99,43 +80,23 @@ def write(identifier, kind, value, revision=0, immutable=False):
 
 
 def initial_records(scope):
-    return [
-        write(
-            chat_header_id(scope),
-            "chat",
-            {
-                "format": FORMAT,
-                "recordType": "chat_header",
-                "sequence": 0,
-                "events": None,
-                "messages": None,
-            },
-        ),
-        write(
-            comment_header_id(scope),
-            "comment",
-            {
-                "format": FORMAT,
-                "recordType": "comment_header",
-                "sequence": 0,
-                "threads": None,
-            },
-        ),
-    ]
+    return [write(chat_header_id(scope), "chat", domain.ChatHeader(sequence=0))]
 
 
 class ConversationContext:
     def __init__(
         self,
-        records,
+        records: EncryptedRecords,
         scope: str,
         *,
         checkpoint: Callable[[], None] | None = None,
         mint_id: Callable[[], str] | None = None,
-    ):
+    ) -> None:
         self.records, self.scope = records, scope
-        self.checkpoint = checkpoint or (lambda: None)
-        self.mint_id = mint_id or (lambda: "cnd_" + secrets.token_hex(16))
+        self.checkpoint: Callable[[], None] = checkpoint or (lambda: None)
+        self.mint_id: Callable[[], str] = mint_id or (
+            lambda: "cnd_" + secrets.token_hex(16)
+        )
 
     @property
     def subject(self):
@@ -156,7 +117,13 @@ class ConversationContext:
         self.checkpoint()
         return result
 
-    def _write(self, writes, preconditions=None) -> AcceptedCommand | None:
+    def _write(
+        self,
+        writes,
+        preconditions: list[app.RecordPrecondition] | None = None,
+        *,
+        comments=(),
+    ) -> AcceptedCommand | None:
         self.checkpoint()
         if not writes:
             raise E2eeError("conversation_write_limit")
@@ -164,21 +131,40 @@ class ConversationContext:
             self.scope,
             records=writes,
             preconditions=preconditions or [],
+            comments=comments,
         )
         if isinstance(outcome, AcceptedCommand):
             return outcome
         self.checkpoint()
 
-    def _retry(self, operation):
-        for attempt in range(3):
+    def _retry(self, operation: Callable[[], R]) -> R:
+        attempt = 0
+        while True:
             self.checkpoint()
             try:
                 return operation()
             except E2eeError as error:
                 if error.code != "revision_conflict" or attempt == 2:
                     raise
+                attempt += 1
 
-    def _record(self, record, kind, record_type=None, immutable=False):
+    @overload
+    def _record(
+        self, record, kind: str, record_type: type[M], immutable: bool = False
+    ) -> ReadRecord[M]: ...
+
+    @overload
+    def _record(
+        self, record, kind: str, record_type: None = None, immutable: bool = False
+    ) -> ReadRecord[Message]: ...
+
+    def _record(
+        self,
+        record,
+        kind: str,
+        record_type: type[M] | None = None,
+        immutable: bool = False,
+    ) -> ReadRecord[M] | ReadRecord[Message]:
         if (
             record is None
             or record["deleted"]
@@ -188,32 +174,30 @@ class ConversationContext:
                 and (record["revision"] != 1 or not record.get("immutable", False))
             )
             or (
-                record_type is not None
-                and record["value"].get("recordType") != record_type
+                record_type is not None and not isinstance(record["value"], record_type)
             )
         ):
             raise E2eeError("invalid_conversation")
-        return record
+        return cast("ReadRecord[M] | ReadRecord[Message]", record)
 
-    def _header(self, record, kind, record_type):
+    def _header(self, record, kind: str, record_type: type[M]) -> ReadRecord[M]:
         if record is None:
             raise E2eeError("content_format_update_required")
-        self._record(record, kind, record_type)
-        if record["value"].get("format") != FORMAT:
-            raise E2eeError("content_format_update_required")
-        return record
+        return self._record(record, kind, record_type)
 
-    def _load_header(self, identifier, kind, record_type):
+    def _load_header(
+        self, identifier: str, kind: str, record_type: type[M]
+    ) -> ReadRecord[M]:
         return self._header(self._read([identifier]).get(identifier), kind, record_type)
 
     def _index(self, kind, prefetched=None):
-        prefetched = prefetched or {}
+        cached = prefetched or {}
 
         def read(ids):
             values = {
-                **prefetched,
+                **cached,
                 **self._read(
-                    identifier for identifier in ids if identifier not in prefetched
+                    identifier for identifier in ids if identifier not in cached
                 ),
             }
             for value in values.values():
@@ -225,7 +209,6 @@ class ConversationContext:
             }
 
         return OrderedIndex(read, self.mint_id, kind)
-
 
     def _same_records(self, before):
         current = self._read(record["record_id"] for record in before)
@@ -239,10 +222,7 @@ class ConversationContext:
 
     def initialize(self) -> AcceptedCommand | None:
         chat_header = chat_header_id(self.scope)
-        comment_header = comment_header_id(self.scope)
-        existing = self._read([chat_header, comment_header])
+        existing = self._read([chat_header])
         if not existing:
             return self._write(initial_records(self.scope))
-        else:
-            self._header(existing.get(chat_header), "chat", "chat_header")
-            self._header(existing.get(comment_header), "comment", "comment_header")
+        self._header(existing.get(chat_header), "chat", domain.ChatHeader)

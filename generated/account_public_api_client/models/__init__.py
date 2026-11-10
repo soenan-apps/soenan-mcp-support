@@ -48,11 +48,21 @@ from .close_account_sec_fetch_site import CloseAccountSecFetchSite
 from .close_organization_sec_fetch_site import CloseOrganizationSecFetchSite
 from .commerce_apple_evidence import CommerceAppleEvidence
 from .commerce_apple_evidence_channel import CommerceAppleEvidenceChannel
+from .commerce_attempt_completion_reference import CommerceAttemptCompletionReference
+from .commerce_attempt_completion_reference_kind import (
+    CommerceAttemptCompletionReferenceKind,
+)
 from .commerce_available_offer import CommerceAvailableOffer
 from .commerce_begin_request import CommerceBeginRequest
 from .commerce_begin_response import CommerceBeginResponse
 from .commerce_begin_response_outcome import CommerceBeginResponseOutcome
 from .commerce_channel import CommerceChannel
+from .commerce_contract_reconciliation_reference import (
+    CommerceContractReconciliationReference,
+)
+from .commerce_contract_reconciliation_reference_kind import (
+    CommerceContractReconciliationReferenceKind,
+)
 from .commerce_download_artifact import CommerceDownloadArtifact
 from .commerce_google_evidence import CommerceGoogleEvidence
 from .commerce_google_evidence_channel import CommerceGoogleEvidenceChannel
@@ -65,7 +75,50 @@ from .commerce_provider_start_kind import CommerceProviderStartKind
 from .commerce_purchase import CommercePurchase
 from .commerce_purchase_attempt import CommercePurchaseAttempt
 from .commerce_purchase_attempt_state import CommercePurchaseAttemptState
+from .commerce_purchase_completion_authorization_ended import (
+    CommercePurchaseCompletionAuthorizationEnded,
+)
+from .commerce_purchase_completion_authorization_ended_code import (
+    CommercePurchaseCompletionAuthorizationEndedCode,
+)
+from .commerce_purchase_completion_authorization_ended_kind import (
+    CommercePurchaseCompletionAuthorizationEndedKind,
+)
+from .commerce_purchase_completion_checkout_ready import (
+    CommercePurchaseCompletionCheckoutReady,
+)
+from .commerce_purchase_completion_checkout_ready_kind import (
+    CommercePurchaseCompletionCheckoutReadyKind,
+)
+from .commerce_purchase_completion_confirmed import CommercePurchaseCompletionConfirmed
+from .commerce_purchase_completion_confirmed_kind import (
+    CommercePurchaseCompletionConfirmedKind,
+)
+from .commerce_purchase_completion_outcome_unknown import (
+    CommercePurchaseCompletionOutcomeUnknown,
+)
+from .commerce_purchase_completion_outcome_unknown_code import (
+    CommercePurchaseCompletionOutcomeUnknownCode,
+)
+from .commerce_purchase_completion_outcome_unknown_kind import (
+    CommercePurchaseCompletionOutcomeUnknownKind,
+)
+from .commerce_purchase_completion_rejected import CommercePurchaseCompletionRejected
+from .commerce_purchase_completion_rejected_code import (
+    CommercePurchaseCompletionRejectedCode,
+)
+from .commerce_purchase_completion_rejected_kind import (
+    CommercePurchaseCompletionRejectedKind,
+)
+from .commerce_purchase_completion_waiting import CommercePurchaseCompletionWaiting
+from .commerce_purchase_completion_waiting_code import (
+    CommercePurchaseCompletionWaitingCode,
+)
+from .commerce_purchase_completion_waiting_kind import (
+    CommercePurchaseCompletionWaitingKind,
+)
 from .commerce_purchase_kind import CommercePurchaseKind
+from .commerce_reconcile_purchase_request import CommerceReconcilePurchaseRequest
 from .commerce_right import CommerceRight
 from .commerce_right_kind import CommerceRightKind
 from .commerce_right_state import CommerceRightState
@@ -177,6 +230,12 @@ from .o_auth_token_revocation_request import OAuthTokenRevocationRequest
 from .o_auth_token_revocation_request_token_type_hint import (
     OAuthTokenRevocationRequestTokenTypeHint,
 )
+from .observe_group_purchase_completion_sec_fetch_site import (
+    ObserveGroupPurchaseCompletionSecFetchSite,
+)
+from .observe_personal_purchase_completion_sec_fetch_site import (
+    ObservePersonalPurchaseCompletionSecFetchSite,
+)
 from .organization_close_conflict import OrganizationCloseConflict
 from .organization_close_conflict_error import OrganizationCloseConflictError
 from .organization_close_entitlement_pending import OrganizationCloseEntitlementPending
@@ -219,93 +278,7 @@ from .organization_summary_organization_state import (
     OrganizationSummaryOrganizationState,
 )
 from .organizations_view import OrganizationsView
-from .owner_authority_head import OwnerAuthorityHead
-from .owner_authority_head_state import OwnerAuthorityHeadState
-from .owner_authority_response import OwnerAuthorityResponse
-from .owner_certificate_organization_participation import (
-    OwnerCertificateOrganizationParticipation,
-)
-from .owner_certificate_recovery_root import OwnerCertificateRecoveryRoot
-from .owner_certificate_signature_projection import OwnerCertificateSignatureProjection
-from .owner_certificate_signature_projection_format import (
-    OwnerCertificateSignatureProjectionFormat,
-)
-from .owner_certificate_signature_projection_response import (
-    OwnerCertificateSignatureProjectionResponse,
-)
-from .owner_certificate_signed_command import OwnerCertificateSignedCommand
-from .owner_custody_device_identity import OwnerCustodyDeviceIdentity
-from .owner_custody_device_identity_kind import OwnerCustodyDeviceIdentityKind
-from .owner_custody_evidence import OwnerCustodyEvidence
-from .owner_custody_evidence_operation import OwnerCustodyEvidenceOperation
-from .owner_custody_evidence_response import OwnerCustodyEvidenceResponse
-from .owner_custody_organization_admission import OwnerCustodyOrganizationAdmission
-from .owner_custody_organization_admission_kind import (
-    OwnerCustodyOrganizationAdmissionKind,
-)
-from .owner_custody_organization_admission_recovery_root import (
-    OwnerCustodyOrganizationAdmissionRecoveryRoot,
-)
-from .owner_custody_response import OwnerCustodyResponse
-from .owner_custody_root_identity import OwnerCustodyRootIdentity
-from .owner_custody_root_identity_kind import OwnerCustodyRootIdentityKind
-from .owner_device_approval_signed_fields import OwnerDeviceApprovalSignedFields
-from .owner_device_approval_signed_fields_operation import (
-    OwnerDeviceApprovalSignedFieldsOperation,
-)
-from .owner_handoff_gate import OwnerHandoffGate
-from .owner_handoff_gate_response import OwnerHandoffGateResponse
-from .owner_issuer_admission import OwnerIssuerAdmission
-from .owner_issuer_admission_root import OwnerIssuerAdmissionRoot
-from .owner_issuer_certificate_reference import OwnerIssuerCertificateReference
-from .owner_key_candidate import OwnerKeyCandidate
-from .owner_key_custody_target import OwnerKeyCustodyTarget
-from .owner_key_custody_target_purpose import OwnerKeyCustodyTargetPurpose
-from .owner_key_dependency_outcome import OwnerKeyDependencyOutcome
-from .owner_key_gate_offer import OwnerKeyGateOffer
-from .owner_key_gate_slot import OwnerKeyGateSlot
-from .owner_key_gate_slot_result import OwnerKeyGateSlotResult
-from .owner_key_membership import OwnerKeyMembership
-from .owner_key_operation_complete import OwnerKeyOperationComplete
-from .owner_key_operation_event import OwnerKeyOperationEvent
-from .owner_key_operation_prepared import OwnerKeyOperationPrepared
-from .owner_key_operation_proof_event import OwnerKeyOperationProofEvent
-from .owner_key_operation_receipt import OwnerKeyOperationReceipt
-from .owner_key_operation_rejection import OwnerKeyOperationRejection
-from .owner_key_operation_rejection_reason import OwnerKeyOperationRejectionReason
-from .owner_key_organization_state import OwnerKeyOrganizationState
-from .owner_key_reference import OwnerKeyReference
-from .owner_key_reference_kind import OwnerKeyReferenceKind
-from .owner_key_reference_result import OwnerKeyReferenceResult
-from .owner_key_root_receipt import OwnerKeyRootReceipt
-from .owner_key_root_receipt_outcome import OwnerKeyRootReceiptOutcome
-from .owner_key_scope_authorization_result import OwnerKeyScopeAuthorizationResult
-from .owner_key_scope_authorization_target import OwnerKeyScopeAuthorizationTarget
-from .owner_key_scope_authorization_target_basis import (
-    OwnerKeyScopeAuthorizationTargetBasis,
-)
-from .owner_key_scope_authorization_target_operation_class import (
-    OwnerKeyScopeAuthorizationTargetOperationClass,
-)
-from .owner_key_subject_state import OwnerKeySubjectState
-from .owner_key_target_result import OwnerKeyTargetResult
-from .owner_organization_admission_signed_fields import (
-    OwnerOrganizationAdmissionSignedFields,
-)
-from .owner_organization_admission_signed_fields_operation import (
-    OwnerOrganizationAdmissionSignedFieldsOperation,
-)
-from .owner_source_selection import OwnerSourceSelection
-from .owner_transfer_blocker import OwnerTransferBlocker
-from .owner_transfer_decision import OwnerTransferDecision
-from .owner_transfer_decision_response import OwnerTransferDecisionResponse
-from .owner_transfer_decision_state import OwnerTransferDecisionState
-from .owner_transfer_readiness import OwnerTransferReadiness
-from .owner_transfer_readiness_state import OwnerTransferReadinessState
 from .owner_transfer_result import OwnerTransferResult
-from .owner_transfer_result_email_delivery_state import (
-    OwnerTransferResultEmailDeliveryState,
-)
 from .owner_transfer_result_state import OwnerTransferResultState
 from .passkey_authentication_completion import PasskeyAuthenticationCompletion
 from .passkey_authentication_completion_status import (
@@ -360,6 +333,10 @@ from .public_jwks import PublicJWKS
 from .reactivate_organization_member_sec_fetch_site import (
     ReactivateOrganizationMemberSecFetchSite,
 )
+from .reconcile_group_purchase_sec_fetch_site import ReconcileGroupPurchaseSecFetchSite
+from .reconcile_personal_purchase_sec_fetch_site import (
+    ReconcilePersonalPurchaseSecFetchSite,
+)
 from .refresh_session_sec_fetch_site import RefreshSessionSecFetchSite
 from .release_arteligo_seat_sec_fetch_site import ReleaseArteligoSeatSecFetchSite
 from .remove_organization_member_sec_fetch_site import (
@@ -381,6 +358,7 @@ from .sign_out_sec_fetch_site import SignOutSecFetchSite
 from .sign_up_completion import SignUpCompletion
 from .sign_up_completion_status import SignUpCompletionStatus
 from .sign_up_configuration import SignUpConfiguration
+from .sign_up_configuration_invitation_mode import SignUpConfigurationInvitationMode
 from .sign_up_request import SignUpRequest
 from .suspend_organization_member_sec_fetch_site import (
     SuspendOrganizationMemberSecFetchSite,
@@ -436,11 +414,15 @@ __all__ = (
     "CloseOrganizationSecFetchSite",
     "CommerceAppleEvidence",
     "CommerceAppleEvidenceChannel",
+    "CommerceAttemptCompletionReference",
+    "CommerceAttemptCompletionReferenceKind",
     "CommerceAvailableOffer",
     "CommerceBeginRequest",
     "CommerceBeginResponse",
     "CommerceBeginResponseOutcome",
     "CommerceChannel",
+    "CommerceContractReconciliationReference",
+    "CommerceContractReconciliationReferenceKind",
     "CommerceDownloadArtifact",
     "CommerceGoogleEvidence",
     "CommerceGoogleEvidenceChannel",
@@ -453,7 +435,24 @@ __all__ = (
     "CommercePurchase",
     "CommercePurchaseAttempt",
     "CommercePurchaseAttemptState",
+    "CommercePurchaseCompletionAuthorizationEnded",
+    "CommercePurchaseCompletionAuthorizationEndedCode",
+    "CommercePurchaseCompletionAuthorizationEndedKind",
+    "CommercePurchaseCompletionCheckoutReady",
+    "CommercePurchaseCompletionCheckoutReadyKind",
+    "CommercePurchaseCompletionConfirmed",
+    "CommercePurchaseCompletionConfirmedKind",
+    "CommercePurchaseCompletionOutcomeUnknown",
+    "CommercePurchaseCompletionOutcomeUnknownCode",
+    "CommercePurchaseCompletionOutcomeUnknownKind",
+    "CommercePurchaseCompletionRejected",
+    "CommercePurchaseCompletionRejectedCode",
+    "CommercePurchaseCompletionRejectedKind",
+    "CommercePurchaseCompletionWaiting",
+    "CommercePurchaseCompletionWaitingCode",
+    "CommercePurchaseCompletionWaitingKind",
     "CommercePurchaseKind",
+    "CommerceReconcilePurchaseRequest",
     "CommerceRight",
     "CommerceRightKind",
     "CommerceRightState",
@@ -527,6 +526,8 @@ __all__ = (
     "OAuthTokenResponseTokenType",
     "OAuthTokenRevocationRequest",
     "OAuthTokenRevocationRequestTokenTypeHint",
+    "ObserveGroupPurchaseCompletionSecFetchSite",
+    "ObservePersonalPurchaseCompletionSecFetchSite",
     "OrganizationCloseConflict",
     "OrganizationCloseConflictError",
     "OrganizationCloseEntitlementPending",
@@ -557,71 +558,7 @@ __all__ = (
     "OrganizationSummaryMembershipState",
     "OrganizationSummaryOrganizationState",
     "OrganizationsView",
-    "OwnerAuthorityHead",
-    "OwnerAuthorityHeadState",
-    "OwnerAuthorityResponse",
-    "OwnerCertificateOrganizationParticipation",
-    "OwnerCertificateRecoveryRoot",
-    "OwnerCertificateSignatureProjection",
-    "OwnerCertificateSignatureProjectionFormat",
-    "OwnerCertificateSignatureProjectionResponse",
-    "OwnerCertificateSignedCommand",
-    "OwnerCustodyDeviceIdentity",
-    "OwnerCustodyDeviceIdentityKind",
-    "OwnerCustodyEvidence",
-    "OwnerCustodyEvidenceOperation",
-    "OwnerCustodyEvidenceResponse",
-    "OwnerCustodyOrganizationAdmission",
-    "OwnerCustodyOrganizationAdmissionKind",
-    "OwnerCustodyOrganizationAdmissionRecoveryRoot",
-    "OwnerCustodyResponse",
-    "OwnerCustodyRootIdentity",
-    "OwnerCustodyRootIdentityKind",
-    "OwnerDeviceApprovalSignedFields",
-    "OwnerDeviceApprovalSignedFieldsOperation",
-    "OwnerHandoffGate",
-    "OwnerHandoffGateResponse",
-    "OwnerIssuerAdmission",
-    "OwnerIssuerAdmissionRoot",
-    "OwnerIssuerCertificateReference",
-    "OwnerKeyCandidate",
-    "OwnerKeyCustodyTarget",
-    "OwnerKeyCustodyTargetPurpose",
-    "OwnerKeyDependencyOutcome",
-    "OwnerKeyGateOffer",
-    "OwnerKeyGateSlot",
-    "OwnerKeyGateSlotResult",
-    "OwnerKeyMembership",
-    "OwnerKeyOperationComplete",
-    "OwnerKeyOperationEvent",
-    "OwnerKeyOperationPrepared",
-    "OwnerKeyOperationProofEvent",
-    "OwnerKeyOperationReceipt",
-    "OwnerKeyOperationRejection",
-    "OwnerKeyOperationRejectionReason",
-    "OwnerKeyOrganizationState",
-    "OwnerKeyReference",
-    "OwnerKeyReferenceKind",
-    "OwnerKeyReferenceResult",
-    "OwnerKeyRootReceipt",
-    "OwnerKeyRootReceiptOutcome",
-    "OwnerKeyScopeAuthorizationResult",
-    "OwnerKeyScopeAuthorizationTarget",
-    "OwnerKeyScopeAuthorizationTargetBasis",
-    "OwnerKeyScopeAuthorizationTargetOperationClass",
-    "OwnerKeySubjectState",
-    "OwnerKeyTargetResult",
-    "OwnerOrganizationAdmissionSignedFields",
-    "OwnerOrganizationAdmissionSignedFieldsOperation",
-    "OwnerSourceSelection",
-    "OwnerTransferBlocker",
-    "OwnerTransferDecision",
-    "OwnerTransferDecisionResponse",
-    "OwnerTransferDecisionState",
-    "OwnerTransferReadiness",
-    "OwnerTransferReadinessState",
     "OwnerTransferResult",
-    "OwnerTransferResultEmailDeliveryState",
     "OwnerTransferResultState",
     "PasskeyAuthenticationCompletion",
     "PasskeyAuthenticationCompletionStatus",
@@ -658,6 +595,8 @@ __all__ = (
     "PublicJWKS",
     "PublicJWKUse",
     "ReactivateOrganizationMemberSecFetchSite",
+    "ReconcileGroupPurchaseSecFetchSite",
+    "ReconcilePersonalPurchaseSecFetchSite",
     "RefreshSessionSecFetchSite",
     "ReleaseArteligoSeatSecFetchSite",
     "RemoveOrganizationMemberSecFetchSite",
@@ -673,6 +612,7 @@ __all__ = (
     "SignUpCompletion",
     "SignUpCompletionStatus",
     "SignUpConfiguration",
+    "SignUpConfigurationInvitationMode",
     "SignUpRequest",
     "SuspendOrganizationMemberSecFetchSite",
     "TOTPChallenge",

@@ -3,10 +3,14 @@ from __future__ import annotations
 import secrets
 from bisect import bisect_right
 from collections.abc import Iterator
-from typing import Any
+from typing import Any, TypeVar, cast
+
+from google.protobuf.message import Message
+from soenan.arteligo.application.v1 import application_pb2 as app
+from soenan.arteligo.domain.v1 import domain_pb2 as domain
 
 from ._crypto import E2eeError
-from ._records import EncryptedRecords
+from ._records import EncryptedRecords, ReadRecord
 from ._signed_commands import AcceptedCommand
 
 
@@ -14,12 +18,46 @@ def _id() -> str:
     return "dpg_" + secrets.token_hex(16)
 
 
-def _key(entry: dict[str, Any]) -> tuple[bytes, bytes]:
-    return entry["name"].encode("utf-16-be"), entry["id"].encode("utf-16-be")
+def _entry_values(entry: domain.ProjectEntry) -> domain.ProjectEntryValues:
+    return entry.folder if entry.WhichOneof("entry") == "folder" else entry.file.values
 
 
-def _fits(value: dict[str, Any]) -> bool:
-    items = value.get("entries", value.get("children", []))
+def _key(
+    entry: domain.ProjectEntry | domain.OrderedEntryKey | domain.OrderedIndexEntry,
+) -> tuple[bytes, bytes]:
+    if isinstance(entry, domain.ProjectEntry):
+        name, identifier = _entry_values(entry).name, entry.id
+    else:
+        key = entry.key if isinstance(entry, domain.OrderedIndexEntry) else entry
+        name, identifier = key.name, key.id
+    return name.encode("utf-16-be"), identifier.encode("utf-16-be")
+
+
+T = TypeVar("T")
+
+
+def _split(items: list[T]) -> list[list[T]]:
+    pieces = [items]
+    while any(len(piece) > 64 for piece in pieces):
+        refined = []
+        for piece in pieces:
+            if len(piece) <= 64:
+                refined.append(piece)
+            else:
+                middle = len(piece) // 2
+                refined.extend((piece[:middle], piece[middle:]))
+        pieces = refined
+    return pieces
+
+
+def _fits(
+    value: domain.DirectoryLeaf | domain.OrderedIndexLeaf | domain.OrderedIndexBranch,
+) -> bool:
+    items = (
+        value.children
+        if isinstance(value, domain.OrderedIndexBranch)
+        else value.entries
+    )
     return len(items) <= 64
 
 
@@ -30,19 +68,15 @@ def initial_directory() -> tuple[str, list[dict[str, Any]]]:
             "record_id": leaf,
             "kind": "directory",
             "expected_revision": 0,
-            "value": {"format": 2, "type": "leaf", "entries": []},
+            "value": domain.DirectoryLeaf(),
         },
         {
             "record_id": header,
             "kind": "directory",
             "expected_revision": 0,
-            "value": {
-                "format": 2,
-                "type": "folder",
-                "entry": None,
-                "parent": None,
-                "root": {"id": leaf, "revision": 1},
-            },
+            "value": domain.DirectoryFolder(
+                root=domain.RecordReference(id=leaf, revision=1)
+            ),
         },
     ]
 
@@ -52,10 +86,12 @@ class EncryptedDirectory:
 
     def __init__(self, records: EncryptedRecords, scope: str):
         self.records, self.scope = records, scope
-        self._loaded: dict[str, dict[str, Any]] = {}
+        self._loaded: dict[str, ReadRecord[Message]] = {}
         self._writes: dict[str, dict[str, Any]] = {}
 
-    def _load(self, identifier: str, revision: int | None = None) -> dict[str, Any]:
+    def _load(
+        self, identifier: str, revision: int | None = None
+    ) -> dict[str, Any] | ReadRecord[Message]:
         staged = self._writes.get(identifier)
         record = (
             {**staged, "revision": staged["expected_revision"] + 1, "deleted": False}
@@ -71,64 +107,62 @@ class EncryptedDirectory:
             raise E2eeError("revision_conflict")
         return record
 
-    def _folder(self, folder_id: str | None) -> dict[str, Any]:
+    def _folder(
+        self, folder_id: str | None
+    ) -> dict[str, Any] | ReadRecord[domain.DirectoryFolder]:
         if folder_id is None:
             project = self._load(self.scope)
-            directory = project["value"].get("directory")
-            if not isinstance(directory, dict) or directory.get("format") != 2:
+            if not isinstance(project["value"], domain.ProjectRootContent):
                 raise E2eeError("invalid_directory")
-            folder_id = directory["root"]
+            folder_id = project["value"].directory.root
         folder = self._load(folder_id)
-        value = folder["value"]
-        if (
-            folder["kind"] != "directory"
-            or value.get("format") != 2
-            or value.get("type") != "folder"
+        if folder["kind"] != "directory" or not isinstance(
+            folder["value"], domain.DirectoryFolder
         ):
             raise E2eeError("invalid_directory")
-        return folder
+        return cast("dict[str, Any] | ReadRecord[domain.DirectoryFolder]", folder)
 
-    def _node(self, reference: dict[str, Any]) -> dict[str, Any]:
-        record = self._load(reference["id"], reference["revision"])
-        if record["kind"] != "directory" or record["value"].get("format") != 2:
-            raise E2eeError("invalid_directory")
+    def _node(
+        self, reference: domain.RecordReference
+    ) -> dict[str, Any] | ReadRecord[domain.DirectoryLeaf | domain.OrderedIndexBranch]:
+        record = self._load(reference.id, reference.revision)
         value = record["value"]
-        if value.get("type") not in {"branch", "leaf"}:
+        if record["kind"] != "directory" or not isinstance(
+            value, (domain.DirectoryLeaf, domain.OrderedIndexBranch)
+        ):
             raise E2eeError("invalid_directory")
-        items = (
-            value["entries"]
-            if value["type"] == "leaf"
-            else [item["first"] for item in value["children"]]
-        )
+        branch = isinstance(value, domain.OrderedIndexBranch)
+        items = [item.first for item in value.children] if branch else value.entries
         keys = [_key(item) for item in items]
-        if keys != sorted(set(keys)) or (value["type"] == "branch" and not keys):
+        if keys != sorted(set(keys)) or (branch and not keys):
             raise E2eeError("invalid_directory")
-        return record
+        return cast(
+            "dict[str, Any] | ReadRecord[domain.DirectoryLeaf | domain.OrderedIndexBranch]",
+            record,
+        )
 
     def _entries(
         self,
-        reference: dict[str, Any],
+        reference: domain.RecordReference,
         after: tuple[bytes, bytes] | None,
         ancestors: frozenset[str] = frozenset(),
-    ) -> Iterator[dict[str, Any]]:
-        if reference["id"] in ancestors:
+    ) -> Iterator[domain.ProjectEntry]:
+        if reference.id in ancestors:
             raise E2eeError("invalid_directory")
         node = self._node(reference)["value"]
-        if node["type"] == "leaf":
-            for entry in node["entries"]:
+        if isinstance(node, domain.DirectoryLeaf):
+            for entry in node.entries:
                 if after is None or _key(entry) > after:
                     yield entry
             return
-        children = node["children"]
+        children = node.children
         start = (
-            max(
-                0, bisect_right([_key(child["first"]) for child in children], after) - 1
-            )
+            max(0, bisect_right([_key(child.first) for child in children], after) - 1)
             if after
             else 0
         )
         for child in children[start:]:
-            yield from self._entries(child["node"], after, ancestors | {reference["id"]})
+            yield from self._entries(child.node, after, ancestors | {reference.id})
 
     def page(
         self,
@@ -163,7 +197,7 @@ class EncryptedDirectory:
             raise E2eeError("revision_conflict")
         after = _key(cursor["last"]) if cursor is not None else None
         entries = []
-        for entry in self._entries(folder["value"]["root"], after):
+        for entry in self._entries(folder["value"].root, after):
             entries.append(entry)
             if len(entries) > limit:
                 break
@@ -182,7 +216,9 @@ class EncryptedDirectory:
             {
                 "folder_id": folder["record_id"],
                 "revision": folder["revision"],
-                "last": {key: entries[-1][key] for key in ("name", "id")},
+                "last": domain.OrderedEntryKey(
+                    name=_entry_values(entries[-1]).name, id=entries[-1].id
+                ),
             }
             if more
             else None
@@ -196,7 +232,13 @@ class EncryptedDirectory:
             "revision": folder["revision"],
         }
 
-    def _save(self, identifier: str, value: dict[str, Any]) -> dict[str, Any]:
+    def _save(
+        self,
+        identifier: str,
+        value: domain.DirectoryLeaf
+        | domain.OrderedIndexBranch
+        | domain.DirectoryFolder,
+    ) -> domain.RecordReference:
         previous = self._loaded.get(identifier)
         revision = previous["revision"] if previous else 0
         self._writes[identifier] = {
@@ -205,65 +247,67 @@ class EncryptedDirectory:
             "expected_revision": revision,
             "value": value,
         }
-        return {"id": identifier, "revision": revision + 1}
+        return domain.RecordReference(id=identifier, revision=revision + 1)
 
     def _store_node(
-        self, identifier: str, node: dict[str, Any]
-    ) -> list[dict[str, Any]]:
-        field = "entries" if node["type"] == "leaf" else "children"
-        items = node[field]
-        pieces = [items]
-        while any(not _fits({**node, field: piece}) for piece in pieces):
-            refined = []
-            for piece in pieces:
-                if _fits({**node, field: piece}):
-                    refined.append(piece)
-                else:
-                    middle = len(piece) // 2
-                    refined.extend((piece[:middle], piece[middle:]))
-            pieces = refined
+        self, identifier: str, node: domain.DirectoryLeaf | domain.OrderedIndexBranch
+    ) -> list[domain.OrderedIndexChild]:
         children = []
-        for index, piece in enumerate(pieces):
-            ref = self._save(
-                identifier if index == 0 else _id(), {**node, field: piece}
-            )
-            first = piece[0] if field == "entries" else piece[0]["first"]
-            children.append(
-                {"first": {key: first[key] for key in ("name", "id")}, "node": ref}
-            )
+        if isinstance(node, domain.OrderedIndexBranch):
+            for index, piece in enumerate(_split(list(node.children))):
+                value = domain.OrderedIndexBranch(children=piece)
+                ref = self._save(identifier if index == 0 else _id(), value)
+                children.append(
+                    domain.OrderedIndexChild(first=piece[0].first, node=ref)
+                )
+        else:
+            for index, piece in enumerate(_split(list(node.entries))):
+                leaf = domain.DirectoryLeaf(entries=piece)
+                ref = self._save(identifier if index == 0 else _id(), leaf)
+                first = domain.OrderedEntryKey(
+                    name=_entry_values(piece[0]).name, id=piece[0].id
+                )
+                children.append(domain.OrderedIndexChild(first=first, node=ref))
         return children
 
     def _insert(
-        self, reference: dict[str, Any], entry: dict[str, Any], ancestors: frozenset[str] = frozenset()
-    ) -> list[dict[str, Any]]:
-        if reference["id"] in ancestors:
+        self,
+        reference: domain.RecordReference,
+        entry: domain.ProjectEntry,
+        ancestors: frozenset[str] = frozenset(),
+    ) -> list[domain.OrderedIndexChild]:
+        if reference.id in ancestors:
             raise E2eeError("invalid_directory")
         record = self._node(reference)
         node = record["value"]
-        if node["type"] == "leaf":
-            items = list(node["entries"])
+        if isinstance(node, domain.DirectoryLeaf):
+            items = list(node.entries)
             if any(
-                value["name"] == entry["name"] or value["id"] == entry["id"]
+                _entry_values(value).name == _entry_values(entry).name
+                or value.id == entry.id
                 for value in items
             ):
                 raise E2eeError("entry_exists")
             items.insert(
                 bisect_right([_key(value) for value in items], _key(entry)), entry
             )
-            return self._store_node(record["record_id"], {**node, "entries": items})
-        children = list(node["children"])
+            return self._store_node(
+                record["record_id"], domain.DirectoryLeaf(entries=items)
+            )
+        children = list(node.children)
         index = max(
-            0,
-            bisect_right([_key(child["first"]) for child in children], _key(entry)) - 1,
+            0, bisect_right([_key(child.first) for child in children], _key(entry)) - 1
         )
         children[index : index + 1] = self._insert(
-            children[index]["node"], entry, ancestors | {reference["id"]}
+            children[index].node, entry, ancestors | {reference.id}
         )
-        return self._store_node(record["record_id"], {**node, "children": children})
+        return self._store_node(
+            record["record_id"], domain.OrderedIndexBranch(children=children)
+        )
 
     def insertion(
-        self, entries: list[dict[str, Any]]
-    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        self, entries: list[domain.ProjectEntry]
+    ) -> tuple[list[dict[str, Any]], list[app.RecordPrecondition]]:
         try:
             return self._insertion(entries)
         finally:
@@ -271,16 +315,17 @@ class EncryptedDirectory:
             self._writes.clear()
 
     def _insertion(
-        self, entries: list[dict[str, Any]]
-    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-        if (
-            not entries
-            or len({entry.get("parentFolderId") for entry in entries}) != 1
-        ):
+        self, entries: list[domain.ProjectEntry]
+    ) -> tuple[list[dict[str, Any]], list[app.RecordPrecondition]]:
+        parents = {
+            values.parent_folder_id if values.HasField("parent_folder_id") else None
+            for values in map(_entry_values, entries)
+        }
+        if not entries or len(parents) != 1:
             raise E2eeError("invalid_batch")
         self._loaded.clear()
         self._writes.clear()
-        folder = self._folder(entries[0].get("parentFolderId"))
+        folder = self._folder(parents.pop())
         preconditions = []
         ancestor = folder
         seen = set()
@@ -290,30 +335,31 @@ class EncryptedDirectory:
                 raise E2eeError("invalid_directory")
             seen.add(identifier)
             preconditions.append(
-                {
-                    "record_id": identifier,
-                    "expected_revision": ancestor["revision"],
-                    "require_live": True,
-                }
+                app.RecordPrecondition(
+                    id=identifier,
+                    expected_revision=ancestor["revision"],
+                    require_live=True,
+                )
             )
-            parent = ancestor["value"]["parent"]
-            if parent is None:
+            if not ancestor["value"].HasField("parent"):
                 break
-            ancestor = self._folder(parent)
-        root = folder["value"]["root"]
+            ancestor = self._folder(ancestor["value"].parent)
+        root = folder["value"].root
         for entry in entries:
-            first = next(
-                self._entries(root, (entry["name"].encode("utf-16-be"), b"")), None
-            )
-            if first is not None and first["name"] == entry["name"]:
+            name = _entry_values(entry).name
+            first = next(self._entries(root, (name.encode("utf-16-be"), b"")), None)
+            if first is not None and _entry_values(first).name == name:
                 raise E2eeError("entry_exists")
             children = self._insert(root, entry)
             while len(children) > 1:
                 children = self._store_node(
-                    _id(), {"format": 2, "type": "branch", "children": children}
+                    _id(), domain.OrderedIndexBranch(children=children)
                 )
-            root = children[0]["node"]
-        self._save(folder["record_id"], {**folder["value"], "root": root})
+            root = children[0].node
+        updated = domain.DirectoryFolder()
+        updated.CopyFrom(folder["value"])
+        updated.root.CopyFrom(root)
+        self._save(folder["record_id"], updated)
         writes = list(self._writes.values())
         self._loaded.clear()
         self._writes.clear()
@@ -321,7 +367,7 @@ class EncryptedDirectory:
 
     def insert(
         self,
-        entry: dict[str, Any],
+        entry: domain.ProjectEntry,
         *,
         additional_records: list[dict[str, Any]],
     ) -> list[dict[str, Any]] | AcceptedCommand:

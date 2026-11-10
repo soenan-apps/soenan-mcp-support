@@ -10,4 +10,6 @@ from soenan.arteligo.crypto.v1 import crypto_pb2 as crypto
 class AcceptedCommand:
     command: crypto.SignedBytes
     result: dict[str, Any]
-    finalization_error: Exception | None = field(default=None, compare=False, repr=False)
+    finalization_error: Exception | None = field(
+        default=None, compare=False, repr=False
+    )

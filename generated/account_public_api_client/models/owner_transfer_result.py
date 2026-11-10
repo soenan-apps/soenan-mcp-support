@@ -2,13 +2,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import Any, TypeVar
+from uuid import UUID
 
 from attrs import define as _attrs_define
 
-from ..models.owner_transfer_blocker import OwnerTransferBlocker
-from ..models.owner_transfer_result_email_delivery_state import (
-    OwnerTransferResultEmailDeliveryState,
-)
 from ..models.owner_transfer_result_state import OwnerTransferResultState
 
 T = TypeVar("T", bound="OwnerTransferResult")
@@ -19,38 +16,33 @@ class OwnerTransferResult:
     """
     Attributes:
         state (OwnerTransferResultState):
-        blocker (OwnerTransferBlocker):
-        request_id (str):
-        ownership_revision (int):
-        email_delivery_state (OwnerTransferResultEmailDeliveryState):
+        request_id (UUID):
+        owner_role_revision (int):
+        change_id (UUID):
     """
 
     state: OwnerTransferResultState
-    blocker: OwnerTransferBlocker
-    request_id: str
-    ownership_revision: int
-    email_delivery_state: OwnerTransferResultEmailDeliveryState
+    request_id: UUID
+    owner_role_revision: int
+    change_id: UUID
 
     def to_dict(self) -> dict[str, Any]:
         state = self.state.value
 
-        blocker = self.blocker.value
+        request_id = str(self.request_id)
 
-        request_id = self.request_id
+        owner_role_revision = self.owner_role_revision
 
-        ownership_revision = self.ownership_revision
-
-        email_delivery_state = self.email_delivery_state.value
+        change_id = str(self.change_id)
 
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
             {
                 "state": state,
-                "blocker": blocker,
                 "requestId": request_id,
-                "ownershipRevision": ownership_revision,
-                "emailDeliveryState": email_delivery_state,
+                "ownerRoleRevision": owner_role_revision,
+                "changeId": change_id,
             }
         )
 
@@ -61,22 +53,17 @@ class OwnerTransferResult:
         d = dict(src_dict)
         state = OwnerTransferResultState(d.pop("state"))
 
-        blocker = OwnerTransferBlocker(d.pop("blocker"))
+        request_id = UUID(d.pop("requestId"))
 
-        request_id = d.pop("requestId")
+        owner_role_revision = d.pop("ownerRoleRevision")
 
-        ownership_revision = d.pop("ownershipRevision")
-
-        email_delivery_state = OwnerTransferResultEmailDeliveryState(
-            d.pop("emailDeliveryState")
-        )
+        change_id = UUID(d.pop("changeId"))
 
         owner_transfer_result = cls(
             state=state,
-            blocker=blocker,
             request_id=request_id,
-            ownership_revision=ownership_revision,
-            email_delivery_state=email_delivery_state,
+            owner_role_revision=owner_role_revision,
+            change_id=change_id,
         )
 
         return owner_transfer_result

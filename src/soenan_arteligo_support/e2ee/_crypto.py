@@ -19,8 +19,12 @@ def decode(value: object) -> bytearray:
     if not isinstance(value, str):
         raise E2eeError("invalid_encoding")
     try:
-        data = bytearray(base64.b64decode(value + "=" * (-len(value) % 4), altchars=b"-_", validate=True))
-    except (ValueError, base64.binascii.Error):
+        data = bytearray(
+            base64.b64decode(
+                value + "=" * (-len(value) % 4), altchars=b"-_", validate=True
+            )
+        )
+    except ValueError:
         raise E2eeError("invalid_encoding") from None
     if encode(data) != value:
         wipe(data)
@@ -35,22 +39,45 @@ def wipe(value: bytearray) -> None:
 class LocalDocumentCrypto:
     def __init__(self):
         from ._core import CryptoCore
+
         self._core = CryptoCore()
 
     def key(self):
         from soenan.arteligo.crypto.v1 import crypto_pb2 as crypto
-        response = self._core.execute_utility(crypto.CoreUtilityRequest(random=crypto.RandomInput(length=32)))
+
+        response = self._core.execute_utility(
+            crypto.CoreUtilityRequest(random=crypto.RandomInput(length=32))
+        )
         return bytearray(response.random_bytes)
 
     def seal(self, key, plaintext, aad):
         from soenan.arteligo.crypto.v1 import crypto_pb2 as crypto
-        response = self._core.execute_utility(crypto.CoreUtilityRequest(seal_local=crypto.LocalSeal(
-            key=bytes(key), plaintext=bytes(plaintext), aad=bytes(aad)))).local_sealed
-        return {"nonce": encode(response.value.nonce), "ciphertext": encode(response.value.ciphertext)}
+
+        response = self._core.execute_utility(
+            crypto.CoreUtilityRequest(
+                seal_local=crypto.LocalSeal(
+                    key=bytes(key), plaintext=bytes(plaintext), aad=bytes(aad)
+                )
+            )
+        ).local_sealed
+        return {
+            "nonce": encode(response.value.nonce),
+            "ciphertext": encode(response.value.ciphertext),
+        }
 
     def open(self, key, envelope, aad):
         from soenan.arteligo.crypto.v1 import crypto_pb2 as crypto
-        response = self._core.execute_utility(crypto.CoreUtilityRequest(open_local=crypto.LocalOpen(
-            key=bytes(key), value=crypto.AeadValue(nonce=bytes(decode(envelope["nonce"])),
-                ciphertext=bytes(decode(envelope["ciphertext"]))), aad=bytes(aad))))
+
+        response = self._core.execute_utility(
+            crypto.CoreUtilityRequest(
+                open_local=crypto.LocalOpen(
+                    key=bytes(key),
+                    value=crypto.AeadValue(
+                        nonce=bytes(decode(envelope["nonce"])),
+                        ciphertext=bytes(decode(envelope["ciphertext"])),
+                    ),
+                    aad=bytes(aad),
+                )
+            )
+        )
         return bytearray(response.local_plaintext)

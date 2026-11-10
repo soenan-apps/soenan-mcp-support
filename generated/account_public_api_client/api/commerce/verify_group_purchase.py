@@ -19,11 +19,12 @@ def _get_kwargs(
     organization_id: str,
     *,
     body: CommerceVerifyRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: VerifyGroupPurchaseSecFetchSite | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
-    headers["Origin"] = origin
+    if not isinstance(origin, Unset):
+        headers["Origin"] = origin
 
     if not isinstance(sec_fetch_site, Unset):
         headers["Sec-Fetch-Site"] = str(sec_fetch_site)
@@ -103,13 +104,13 @@ def sync_detailed(
     *,
     client: AuthenticatedClient,
     body: CommerceVerifyRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: VerifyGroupPurchaseSecFetchSite | Unset = UNSET,
 ) -> Response[CommerceVerifyResponse | ErrorResponse]:
     """
     Args:
         organization_id (str):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (VerifyGroupPurchaseSecFetchSite | Unset):
         body (CommerceVerifyRequest):
 
@@ -140,13 +141,13 @@ def sync(
     *,
     client: AuthenticatedClient,
     body: CommerceVerifyRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: VerifyGroupPurchaseSecFetchSite | Unset = UNSET,
 ) -> CommerceVerifyResponse | ErrorResponse | None:
     """
     Args:
         organization_id (str):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (VerifyGroupPurchaseSecFetchSite | Unset):
         body (CommerceVerifyRequest):
 
@@ -172,13 +173,13 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient,
     body: CommerceVerifyRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: VerifyGroupPurchaseSecFetchSite | Unset = UNSET,
 ) -> Response[CommerceVerifyResponse | ErrorResponse]:
     """
     Args:
         organization_id (str):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (VerifyGroupPurchaseSecFetchSite | Unset):
         body (CommerceVerifyRequest):
 
@@ -207,13 +208,13 @@ async def asyncio(
     *,
     client: AuthenticatedClient,
     body: CommerceVerifyRequest,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: VerifyGroupPurchaseSecFetchSite | Unset = UNSET,
 ) -> CommerceVerifyResponse | ErrorResponse | None:
     """
     Args:
         organization_id (str):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (VerifyGroupPurchaseSecFetchSite | Unset):
         body (CommerceVerifyRequest):
 

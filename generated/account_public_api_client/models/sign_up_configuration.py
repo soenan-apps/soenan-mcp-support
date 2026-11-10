@@ -5,6 +5,10 @@ from typing import Any, TypeVar
 
 from attrs import define as _attrs_define
 
+from ..models.sign_up_configuration_invitation_mode import (
+    SignUpConfigurationInvitationMode,
+)
+
 T = TypeVar("T", bound="SignUpConfiguration")
 
 
@@ -12,19 +16,20 @@ T = TypeVar("T", bound="SignUpConfiguration")
 class SignUpConfiguration:
     """
     Attributes:
-        invitation_code_required (bool): Whether the current CSM admission policy requires an invitation code.
+        invitation_mode (SignUpConfigurationInvitationMode): Whether the current CSM admission policy hides, accepts, or
+            requires an invitation code.
     """
 
-    invitation_code_required: bool
+    invitation_mode: SignUpConfigurationInvitationMode
 
     def to_dict(self) -> dict[str, Any]:
-        invitation_code_required = self.invitation_code_required
+        invitation_mode = self.invitation_mode.value
 
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
             {
-                "invitationCodeRequired": invitation_code_required,
+                "invitationMode": invitation_mode,
             }
         )
 
@@ -33,10 +38,10 @@ class SignUpConfiguration:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        invitation_code_required = d.pop("invitationCodeRequired")
+        invitation_mode = SignUpConfigurationInvitationMode(d.pop("invitationMode"))
 
         sign_up_configuration = cls(
-            invitation_code_required=invitation_code_required,
+            invitation_mode=invitation_mode,
         )
 
         return sign_up_configuration

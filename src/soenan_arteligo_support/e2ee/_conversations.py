@@ -1,21 +1,11 @@
-"""Bounded local decryption and signed conversation operations for format 3."""
+"""Bounded local decryption and signed operations over generated domain messages."""
 
 from ._conversation_archive import ArchiveOperations
-from ._conversation_chat import ChatOperations
-from ._conversation_comments import CommentOperations
-from ._conversation_context import ConversationContext
-from ._conversation_text import TextOperations
 
 
-class EncryptedConversations(
-    ChatOperations,
-    CommentOperations,
-    TextOperations,
-    ArchiveOperations,
-    ConversationContext,
-):
+class EncryptedConversations(ArchiveOperations):
     """Use one project scope, keep no plaintext cache, and stop at each checkpoint.
 
     Writers commit origins, heads, indexes and operation proofs in one CAS batch.
-    Missing format-3 headers require a coordinated client update or explicit local reset.
+    Missing headers require a coordinated client update or explicit local reset.
     """

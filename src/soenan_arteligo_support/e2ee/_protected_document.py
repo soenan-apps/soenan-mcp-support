@@ -1,18 +1,22 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
-from dataclasses import dataclass, field, replace
 import hashlib
 import json
 import os
 import re
 import secrets
 import sys
-from typing import Iterator, Protocol
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass, field, replace
+from typing import Protocol
 
-from ._credential_lock import private_directory, private_subdirectory, validate_private_handle
-from ._crypto import LocalDocumentCrypto, E2eeError, decode, encode, wipe
-
+from ._credential_lock import (
+    private_directory,
+    private_subdirectory,
+    validate_private_handle,
+)
+from ._crypto import E2eeError, LocalDocumentCrypto, decode, encode, wipe
 
 _PREFIX = "soenan:protected-document:1:"
 _DESCRIPTOR = re.compile(
@@ -110,9 +114,19 @@ def _document_files(namespace: str) -> Iterator[_DocumentFiles]:
 
 
 class _ProtectedDocument:
-    def __init__(self, namespace: bytes, native: _NativeItem,
-                 files: _DocumentFiles, crypto: LocalDocumentCrypto):
-        self._namespace, self._native, self._files, self._crypto = namespace, native, files, crypto
+    def __init__(
+        self,
+        namespace: bytes,
+        native: _NativeItem,
+        files: _DocumentFiles,
+        crypto: LocalDocumentCrypto,
+    ):
+        self._namespace, self._native, self._files, self._crypto = (
+            namespace,
+            native,
+            files,
+            crypto,
+        )
         self._head: str | None = None
         self._descriptor: _Descriptor | None = None
         self._value: str | None = None
@@ -144,7 +158,12 @@ class _ProtectedDocument:
         return _Descriptor(secrets.token_hex(16), self._crypto.key(), None)
 
     def _aad(self, descriptor: _Descriptor) -> bytes:
-        return _PREFIX.encode("ascii") + self._namespace + b"\0" + descriptor.incarnation.encode("ascii")
+        return (
+            _PREFIX.encode("ascii")
+            + self._namespace
+            + b"\0"
+            + descriptor.incarnation.encode("ascii")
+        )
 
     def _open(self, descriptor: _Descriptor, digest: str) -> str:
         try:
@@ -152,7 +171,8 @@ class _ProtectedDocument:
             if len(blob) < 28 or hashlib.sha256(blob).hexdigest() != digest:
                 raise E2eeError("secure_store_corrupt")
             plaintext = self._crypto.open(
-                descriptor.key, {"nonce": encode(blob[:12]), "ciphertext": encode(blob[12:])},
+                descriptor.key,
+                {"nonce": encode(blob[:12]), "ciphertext": encode(blob[12:])},
                 self._aad(descriptor),
             )
             try:
@@ -162,7 +182,11 @@ class _ProtectedDocument:
         except (FileNotFoundError, UnicodeError):
             raise E2eeError("secure_store_corrupt") from None
         except E2eeError as error:
-            if error.code in {"authentication_failed", "invalid_encoding", "invalid_input"}:
+            if error.code in {
+                "authentication_failed",
+                "invalid_encoding",
+                "invalid_input",
+            }:
                 raise E2eeError("secure_store_corrupt") from None
             raise
 
@@ -214,7 +238,9 @@ class _ProtectedDocument:
     def _publish(self, descriptor: _Descriptor, value: str) -> None:
         plaintext = bytearray(value, "utf-8")
         try:
-            envelope = self._crypto.seal(descriptor.key, plaintext, self._aad(descriptor))
+            envelope = self._crypto.seal(
+                descriptor.key, plaintext, self._aad(descriptor)
+            )
         finally:
             wipe(plaintext)
         blob = decode(envelope["nonce"])
@@ -249,14 +275,17 @@ class _ProtectedDocument:
 
 
 @contextmanager
-def protected_document(service: str, name: str, native: _NativeItem,
-                       crypto: LocalDocumentCrypto) -> Iterator[_ProtectedDocument]:
+def protected_document(
+    service: str, name: str, native: _NativeItem, crypto: LocalDocumentCrypto
+) -> Iterator[_ProtectedDocument]:
     if sys.platform == "win32":
         from ._windows_item import canonical_target
 
         # The primary/compound slot may disappear, but the logical service cannot change.
         service = canonical_target(service)
-    namespace = json.dumps([service, name], ensure_ascii=True, separators=(",", ":")).encode("ascii")
+    namespace = json.dumps(
+        [service, name], ensure_ascii=True, separators=(",", ":")
+    ).encode("ascii")
     with _document_files(hashlib.sha256(namespace).hexdigest()) as files:
         document = _ProtectedDocument(namespace, native, files, crypto)
         try:

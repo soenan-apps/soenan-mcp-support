@@ -1,26 +1,28 @@
 from __future__ import annotations
 
 from ._api import GeneratedAPI
-from ._crypto import E2eeError
 from ._oauth import ProfileVault
 from ._session import DeviceSession
 from ._storage import ProfileSecureStore, SystemSecureStore
 
 
-def open_session(*, account_origin: str, arteligo_origin: str, profile: str = "default",
-                 store: ProfileSecureStore | None = None) -> DeviceSession:
+def open_session(
+    *,
+    account_origin: str,
+    arteligo_origin: str,
+    profile: str = "default",
+    store: ProfileSecureStore | None = None,
+) -> DeviceSession:
     protected = store or SystemSecureStore(profile)
-    vault = ProfileVault(account_origin=account_origin, arteligo_origin=arteligo_origin, store=protected)
+    vault = ProfileVault(
+        account_origin=account_origin, arteligo_origin=arteligo_origin, store=protected
+    )
     credentials = vault.bind()
     api = GeneratedAPI(credentials)
-    response = api.call("getProductSession")
-    if response.get("kind") != "authenticated" or response.get("authenticated") is not True:
-        raise E2eeError("authentication_or_terms_required")
-    subject = response.get("user", {}).get("id")
-    if not isinstance(subject, str) or not subject:
-        raise E2eeError("invalid_account_session")
-    credentials.check_current()
-    session = DeviceSession(api, protected, origin=credentials.arteligo_origin, subject=subject)
+    subject = credentials.subject()
+    session = DeviceSession(
+        api, protected, origin=credentials.arteligo_origin, subject=subject
+    )
     try:
         settings = session.settings()
         if session.device_id:

@@ -24,6 +24,7 @@ class OrganizationDetail:
         organization (OrganizationSummary):
         current_account_subject (str):
         current_role_keys (list[str]):
+        owner_role_revision (int):
         members (list[OrganizationMemberDetail] | Unset):
         roles (list[OrganizationRoleDetail] | Unset):
         invitations (list[OrganizationInvitationDetail] | Unset):
@@ -32,6 +33,7 @@ class OrganizationDetail:
     organization: OrganizationSummary
     current_account_subject: str
     current_role_keys: list[str]
+    owner_role_revision: int
     members: list[OrganizationMemberDetail] | Unset = UNSET
     roles: list[OrganizationRoleDetail] | Unset = UNSET
     invitations: list[OrganizationInvitationDetail] | Unset = UNSET
@@ -42,6 +44,8 @@ class OrganizationDetail:
         current_account_subject = self.current_account_subject
 
         current_role_keys = self.current_role_keys
+
+        owner_role_revision = self.owner_role_revision
 
         members: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.members, Unset):
@@ -71,6 +75,7 @@ class OrganizationDetail:
                 "organization": organization,
                 "currentAccountSubject": current_account_subject,
                 "currentRoleKeys": current_role_keys,
+                "ownerRoleRevision": owner_role_revision,
             }
         )
         if members is not UNSET:
@@ -95,6 +100,8 @@ class OrganizationDetail:
         current_account_subject = d.pop("currentAccountSubject")
 
         current_role_keys = cast(list[str], d.pop("currentRoleKeys"))
+
+        owner_role_revision = d.pop("ownerRoleRevision")
 
         _members = d.pop("members", UNSET)
         members: list[OrganizationMemberDetail] | Unset = UNSET
@@ -129,6 +136,7 @@ class OrganizationDetail:
             organization=organization,
             current_account_subject=current_account_subject,
             current_role_keys=current_role_keys,
+            owner_role_revision=owner_role_revision,
             members=members,
             roles=roles,
             invitations=invitations,

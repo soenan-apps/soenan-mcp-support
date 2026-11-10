@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from contextlib import ExitStack, contextmanager
 import ctypes
 import hashlib
 import os
 import stat
 import sys
-from typing import Iterator
+from collections.abc import Iterator
+from contextlib import ExitStack, contextmanager
+
 
 @contextmanager
 def private_directory(name: str) -> Iterator[int]:
@@ -43,7 +44,8 @@ def private_subdirectory(parent: int, name: str) -> Iterator[int]:
     except FileExistsError:
         pass
     directory = os.open(
-        name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+        name,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
         dir_fd=parent,
     )
     try:
@@ -66,7 +68,11 @@ def validate_private_handle(descriptor: int, *, directory: bool = False) -> None
         libc = ctypes.CDLL(None, use_errno=True)
         libc.acl_get_fd_np.argtypes = [ctypes.c_int, ctypes.c_int]
         libc.acl_get_fd_np.restype = ctypes.c_void_p
-        libc.acl_get_entry.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.POINTER(ctypes.c_void_p)]
+        libc.acl_get_entry.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_int,
+            ctypes.POINTER(ctypes.c_void_p),
+        ]
         libc.acl_free.argtypes = [ctypes.c_void_p]
         acl = libc.acl_get_fd_np(descriptor, 0x100)
         if not acl:
@@ -86,11 +92,14 @@ def credential_lock(service: str, name: str) -> Iterator[None]:
             yield
         return
     import fcntl
+
     with private_directory(".soenan-credential-locks") as directory:
         digest = hashlib.sha256((service + "\n" + name).encode()).hexdigest()
         lock_fd = os.open(
-            digest, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC,
-            0o600, dir_fd=directory,
+            digest,
+            os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC,
+            0o600,
+            dir_fd=directory,
         )
         try:
             validate_private_handle(lock_fd)
@@ -111,9 +120,20 @@ def windows_security():
     kernel.LocalFree.argtypes = [w.HLOCAL]
     kernel.LocalFree.restype = w.HLOCAL
     security.OpenProcessToken.argtypes = [w.HANDLE, w.DWORD, ctypes.POINTER(w.HANDLE)]
-    security.GetTokenInformation.argtypes = [w.HANDLE, ctypes.c_int, w.LPVOID, w.DWORD, ctypes.POINTER(w.DWORD)]
+    security.GetTokenInformation.argtypes = [
+        w.HANDLE,
+        ctypes.c_int,
+        w.LPVOID,
+        w.DWORD,
+        ctypes.POINTER(w.DWORD),
+    ]
     security.ConvertSidToStringSidW.argtypes = [w.LPVOID, ctypes.POINTER(w.LPWSTR)]
-    security.ConvertStringSecurityDescriptorToSecurityDescriptorW.argtypes = [w.LPCWSTR, w.DWORD, ctypes.POINTER(w.LPVOID), ctypes.POINTER(w.DWORD)]
+    security.ConvertStringSecurityDescriptorToSecurityDescriptorW.argtypes = [
+        w.LPCWSTR,
+        w.DWORD,
+        ctypes.POINTER(w.LPVOID),
+        ctypes.POINTER(w.DWORD),
+    ]
 
     class Attributes(ctypes.Structure):
         _fields_ = [("length", w.DWORD), ("descriptor", w.LPVOID), ("inherit", w.BOOL)]
@@ -122,7 +142,9 @@ def windows_security():
     sid_string = w.LPWSTR()
     descriptor = w.LPVOID()
     try:
-        if not security.OpenProcessToken(kernel.GetCurrentProcess(), 8, ctypes.byref(token)):
+        if not security.OpenProcessToken(
+            kernel.GetCurrentProcess(), 8, ctypes.byref(token)
+        ):
             raise ctypes.WinError(ctypes.get_last_error())
         size = w.DWORD()
         security.GetTokenInformation(token, 1, None, 0, ctypes.byref(size))
@@ -153,14 +175,19 @@ def _windows_lock() -> Iterator[None]:
     from ctypes import wintypes as w
 
     with windows_security() as (kernel, _, attributes, _, user):
-        kernel.CreateMutexW.argtypes = [ctypes.POINTER(type(attributes)), w.BOOL, w.LPCWSTR]
+        kernel.CreateMutexW.argtypes = [
+            ctypes.POINTER(type(attributes)),
+            w.BOOL,
+            w.LPCWSTR,
+        ]
         kernel.CreateMutexW.restype = w.HANDLE
         kernel.WaitForSingleObject.argtypes = [w.HANDLE, w.DWORD]
         kernel.WaitForSingleObject.restype = w.DWORD
         kernel.ReleaseMutex.argtypes = [w.HANDLE]
         # All names share the legacy service slot, and Windows names ignore case.
         mutex = kernel.CreateMutexW(
-            ctypes.byref(attributes), False,
+            ctypes.byref(attributes),
+            False,
             "Global\\SoenanCredential-" + hashlib.sha256(user.encode()).hexdigest(),
         )
         if not mutex:

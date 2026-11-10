@@ -15,7 +15,7 @@ class TransferOrganizationOwnershipRequest:
     Attributes:
         target_subject (str):
         request_id (UUID):
-        expected_revision (int):
+        expected_revision (int): Current Account organization owner-role revision, independent of product key revisions.
     """
 
     target_subject: str

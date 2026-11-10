@@ -288,9 +288,8 @@ def _validated_headers(headers: Mapping[str, str]) -> dict[str, str]:
         name = raw_name.lower()
         if name not in _ALLOWED_HEADERS or name in validated:
             raise TransferError("Bucket capability headers are invalid")
-        if (
-            not raw_value
-            or any(character in raw_value for character in ("\r", "\n", "\x00"))
+        if not raw_value or any(
+            character in raw_value for character in ("\r", "\n", "\x00")
         ):
             raise TransferError("Bucket capability headers are invalid")
         validated[name] = raw_value
@@ -324,7 +323,7 @@ def _connection(
     return http.client.HTTPConnection(connect_host, connect_port, timeout=timeout)
 
 
-class _LogicalHTTPSConnection(http.client.HTTPSConnection):
+class _LogicalHTTPSConnection(http.client.HTTPConnection):
     def __init__(
         self,
         *,
@@ -334,18 +333,16 @@ class _LogicalHTTPSConnection(http.client.HTTPSConnection):
         timeout: float,
         context: ssl.SSLContext,
     ) -> None:
-        super().__init__(logical_host, connect_port, timeout=timeout, context=context)
+        super().__init__(logical_host, connect_port, timeout=timeout)
         self._connect_host = connect_host
         self._connect_port = connect_port
+        self._tls_context = context
 
     def connect(self) -> None:
         raw_socket = socket.create_connection(
-            (self._connect_host, self._connect_port), self.timeout, self.source_address
+            (self._connect_host, self._connect_port), self.timeout
         )
-        if self._tunnel_host:
-            self.sock = raw_socket
-            self._tunnel()
-        self.sock = self._context.wrap_socket(raw_socket, server_hostname=self.host)
+        self.sock = self._tls_context.wrap_socket(raw_socket, server_hostname=self.host)
 
 
 def _request_target(parsed: SplitResult) -> str:
@@ -385,6 +382,7 @@ def _deadline_watchdog(
     connection: http.client.HTTPConnection, deadline: float
 ) -> threading.Timer:
     connected_socket = connection.sock
+
     def expire() -> None:
         if connected_socket is not None:
             try:

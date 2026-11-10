@@ -1,15 +1,16 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, replace
 import hashlib
-from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 import secrets
 import threading
 import time
-from typing import Any, Callable, Protocol
-from urllib.parse import parse_qs, urlencode, urlsplit
 import webbrowser
+from collections.abc import Callable
+from dataclasses import asdict, dataclass, replace
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from typing import Any, Protocol
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 import httpx
 
@@ -44,6 +45,7 @@ class BoundCredentials(Protocol):
     @property
     def arteligo_origin(self) -> str: ...
     def access_token(self) -> str: ...
+    def subject(self) -> str: ...
     def check_current(self) -> None: ...
 
 
@@ -62,10 +64,16 @@ class TokenPair:
         if not isinstance(value, dict) or set(value) != set(cls.__dataclass_fields__):
             raise E2eeError("invalid_token_response")
         if (
-            any(type(value[field]) is not str or not value[field] for field in ("access_token", "refresh_token"))
+            any(
+                type(value[field]) is not str or not value[field]
+                for field in ("access_token", "refresh_token")
+            )
             or value["token_type"] != "Bearer"
             or value["scope"] != "arteligo:app"
-            or any(type(value[field]) is not int for field in ("expires_in", "access_expires_at", "refresh_expires_at"))
+            or any(
+                type(value[field]) is not int
+                for field in ("expires_in", "access_expires_at", "refresh_expires_at")
+            )
             or not 1 <= value["expires_in"] <= 300
             or not 1 <= value["access_expires_at"] <= 2**63 - 1
             or not 1 <= value["refresh_expires_at"] <= 2**63 - 1
@@ -111,12 +119,15 @@ class CredentialRecord:
     state: CredentialState
 
     def serialize(self) -> str:
-        return json.dumps({
-            "version": 2,
-            "identity": self.identity,
-            "login_intent": self.login_intent,
-            "state": {"kind": type(self.state).__name__, **asdict(self.state)},
-        }, separators=(",", ":"))
+        return json.dumps(
+            {
+                "version": 2,
+                "identity": self.identity,
+                "login_intent": self.login_intent,
+                "state": {"kind": type(self.state).__name__, **asdict(self.state)},
+            },
+            separators=(",", ":"),
+        )
 
     @classmethod
     def parse(cls, value: Any) -> CredentialRecord:
@@ -127,7 +138,12 @@ class CredentialRecord:
             or value["version"] != 2
             or type(value["identity"]) is not str
             or not value["identity"]
-            or (value["login_intent"] is not None and (type(value["login_intent"]) is not str or not value["login_intent"]))
+            or (
+                value["login_intent"] is not None
+                and (
+                    type(value["login_intent"]) is not str or not value["login_intent"]
+                )
+            )
             or not isinstance(value["state"], dict)
         ):
             raise E2eeError("credential_state_invalid")
@@ -139,17 +155,35 @@ class CredentialRecord:
             state: CredentialState = SignedOut()
         elif kind == "Ready" and set(raw) == {"kind", "pair"}:
             state = Ready(TokenPair.parse(raw["pair"]))
-        elif kind == "AccessOnly" and set(raw) == {"kind", "access_token", "access_expires_at", "revoke_proof"}:
+        elif kind == "AccessOnly" and set(raw) == {
+            "kind",
+            "access_token",
+            "access_expires_at",
+            "revoke_proof",
+        }:
             if (
-                type(raw["access_token"]) is not str or not raw["access_token"]
-                or type(raw["revoke_proof"]) is not str or not raw["revoke_proof"]
+                type(raw["access_token"]) is not str
+                or not raw["access_token"]
+                or type(raw["revoke_proof"]) is not str
+                or not raw["revoke_proof"]
                 or type(raw["access_expires_at"]) is not int
                 or not 1 <= raw["access_expires_at"] <= 2**63 - 1
             ):
                 raise E2eeError("credential_state_invalid")
-            state = AccessOnly(raw["access_token"], raw["access_expires_at"], raw["revoke_proof"])
-        elif kind in {"RefreshUncertain", "RevokePending"} and set(raw) == {"kind", "revoke_proof"} and type(raw["revoke_proof"]) is str and raw["revoke_proof"]:
-            state = RefreshUncertain(raw["revoke_proof"]) if kind == "RefreshUncertain" else RevokePending(raw["revoke_proof"])
+            state = AccessOnly(
+                raw["access_token"], raw["access_expires_at"], raw["revoke_proof"]
+            )
+        elif (
+            kind in {"RefreshUncertain", "RevokePending"}
+            and set(raw) == {"kind", "revoke_proof"}
+            and type(raw["revoke_proof"]) is str
+            and raw["revoke_proof"]
+        ):
+            state = (
+                RefreshUncertain(raw["revoke_proof"])
+                if kind == "RefreshUncertain"
+                else RevokePending(raw["revoke_proof"])
+            )
         else:
             raise E2eeError("credential_state_invalid")
         return cls(value["identity"], value["login_intent"], state)
@@ -171,6 +205,19 @@ class ProfileContext:
     def access_token(self) -> str:
         return self.vault._access_token(self.identity)
 
+    def subject(self) -> str:
+        from ._api import initialize_session_authorization
+
+        authorization = initialize_session_authorization(
+            self.arteligo_origin,
+            self.access_token(),
+            self.vault._transport,
+            organization_ids=[],
+            project_ids=[],
+        )
+        self.check_current()
+        return authorization.subject
+
     def check_current(self) -> None:
         with self.vault.store.credential(self.vault._storage_key) as item:
             self.vault._check(self.vault._load(item), self.identity)
@@ -189,20 +236,28 @@ class ProfileVault:
     store: ProfileSecureStore
     _storage_key: str
     _transport: httpx.BaseTransport | None
-    _authorization_lock: Any
-    _authorized_tokens: set[str]
 
-    def __init__(self, *, account_origin: str, arteligo_origin: str, store: ProfileSecureStore, transport: httpx.BaseTransport | None = None):
+    def __init__(
+        self,
+        *,
+        account_origin: str,
+        arteligo_origin: str,
+        store: ProfileSecureStore,
+        transport: httpx.BaseTransport | None = None,
+    ):
         if not callable(getattr(store, "credential", None)):
             raise E2eeError("unsupported_secure_store")
         account = origin(account_origin)
         arteligo = origin(arteligo_origin)
         resource = arteligo + "/api"
         for name, value in {
-            "account_origin": account, "arteligo_origin": arteligo,
-            "resource": resource, "store": store, "_transport": transport,
-            "_storage_key": "oauth:" + hashlib.sha256((account + "\n" + resource).encode()).hexdigest(),
-            "_authorization_lock": threading.Lock(), "_authorized_tokens": set(),
+            "account_origin": account,
+            "arteligo_origin": arteligo,
+            "resource": resource,
+            "store": store,
+            "_transport": transport,
+            "_storage_key": "oauth:"
+            + hashlib.sha256((account + "\n" + resource).encode()).hexdigest(),
         }.items():
             object.__setattr__(self, name, value)
 
@@ -223,9 +278,15 @@ class ProfileVault:
             value = json.loads(raw)
             if isinstance(value, dict) and "version" not in value:
                 pair = TokenPair.parse(value)
-                record = CredentialRecord(secrets.token_urlsafe(32), None, AccessOnly(
-                    pair.access_token, pair.access_expires_at, pair.refresh_token,
-                ))
+                record = CredentialRecord(
+                    secrets.token_urlsafe(32),
+                    None,
+                    AccessOnly(
+                        pair.access_token,
+                        pair.access_expires_at,
+                        pair.refresh_token,
+                    ),
+                )
                 self._save(item, record)
                 return record
             return CredentialRecord.parse(value)
@@ -248,16 +309,26 @@ class ProfileVault:
 
     def _token(self, body: dict[str, str]) -> TokenPair:
         try:
-            with httpx.Client(timeout=30, follow_redirects=False, transport=self._transport) as client:
-                response = client.post(self.account_origin + "/oauth/token", data={
-                    "client_id": CLIENT_ID, "resource": self.resource, **body,
-                })
+            with httpx.Client(
+                timeout=30, follow_redirects=False, transport=self._transport
+            ) as client:
+                response = client.post(
+                    self.account_origin + "/oauth/token",
+                    data={
+                        "client_id": CLIENT_ID,
+                        "resource": self.resource,
+                        **body,
+                    },
+                )
             if response.status_code == 400:
                 try:
                     rejected = response.json()
                 except ValueError:
                     raise E2eeError("authentication_uncertain") from None
-                if isinstance(rejected, dict) and rejected.get("error") == "invalid_grant":
+                if (
+                    isinstance(rejected, dict)
+                    and rejected.get("error") == "invalid_grant"
+                ):
                     raise E2eeError("authentication_required")
             if response.status_code != 200:
                 raise E2eeError("authentication_uncertain")
@@ -268,7 +339,7 @@ class ProfileVault:
         except httpx.HTTPError:
             raise E2eeError("authentication_uncertain") from None
 
-    def _credential_token(self, identity: str, *, expired_token: str | None = None) -> tuple[str, bool]:
+    def _access_token(self, identity: str) -> str:
         with self.store.credential(self._storage_key) as item:
             record = self._load(item)
             self._check(record, identity)
@@ -280,11 +351,11 @@ class ProfileVault:
             if isinstance(state, SignedOut):
                 raise E2eeError("authentication_required")
             if isinstance(state, AccessOnly):
-                if state.access_expires_at > time.time() and state.access_token != expired_token:
-                    return state.access_token, False
+                if state.access_expires_at > time.time():
+                    return state.access_token
                 raise E2eeError("authentication_required")
-            if state.pair.access_expires_at > time.time() + 15 and state.pair.access_token != expired_token:
-                return state.pair.access_token, False
+            if state.pair.access_expires_at > time.time() + 15:
+                return state.pair.access_token
             if state.pair.refresh_expires_at <= time.time():
                 raise E2eeError("authentication_required")
             pending = replace(record, state=RefreshUncertain(state.pair.refresh_token))
@@ -292,32 +363,21 @@ class ProfileVault:
             # Reload the acknowledged native item before the one-use handoff.
             if self._load(item) != pending:
                 raise E2eeError("secure_store_unavailable")
-            pair = self._token({"grant_type": "refresh_token", "refresh_token": state.pair.refresh_token})
+            pair = self._token(
+                {
+                    "grant_type": "refresh_token",
+                    "refresh_token": state.pair.refresh_token,
+                }
+            )
             self._save(item, replace(record, state=Ready(pair)))
-            return pair.access_token, True
+            return pair.access_token
 
-    def _access_token(self, identity: str) -> str:
-        from ._api import await_session_authorization
-
-        token, refreshed = self._credential_token(identity)
-        digest = hashlib.sha256(token.encode()).hexdigest()
-        with self._authorization_lock:
-            if digest not in self._authorized_tokens:
-                try:
-                    await_session_authorization(self.arteligo_origin, token, self._transport)
-                except E2eeError as error:
-                    if error.code != "authorization_expired" or refreshed:
-                        raise
-                    token, _ = self._credential_token(identity, expired_token=token)
-                    digest = hashlib.sha256(token.encode()).hexdigest()
-                    await_session_authorization(self.arteligo_origin, token, self._transport)
-                self._authorized_tokens.clear()
-                self._authorized_tokens.add(digest)
-        with self.store.credential(self._storage_key) as item:
-            self._check(self._load(item), identity)
-        return token
-
-    def login(self, *, open_browser: Callable[[str], Any] = webbrowser.open, timeout: float = 300) -> None:
+    def login(
+        self,
+        *,
+        open_browser: Callable[[str], Any] = webbrowser.open,
+        timeout: float = 300,
+    ) -> None:
         intent = secrets.token_urlsafe(32)
         with self.store.credential(self._storage_key) as item:
             record = self._load(item)
@@ -331,7 +391,7 @@ class ProfileVault:
         expected_issuer = self.account_origin
 
         class Callback(BaseHTTPRequestHandler):
-            def log_message(self, *_args: Any) -> None:
+            def log_message(self, format: str, *args: object) -> None:
                 pass
 
             def do_GET(self) -> None:
@@ -344,27 +404,50 @@ class ProfileVault:
                     and query.get("iss") == [expected_issuer]
                     and len(query.get("code", [])) == 1
                     and bool(query["code"][0])
-                    and self.headers.get("Host") == f"127.0.0.1:{self.server.server_port}"
+                    and self.headers.get("Host") == f"127.0.0.1:{server.server_port}"
                 )
                 self.send_response(200 if valid else 400)
-                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Cache-Control", "no-store")
                 self.end_headers()
                 if valid:
                     received["code"] = query["code"][0]
                     completed.set()
-                self.wfile.write(("認証できました。この画面を閉じてください。" if valid else "認証を確認できませんでした。").encode())
+                identifier = "oauth-complete" if valid else "oauth-failed"
+                message = (
+                    "認証できました。この画面を閉じてください。"
+                    if valid
+                    else "認証を確認できませんでした。"
+                )
+                self.wfile.write(
+                    (
+                        '<!doctype html><html lang="ja"><meta charset="utf-8"><title>Arteligo</title>'
+                        f'<body><main><p id="{identifier}" role="status">{message}</p></main></body></html>'
+                    ).encode()
+                )
 
         server = HTTPServer(("127.0.0.1", 0), Callback)
         redirect = f"http://127.0.0.1:{server.server_port}/oauth/callback"
-        url = self.account_origin + "/oauth/authorize?" + urlencode({
-            "response_type": "code", "client_id": CLIENT_ID,
-            "redirect_uri": redirect, "resource": self.resource,
-            "scope": "arteligo:app", "state": state,
-            "code_challenge": encode(hashlib.sha256(verifier.encode()).digest()),
-            "code_challenge_method": "S256",
-        })
+        url = (
+            self.account_origin
+            + "/oauth/authorize?"
+            + urlencode(
+                {
+                    "response_type": "code",
+                    "client_id": CLIENT_ID,
+                    "redirect_uri": redirect,
+                    "resource": self.resource,
+                    "scope": "arteligo:app",
+                    "state": state,
+                    "code_challenge": encode(
+                        hashlib.sha256(verifier.encode()).digest()
+                    ),
+                    "code_challenge_method": "S256",
+                }
+            )
+        )
         worker = threading.Thread(target=server.serve_forever, daemon=True)
+        intent_pending = True
         worker.start()
         try:
             if open_browser(url) is False:
@@ -378,12 +461,19 @@ class ProfileVault:
                 if isinstance(record.state, RevokePending):
                     raise E2eeError("logout_incomplete")
                 self._save(item, replace(record, login_intent=None))
+                intent_pending = False
                 try:
-                    pair = self._token({
-                        "grant_type": "authorization_code", "code": received.pop("code"),
-                        "redirect_uri": redirect, "code_verifier": verifier,
-                    })
-                    accepted = CredentialRecord(secrets.token_urlsafe(32), None, Ready(pair))
+                    pair = self._token(
+                        {
+                            "grant_type": "authorization_code",
+                            "code": received.pop("code"),
+                            "redirect_uri": redirect,
+                            "code_verifier": verifier,
+                        }
+                    )
+                    accepted = CredentialRecord(
+                        secrets.token_urlsafe(32), None, Ready(pair)
+                    )
                     self._save(item, accepted)
                 except E2eeError as error:
                     if error.code == "authentication_required":
@@ -394,10 +484,11 @@ class ProfileVault:
             server.server_close()
             worker.join()
             received.clear()
-            with self.store.credential(self._storage_key) as item:
-                current = self._load(item)
-                if current.login_intent == intent:
-                    self._save(item, replace(current, login_intent=None))
+            if intent_pending:
+                with self.store.credential(self._storage_key) as item:
+                    current = self._load(item)
+                    if current.login_intent == intent:
+                        self._save(item, replace(current, login_intent=None))
         self._access_token(accepted.identity)
 
     def logout(self) -> LogoutOutcome:
@@ -405,20 +496,43 @@ class ProfileVault:
             record = self._load(item)
             state = record.state
             if isinstance(state, SignedOut):
-                self._save(item, replace(record, identity=secrets.token_urlsafe(32), login_intent=None))
+                self._save(
+                    item,
+                    replace(
+                        record, identity=secrets.token_urlsafe(32), login_intent=None
+                    ),
+                )
                 return LogoutOutcome(False)
-            proof = state.pair.refresh_token if isinstance(state, Ready) else state.revoke_proof
-            pending = record if isinstance(state, RevokePending) else replace(
-                record, identity=secrets.token_urlsafe(32), login_intent=None, state=RevokePending(proof),
+            proof = (
+                state.pair.refresh_token
+                if isinstance(state, Ready)
+                else state.revoke_proof
+            )
+            pending = (
+                record
+                if isinstance(state, RevokePending)
+                else replace(
+                    record,
+                    identity=secrets.token_urlsafe(32),
+                    login_intent=None,
+                    state=RevokePending(proof),
+                )
             )
             self._save(item, pending)
             if self._load(item) != pending:
                 raise E2eeError("secure_store_unavailable")
             try:
-                with httpx.Client(timeout=30, follow_redirects=False, transport=self._transport) as client:
-                    response = client.post(self.account_origin + "/oauth/revoke", data={
-                        "client_id": CLIENT_ID, "resource": self.resource, "token": proof,
-                    })
+                with httpx.Client(
+                    timeout=30, follow_redirects=False, transport=self._transport
+                ) as client:
+                    response = client.post(
+                        self.account_origin + "/oauth/revoke",
+                        data={
+                            "client_id": CLIENT_ID,
+                            "resource": self.resource,
+                            "token": proof,
+                        },
+                    )
                 if response.status_code != 200:
                     raise E2eeError("logout_incomplete")
             except httpx.HTTPError:

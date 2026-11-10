@@ -4,8 +4,8 @@ from dataclasses import dataclass
 from hashlib import sha256
 from typing import BinaryIO
 
-from soenan.arteligo.application.v1 import application_pb2 as app
 from soenan.arteligo.crypto.v1 import crypto_pb2 as crypto
+from soenan.arteligo.domain.v1 import domain_pb2 as domain
 
 from ..e2ee._core import CryptoCore
 from ..e2ee._crypto import E2eeError
@@ -19,12 +19,12 @@ class EncryptionContractError(ValueError):
 
 @dataclass(frozen=True)
 class EncryptionPlan:
-    locator: app.ObjectLocator
+    locator: domain.ObjectLocator
     core: CryptoCore
 
     @property
     def chunks(self):
-        return self.locator.chunks
+        return self.locator.descriptor.chunks
 
     @property
     def plaintext_size(self):
@@ -37,9 +37,13 @@ class EncryptionPlan:
         state = crypto.StreamState()
         state.CopyFrom(self.locator.stream)
         state.next_index = index
-        sealed = self.core.execute_utility(crypto.CoreUtilityRequest(
-            seal_stream=crypto.StreamSeal(state=state, plaintext=plaintext, final_frame=expected.final_frame)
-        )).stream_sealed
+        sealed = self.core.execute_utility(
+            crypto.CoreUtilityRequest(
+                seal_stream=crypto.StreamSeal(
+                    state=state, plaintext=plaintext, final_frame=expected.final_frame
+                )
+            )
+        ).stream_sealed
         frame = sealed.frame
         if frame.sha256 != expected.sha256:
             raise E2eeError("source_changed")
@@ -48,7 +52,9 @@ class EncryptionPlan:
     def open_chunk(self, ciphertext: bytes, index: int) -> bytes:
         expected = self.chunks[index].frame
         if len(ciphertext) != expected.plaintext_length + 16:
-            raise EncryptionContractError("ciphertext chunk size does not match manifest")
+            raise EncryptionContractError(
+                "ciphertext chunk size does not match manifest"
+            )
         frame = crypto.StreamFrame()
         frame.CopyFrom(expected)
         frame.ciphertext = ciphertext
@@ -56,19 +62,35 @@ class EncryptionPlan:
         state.CopyFrom(self.locator.stream)
         state.next_index = index
         try:
-            return self.core.execute_utility(crypto.CoreUtilityRequest(
-                open_stream=crypto.StreamOpen(state=state, frame=frame, binding=self.locator.exact_source_binding)
-            )).stream_opened.plaintext
+            return self.core.execute_utility(
+                crypto.CoreUtilityRequest(
+                    open_stream=crypto.StreamOpen(
+                        state=state,
+                        frame=frame,
+                        binding=self.locator.descriptor.exact_source_binding,
+                    )
+                )
+            ).stream_opened.plaintext
         except E2eeError:
             raise EncryptionContractError("ciphertext authentication failed") from None
 
 
-def build_encryption_plan(stream: BinaryIO, *, core: CryptoCore, object_id: str,
-                          binding: bytes, plaintext_size: int) -> EncryptionPlan:
+def build_encryption_plan(
+    stream: BinaryIO,
+    *,
+    core: CryptoCore,
+    object_id: str,
+    binding: bytes,
+    plaintext_size: int,
+) -> EncryptionPlan:
     if plaintext_size <= 0:
         raise E2eeError("file_size_invalid")
     start = stream.tell()
-    locator = app.ObjectLocator(object_id=object_id, exact_source_binding=binding, chunk_size=CHUNK_SIZE)
+    locator = domain.ObjectLocator(
+        descriptor=domain.ObjectDescriptor(
+            object_id=object_id, exact_source_binding=binding, chunk_size=CHUNK_SIZE
+        )
+    )
     state = None
     plaintext_offset = ciphertext_offset = 0
     count = (plaintext_size + CHUNK_SIZE - 1) // CHUNK_SIZE
@@ -77,10 +99,14 @@ def build_encryption_plan(stream: BinaryIO, *, core: CryptoCore, object_id: str,
         clear = stream.read(length)
         if len(clear) != length:
             raise E2eeError("source_changed")
-        seal = crypto.StreamSeal(plaintext=clear, final_frame=index + 1 == count, binding=binding)
+        seal = crypto.StreamSeal(
+            plaintext=clear, final_frame=index + 1 == count, binding=binding
+        )
         if state is not None:
             seal.state.CopyFrom(state)
-        sealed = core.execute_utility(crypto.CoreUtilityRequest(seal_stream=seal)).stream_sealed
+        sealed = core.execute_utility(
+            crypto.CoreUtilityRequest(seal_stream=seal)
+        ).stream_sealed
         state = sealed.state
         if index == 0:
             locator.stream.CopyFrom(state)
@@ -90,13 +116,18 @@ def build_encryption_plan(stream: BinaryIO, *, core: CryptoCore, object_id: str,
         frame.CopyFrom(sealed.frame)
         ciphertext_length = len(frame.ciphertext)
         frame.ClearField("ciphertext")
-        locator.chunks.add(index=index, plaintext_offset=plaintext_offset,
-                           ciphertext_offset=ciphertext_offset, frame=frame)
+        locator.descriptor.chunks.add(
+            index=index,
+            plaintext_offset=plaintext_offset,
+            ciphertext_offset=ciphertext_offset,
+            ciphertext_size=ciphertext_length,
+            frame=frame,
+        )
         plaintext_offset += length
         ciphertext_offset += ciphertext_length
     if stream.read(1):
         raise E2eeError("source_changed")
-    locator.ciphertext_size = ciphertext_offset
+    locator.descriptor.ciphertext_size = ciphertext_offset
     stream.seek(start)
     return EncryptionPlan(locator, core)
 

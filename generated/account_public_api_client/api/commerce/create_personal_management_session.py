@@ -18,11 +18,12 @@ from ...types import UNSET, Response, Unset
 def _get_kwargs(
     purchase_id: UUID,
     *,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: CreatePersonalManagementSessionSecFetchSite | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
-    headers["Origin"] = origin
+    if not isinstance(origin, Unset):
+        headers["Origin"] = origin
 
     if not isinstance(sec_fetch_site, Unset):
         headers["Sec-Fetch-Site"] = str(sec_fetch_site)
@@ -97,13 +98,13 @@ def sync_detailed(
     purchase_id: UUID,
     *,
     client: AuthenticatedClient,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: CreatePersonalManagementSessionSecFetchSite | Unset = UNSET,
 ) -> Response[CommerceManagementSession | ErrorResponse]:
     """
     Args:
         purchase_id (UUID):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (CreatePersonalManagementSessionSecFetchSite | Unset):
 
     Raises:
@@ -131,13 +132,13 @@ def sync(
     purchase_id: UUID,
     *,
     client: AuthenticatedClient,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: CreatePersonalManagementSessionSecFetchSite | Unset = UNSET,
 ) -> CommerceManagementSession | ErrorResponse | None:
     """
     Args:
         purchase_id (UUID):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (CreatePersonalManagementSessionSecFetchSite | Unset):
 
     Raises:
@@ -160,13 +161,13 @@ async def asyncio_detailed(
     purchase_id: UUID,
     *,
     client: AuthenticatedClient,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: CreatePersonalManagementSessionSecFetchSite | Unset = UNSET,
 ) -> Response[CommerceManagementSession | ErrorResponse]:
     """
     Args:
         purchase_id (UUID):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (CreatePersonalManagementSessionSecFetchSite | Unset):
 
     Raises:
@@ -192,13 +193,13 @@ async def asyncio(
     purchase_id: UUID,
     *,
     client: AuthenticatedClient,
-    origin: str,
+    origin: str | Unset = UNSET,
     sec_fetch_site: CreatePersonalManagementSessionSecFetchSite | Unset = UNSET,
 ) -> CommerceManagementSession | ErrorResponse | None:
     """
     Args:
         purchase_id (UUID):
-        origin (str):
+        origin (str | Unset):
         sec_fetch_site (CreatePersonalManagementSessionSecFetchSite | Unset):
 
     Raises:

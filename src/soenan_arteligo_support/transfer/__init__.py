@@ -10,8 +10,8 @@ from ._http import (
     TransferTimeouts,
     TransferTransport,
 )
-from ._workflow import download_file, upload_file
 from ._preview import upload_wav_preview
+from ._workflow import download_file, upload_file
 
 __all__ = [
     "DEFAULT_TIMEOUTS",
