@@ -6,10 +6,17 @@ from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
 from google.protobuf.message import DecodeError
+from soenan.account.crypto.v1 import crypto_pb2 as shared
+from soenan.account.identity.v1 import identity_pb2 as identity_api
 from soenan.arteligo.application.v1 import application_pb2 as app
 from soenan.arteligo.crypto.v1 import crypto_pb2 as crypto
 
 from ._crypto import E2eeError, decode, encode, wipe
+from ._session import (
+    InvitationCreationPending,
+    InvitationRequestPending,
+    InvitationRevocationPending,
+)
 
 if TYPE_CHECKING:
     from ._session import DeviceSession
@@ -103,7 +110,7 @@ def _read_invitation(session, project_id, invitation_id):
 
 def _receiver_digest(session, bundle, subject):
     identities = [
-        crypto.IdentityStatement.FromString(item.statement.body)
+        identity_api.IdentityStatement.FromString(item.statement.body)
         for item in bundle.identity_statements
     ]
     own = [identity for identity in identities if identity.subject == subject]
@@ -113,7 +120,7 @@ def _receiver_digest(session, bundle, subject):
     certificates = [
         item
         for item in bundle.key_certificates
-        if (body := crypto.KeyCertificateBody.FromString(item.body)).subject == subject
+        if (body := shared.KeyCertificateBody.FromString(item.body)).subject == subject
         and body.public_key == identity.receiver
     ]
     digests = {session.digest(item.body) for item in certificates}
@@ -122,8 +129,21 @@ def _receiver_digest(session, bundle, subject):
     return session.digest(identity.receiver.SerializeToString())
 
 
-def _verify_invitation(session, response, project_id, link, *, release_namespace=None):
+def _verify_invitation(
+    session,
+    response,
+    project_id,
+    link,
+    *,
+    release_namespace=None,
+    expected_descriptor: bytes | None = None,
+):
     status, descriptor = _status(response, project_id, link.invitation_id)
+    if (
+        expected_descriptor is not None
+        and status.descriptor.SerializeToString() != expected_descriptor
+    ):
+        raise E2eeError("invitation_binding_mismatch")
     if (
         link.project_id != project_id
         or descriptor.inviter_root_digest != link.inviter_root_digest
@@ -139,7 +159,7 @@ def _verify_invitation(session, response, project_id, link, *, release_namespace
     )
     try:
         owners = [
-            crypto.IdentityStatement.FromString(identity.statement.body)
+            identity_api.IdentityStatement.FromString(identity.statement.body)
             for identity in response.bundle.identity_statements
         ]
     except DecodeError:
@@ -198,7 +218,7 @@ def create_invitation(
     if re.fullmatch(r"[A-Za-z0-9_-]{1,128}", invitation_id) is None:
         raise E2eeError("invalid_invitation")
     namespace = "invitation:create:" + project_id + ":" + invitation_id
-    pending = session.pending_documents(namespace)
+    pending = session.pending_documents(namespace, InvitationCreationPending)
     if pending is None:
         bundle = session.read_bundle(project_id, view="by_ids").bundle
         session.open_bundle(bundle)
@@ -209,7 +229,7 @@ def create_invitation(
             role=role,
             expires_at=expires_at,
             secret_digest=session.digest(secret),
-            inviter_root_digest=session.trusted_root_digest(),
+            inviter_root_digest=session.identity.trusted_root_digest(),
             proof_public_key=session.possession_proof(secret, b"").public_key,
         )
         link = app.InvitationLink(
@@ -222,28 +242,34 @@ def create_invitation(
         try:
             pending = session.prepare_documents(
                 namespace,
-                project_id,
-                [descriptor.SerializeToString()],
+                descriptor.SerializeToString(),
                 bundle,
-                local=link.SerializeToString(),
+                lambda signed: InvitationCreationPending(
+                    signed, link.SerializeToString()
+                ),
             )
         finally:
             link.Clear()
-    documents, local = pending
-    link = app.InvitationLink.FromString(local)
+    signed_descriptor = shared.SignedBytes.FromString(pending.signed_document)
+    link = app.InvitationLink.FromString(pending.invitation_link)
     try:
-        descriptor = app.InvitationDescriptor.FromString(documents[0].body)
+        descriptor = app.InvitationDescriptor.FromString(signed_descriptor.body)
         if descriptor.role != role or descriptor.expires_at != expires_at:
             raise E2eeError("invitation_publication_pending")
         response = session.service.create_crypto_invitation(
             app.InvitationRequest(
                 project_id=project_id,
                 invitation_id=invitation_id,
-                descriptor=documents[0],
+                descriptor=signed_descriptor,
             )
         )
         _verify_invitation(
-            session, response, project_id, link, release_namespace=namespace
+            session,
+            response,
+            project_id,
+            link,
+            release_namespace=namespace,
+            expected_descriptor=pending.signed_document,
         )
         return {
             "project_id": project_id,
@@ -267,7 +293,7 @@ def request_invitation(
         response = _read_invitation(session, project_id, link.invitation_id)
         _verify_invitation(session, response, project_id, link)
         namespace = "invitation:request:" + project_id + ":" + link.invitation_id
-        pending = session.pending_documents(namespace)
+        pending = session.pending_documents(namespace, InvitationRequestPending)
         if pending is None:
             receiver_digest = _receiver_digest(
                 session, response.bundle, session.subject
@@ -287,14 +313,17 @@ def request_invitation(
                 proof=session.possession_proof(link.secret, challenge),
             )
             pending = session.prepare_documents(
-                namespace, project_id, [binding.SerializeToString()], response.bundle
+                namespace,
+                binding.SerializeToString(),
+                response.bundle,
+                InvitationRequestPending,
             )
-        documents, _ = pending
+        signed_request = shared.SignedBytes.FromString(pending.signed_document)
         result = session.service.request_crypto_invitation(
             app.InvitationJoinRequest(
                 project_id=project_id,
                 invitation_id=link.invitation_id,
-                request=documents[0],
+                request=signed_request,
             )
         )
         matching = [
@@ -303,9 +332,16 @@ def request_invitation(
             if item.project_id == project_id
             and item.invitation_id == link.invitation_id
         ]
-        if len(matching) != 1 or documents[0] not in matching[0].requests:
+        if len(matching) != 1:
             raise E2eeError("invalid_response")
-        result.bundle.documents.add(signed=documents[0])
+        returned_requests = [
+            request
+            for request in matching[0].requests
+            if request.SerializeToString() == pending.signed_document
+        ]
+        if len(returned_requests) != 1:
+            raise E2eeError("invalid_response")
+        result.bundle.documents.add(signed=returned_requests[0])
         session.verify_documents(result.bundle, release_namespaces=[namespace])
         return {
             "project_id": project_id,
@@ -334,7 +370,7 @@ def approve_invitation(
         status, descriptor = _status(response, project_id, invitation_id)
         if status.current_owner_subject != session.subject:
             raise E2eeError("owner_required")
-        root = session.trusted_root_digest()
+        root = session.identity.trusted_root_digest()
         response.bundle.documents.add(
             signed=status.descriptor, expected_root_digest=root
         )
@@ -371,7 +407,7 @@ def approve_invitation(
         if join.receiver_digest != _receiver_digest(session, response.bundle, subject):
             raise E2eeError("invitation_receiver_changed")
         identities = [
-            crypto.IdentityStatement.FromString(identity.statement.body)
+            identity_api.IdentityStatement.FromString(identity.statement.body)
             for identity in response.bundle.identity_statements
         ]
         if not any(
@@ -445,33 +481,47 @@ def revoke_invitation(
 ) -> dict[str, str]:
     session.require_approved()
     namespace = "invitation:revoke:" + project_id + ":" + invitation_id
-    pending = session.pending_documents(namespace)
+    pending = session.pending_documents(namespace, InvitationRevocationPending)
     if pending is None:
         current = _read_invitation(session, project_id, invitation_id)
         status, _ = _status(current, project_id, invitation_id)
         if status.current_owner_subject != session.subject:
             raise E2eeError("owner_required")
         current.bundle.documents.add(
-            signed=status.descriptor, expected_root_digest=session.trusted_root_digest()
+            signed=status.descriptor,
+            expected_root_digest=session.identity.trusted_root_digest(),
         )
         session.verify_documents(current.bundle)
         pending = session.prepare_documents(
-            namespace, project_id, [status.descriptor.body], current.bundle
+            namespace,
+            status.descriptor.body,
+            current.bundle,
+            InvitationRevocationPending,
         )
-    documents, _ = pending
+    signed_descriptor = shared.SignedBytes.FromString(pending.signed_document)
     response = session.service.revoke_crypto_invitation(
         app.InvitationRequest(
-            project_id=project_id, invitation_id=invitation_id, descriptor=documents[0]
+            project_id=project_id,
+            invitation_id=invitation_id,
+            descriptor=signed_descriptor,
         )
     )
-    if not any(
-        item.project_id == project_id
-        and item.invitation_id == invitation_id
-        and item.state == "revoked"
+    matching = [
+        item
         for item in response.invitations
+        if item.project_id == project_id and item.invitation_id == invitation_id
+    ]
+    if (
+        len(matching) != 1
+        or matching[0].state != "revoked"
+        or matching[0].descriptor.body != signed_descriptor.body
     ):
         raise E2eeError("invalid_response")
-    session.open_bundle(response.bundle, release_namespaces=[namespace])
+    response.bundle.documents.add(
+        signed=matching[0].descriptor,
+        expected_root_digest=session.identity.trusted_root_digest(),
+    )
+    session.verify_documents(response.bundle, release_namespaces=[namespace])
     return {
         "project_id": project_id,
         "invitation_id": invitation_id,

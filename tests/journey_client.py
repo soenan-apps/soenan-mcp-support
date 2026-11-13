@@ -13,6 +13,7 @@ import signal
 import subprocess
 import sys
 from contextlib import AsyncExitStack
+from dataclasses import asdict
 from pathlib import Path
 from traceback import walk_tb
 
@@ -33,12 +34,6 @@ def failure(error):
     ]
     diagnostic = f"{type(error).__name__} at {' -> '.join(frames)}"
     import httpx
-
-    if sys.platform == "linux":
-        from jeepney.wrappers import DBusErrorResponse
-
-        if isinstance(error, DBusErrorResponse):
-            diagnostic += f" D-Bus name={error.name}"
 
     if isinstance(error, httpx.HTTPStatusError):
         diagnostic += f" HTTP {error.response.status_code}"
@@ -100,6 +95,7 @@ def sdk(request, session, records):
     from google.protobuf.timestamp_pb2 import Timestamp
     from soenan.arteligo.application.v1 import application_pb2 as app
     from soenan.arteligo.domain.v1 import domain_pb2 as domain
+
     from soenan_arteligo_support.e2ee import (
         EncryptedConversations,
         EncryptedDirectory,
@@ -187,27 +183,36 @@ def sdk(request, session, records):
                 [records._record(item) for item in session.open_bundle(response.bundle)]
             )
         raise ValueError("unsupported_relay_operation")
+    if target == "identity":
+        from soenan.account.identity.v1 import identity_pb2 as identity
+
+        if method == "evidence":
+            from journey_identity_evidence import public_identity_evidence
+
+            return public_identity_evidence(session.identity, arguments)
+        if method not in {
+            "pairing_request",
+            "accept_approval",
+            "synchronize",
+            "state",
+            "device_id",
+            "subject",
+        }:
+            raise ValueError("unsupported_identity_operation")
+        if method == "accept_approval":
+            positional[0] = ParseDict(positional[0], identity.IdentityChangeResponse())
+        operation = getattr(session.identity, method)
+        return public(
+            operation(*positional, **arguments) if callable(operation) else operation
+        )
     if target == "session":
         if method == "catalog_response":
             response = session.catalog_response(*positional, **arguments)
             response.ClearField("bundle")
             return public(response)
-        allowed = {
-            "pairing_request",
-            "accept_approval",
-            "state",
-            "device_id",
-            "subject",
-        }
+        allowed = {"state", "device_id", "subject"}
         if method not in allowed:
             raise ValueError("unsupported_session_operation")
-        if method == "accept_approval":
-            if positional:
-                positional[0] = ParseDict(positional[0], app.CommitCryptoResponse())
-            else:
-                arguments["response"] = ParseDict(
-                    arguments["response"], app.CommitCryptoResponse()
-                )
         operation = getattr(session, method)
         return public(
             operation(*positional, **arguments) if callable(operation) else operation
@@ -313,24 +318,60 @@ def sdk(request, session, records):
 def sdk_process():
     faulthandler.enable()
     faulthandler.register(signal.SIGTERM, chain=True)
-    from soenan_arteligo_support.e2ee import EncryptedRecords, open_session
+    from journey_response_loss import ProbeRequest, ResponseLossProbe
+
+    from soenan_arteligo_support.e2ee import (
+        EncryptedRecords,
+        FileProfileStore,
+        open_session,
+    )
 
     configuration = json.loads(sys.stdin.readline())
-    session = open_session(**configuration["session"])
-    try:
-        records = EncryptedRecords(session)
-        print(
-            json.dumps({"result": {"state": "open", "process_id": os.getpid()}}),
-            flush=True,
+    probe = None
+    if "state_directory" in configuration:
+        configuration["session"]["store"] = FileProfileStore(
+            configuration["state_directory"], configuration["session"]["profile"]
         )
+        probe = ResponseLossProbe(
+            directory=configuration["state_directory"],
+            profile=configuration["session"]["profile"],
+            account_origin=configuration["session"]["account_origin"],
+            arteligo_origin=configuration["session"]["arteligo_origin"],
+        )
+        probe.install()
+    session = None
+    records = None
+    opening_error = None
+    try:
+        try:
+            session = open_session(**configuration["session"])
+            records = EncryptedRecords(session)
+            print(
+                json.dumps({"result": {"state": "open", "process_id": os.getpid()}}),
+                flush=True,
+            )
+        except Exception as error:
+            opening_error = error
+            print(json.dumps(failure(error)), flush=True)
         for line in sys.stdin:
             try:
-                result = sdk(json.loads(line), session, records)
+                request = json.loads(line)
+                if request["target"] == "response_loss":
+                    if probe is None:
+                        raise ValueError("response_loss_requires_state_directory")
+                    result = asdict(probe.dispatch(ProbeRequest.parse(request)))
+                elif opening_error is not None:
+                    raise opening_error
+                else:
+                    result = sdk(request, session, records)
                 print(json.dumps({"result": result}), flush=True)
             except Exception as error:
                 print(json.dumps(failure(error)), flush=True)
     finally:
-        session.lock()
+        if session is not None:
+            session.lock()
+        if probe is not None:
+            probe.close()
 
 
 def terminal(arguments):
@@ -392,7 +433,13 @@ async def mcp_process():
                         streams = await stack.enter_async_context(
                             stdio_client(
                                 StdioServerParameters(
-                                    command=command[0], args=command[1:]
+                                    command=command[0],
+                                    args=command[1:],
+                                    env={
+                                        key: os.environ[key]
+                                        for key in ("SSL_CERT_FILE",)
+                                        if key in os.environ
+                                    },
                                 )
                             )
                         )

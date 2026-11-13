@@ -5,6 +5,7 @@ from ._conversations import EncryptedConversations
 from ._core import CryptoCore
 from ._crypto import E2eeError
 from ._directory import EncryptedDirectory
+from ._file_profile_store import FileProfileStore
 from ._invitations import (
     approve_invitation,
     confirm_project_owner,
@@ -15,7 +16,7 @@ from ._invitations import (
 from ._records import EncryptedRecords
 from ._session import DeviceSession
 from ._signed_commands import AcceptedCommand
-from ._storage import CredentialItem, ProfileSecureStore, SecureStore, SystemSecureStore
+from ._storage import CredentialItem, ProfileStore
 
 __all__ = [
     "AcceptedCommand",
@@ -26,9 +27,8 @@ __all__ = [
     "EncryptedConversations",
     "EncryptedDirectory",
     "EncryptedRecords",
-    "ProfileSecureStore",
-    "SecureStore",
-    "SystemSecureStore",
+    "FileProfileStore",
+    "ProfileStore",
     "approve_invitation",
     "confirm_project_owner",
     "create_invitation",

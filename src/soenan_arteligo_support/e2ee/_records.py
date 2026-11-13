@@ -4,6 +4,7 @@ import secrets
 from typing import Generic, Literal, TypeVar
 
 from google.protobuf.message import DecodeError, EncodeError, Message
+from soenan.account.crypto.v1 import crypto_pb2 as shared
 from soenan.arteligo.application.v1 import application_pb2 as app
 from soenan.arteligo.crypto.v1 import crypto_pb2 as crypto
 from soenan.arteligo.domain.v1 import domain_pb2 as domain
@@ -21,7 +22,7 @@ class ReadRecord(TypedDict, Generic[RecordMessage]):
     record_id: str
     revision: int
     key_epoch: int
-    protection_key: crypto.KeyRef
+    protection_key: shared.KeyRef
     kind: str
     deleted: bool
     immutable: bool
@@ -231,7 +232,7 @@ class EncryptedRecords:
             bundle = audience.bundle
             key = project.protection_key
             if project.key_distribution_revision != project.distribution_revision:
-                key = crypto.KeyRef(id=key.id, generation=key.generation + 1)
+                key = shared.KeyRef(id=key.id, generation=key.generation + 1)
                 create_keys = [key]
                 deliveries = [
                     crypto.DeliveryMutation(target=key, recipient=member.receiver)
@@ -332,7 +333,7 @@ class EncryptedRecords:
             raise E2eeError("invalid_project_policy")
         self.session.initialize_organization(owner_org)
         identifier = project_id or "prj_" + secrets.token_hex(16)
-        key = crypto.KeyRef(id="pk_" + secrets.token_hex(16), generation=1)
+        key = shared.KeyRef(id="pk_" + secrets.token_hex(16), generation=1)
         directory_id, drafts = initial_directory()
         drafts.extend(initial_records(identifier))
         project = domain.ProjectInfo()

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from soenan.arteligo.crypto.v1 import crypto_pb2 as crypto
+from soenan.account.crypto.v1 import crypto_pb2 as crypto
 
 
 @dataclass(frozen=True)

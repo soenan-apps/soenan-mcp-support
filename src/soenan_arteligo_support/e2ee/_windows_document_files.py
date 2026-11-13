@@ -7,7 +7,6 @@ from contextlib import ExitStack, contextmanager
 from ctypes import wintypes as w
 from pathlib import PureWindowsPath
 from typing import cast
-from uuid import UUID
 
 from ._credential_lock import windows_security
 
@@ -47,9 +46,11 @@ class _AllowedAce(c.Structure):
     ]
 
 
-class WindowsDocumentFiles:
-    def __init__(self, resources: ExitStack, namespace: str):
-        self._kernel, self._security, self._attributes, self._sid, _ = (
+class _WindowsFileHandles:
+    _path: str
+
+    def __init__(self, resources: ExitStack):
+        self._kernel, self._security, self._attributes, self._sid, self._user = (
             resources.enter_context(windows_security())
         )
         kernel, security = self._kernel, self._security
@@ -90,13 +91,6 @@ class WindowsDocumentFiles:
         kernel.GetVolumeInformationW.restype = w.BOOL
         kernel.FlushFileBuffers.argtypes = [w.HANDLE]
         kernel.FlushFileBuffers.restype = w.BOOL
-        kernel.SetFileInformationByHandle.argtypes = [
-            w.HANDLE,
-            c.c_int,
-            w.LPVOID,
-            w.DWORD,
-        ]
-        kernel.SetFileInformationByHandle.restype = w.BOOL
         security.GetSecurityInfo.argtypes = [
             w.HANDLE,
             c.c_int,
@@ -119,7 +113,8 @@ class WindowsDocumentFiles:
         security.EqualSid.argtypes = [w.LPVOID, w.LPVOID]
         security.EqualSid.restype = w.BOOL
 
-        local = self._local_directory()
+    def _validate_volume(self, local: PureWindowsPath) -> None:
+        kernel = self._kernel
         if kernel.GetDriveTypeW(local.anchor) != 3:
             raise PermissionError
         filesystem, flags = c.create_unicode_buffer(32), w.DWORD()
@@ -138,70 +133,16 @@ class WindowsDocumentFiles:
         if filesystem.value != "NTFS" or not flags.value & 0x8:
             raise PermissionError
 
-        path = PureWindowsPath(local.anchor)
-        for part in (None, *local.parts[1:]):
-            if part is not None:
-                path /= part
-            handle = self._open(str(path), directory=True)
-            resources.callback(kernel.CloseHandle, handle)
-            self._validate(handle, directory=True, private=False)
-        for part in ("SoenanProtectedDocuments", namespace):
-            path /= part
-            if not kernel.CreateDirectoryW(str(path), c.byref(self._attributes)):
-                if c.get_last_error() != 183:
-                    raise c.WinError(c.get_last_error())
-            handle = self._open(str(path), directory=True)
-            resources.callback(kernel.CloseHandle, handle)
-            self._validate(handle, directory=True)
-        self._path = str(path)
-
-    @staticmethod
-    def _local_directory() -> PureWindowsPath:
-        shell = c.WinDLL("shell32", use_last_error=True)
-        ole = c.WinDLL("ole32", use_last_error=True)
-        shell.SHGetKnownFolderPath.argtypes = [
-            w.LPVOID,
-            w.DWORD,
-            w.HANDLE,
-            c.POINTER(w.LPWSTR),
-        ]
-        shell.SHGetKnownFolderPath.restype = c.c_long
-        ole.CoTaskMemFree.argtypes = [w.LPVOID]
-        folder = c.create_string_buffer(
-            UUID("F1B32785-6FBA-4FCF-9D55-7B8E7F157091").bytes_le
-        )
-        value = w.LPWSTR()
-        try:
-            if shell.SHGetKnownFolderPath(folder, 0, None, c.byref(value)) != 0:
-                raise OSError
-            path = PureWindowsPath(c.wstring_at(value))
-            if (
-                not path.is_absolute()
-                or len(path.drive) != 2
-                or path.drive[1] != ":"
-                or not path.drive[0].isascii()
-                or not path.drive[0].isalpha()
-                or ".." in path.parts
-            ):
-                raise PermissionError
-            return path
-        finally:
-            if value:
-                ole.CoTaskMemFree(c.cast(value, w.LPVOID))
-
     def _open(
         self,
         path: str,
         *,
         directory: bool = False,
         create: bool = False,
-        delete: bool = False,
     ):
-        access = 0x20080 if directory or delete else 0x80020000
+        access = 0x20080 if directory else 0x80020000
         if create:
             access = 0x40020080
-        if delete:
-            access |= 0x10000
         handle = self._kernel.CreateFileW(
             path,
             access,
@@ -232,10 +173,13 @@ class WindowsDocumentFiles:
             raise PermissionError
         if not private:
             return
+        self._validate_security(handle)
+
+    def _validate_security(self, handle, *, object_type: int = 1) -> None:
         owner, dacl, descriptor = w.LPVOID(), w.LPVOID(), w.LPVOID()
         result = self._security.GetSecurityInfo(
             handle,
-            1,
+            object_type,
             0x5,
             c.byref(owner),
             None,
@@ -266,7 +210,11 @@ class WindowsDocumentFiles:
             if (
                 allowed.kind != 0
                 or allowed.flags != 0
-                or allowed.mask not in {0x10000000, 0x1F01FF}
+                or allowed.mask
+                not in {
+                    0x10000000,
+                    0x1F01FF if object_type == 1 else 0x1F0001,
+                }
                 or not self._security.EqualSid(
                     c.addressof(allowed) + _AllowedAce.sid.offset, self._sid
                 )
@@ -276,20 +224,13 @@ class WindowsDocumentFiles:
             self._kernel.LocalFree(descriptor)
 
     @contextmanager
-    def _file(
-        self, name: str, *, create: bool = False, delete: bool = False
-    ) -> Iterator[int]:
-        handle = self._open(
-            os.path.join(self._path, name), create=create, delete=delete
-        )
+    def _file(self, name: str, *, create: bool = False) -> Iterator[int]:
+        handle = self._open(os.path.join(self._path, name), create=create)
         try:
             self._validate(handle)
             yield handle
         finally:
             self._kernel.CloseHandle(handle)
-
-    def names(self) -> list[str]:
-        return os.listdir(self._path)
 
     @contextmanager
     def _stream(self, handle, *, write: bool = False):
@@ -327,30 +268,3 @@ class WindowsDocumentFiles:
             raise
         with stream:
             yield stream
-
-    def read(self, name: str) -> bytes:
-        with self._file(name) as handle:
-            with self._stream(handle) as stream:
-                return stream.read()
-
-    def publish(self, name: str, value: bytes | bytearray) -> None:
-        with self._file(name, create=True) as handle:
-            with self._stream(handle, write=True) as stream:
-                stream.write(value)
-                stream.flush()
-                if not self._kernel.FlushFileBuffers(handle):
-                    raise c.WinError(c.get_last_error())
-
-    def remove(self, name: str) -> None:
-        with self._file(name, delete=True) as handle:
-            disposition = w.BYTE(True)
-            if not self._kernel.SetFileInformationByHandle(
-                handle, 4, c.byref(disposition), c.sizeof(disposition)
-            ):
-                raise c.WinError(c.get_last_error())
-
-
-@contextmanager
-def document_files(namespace: str) -> Iterator[WindowsDocumentFiles]:
-    with ExitStack() as resources:
-        yield WindowsDocumentFiles(resources, namespace)

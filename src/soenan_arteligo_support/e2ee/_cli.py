@@ -9,14 +9,15 @@ from pathlib import Path
 import anyio
 from google.protobuf.json_format import ParseDict
 from pydantic import JsonValue
-from soenan.arteligo.application.v1 import application_pb2 as app
-from soenan.arteligo.crypto.v1 import crypto_pb2 as crypto
+from soenan.account.crypto.v1 import crypto_pb2 as crypto
+from soenan.account.identity.v1 import identity_pb2 as identity
+from soenan_account_identity_client import IdentityError, IdentitySession
 
 from ._client import open_session
 from ._crypto import E2eeError
+from ._file_profile_store import FileProfileStore
 from ._oauth import ProfileVault
 from ._signed_commands import AcceptedCommand
-from ._storage import SystemSecureStore
 
 
 def _public_json(path: str) -> dict[str, JsonValue]:
@@ -41,7 +42,7 @@ def _print_result(value: object) -> None:
         if "records" in saved:
             result["record_ids"] = [record["record_id"] for record in saved["records"]]
         value = result
-    print(json.dumps(_public_result(value), ensure_ascii=False))
+    print(json.dumps(_public_result(value), ensure_ascii=False), flush=True)
 
 
 def _require_terminal() -> None:
@@ -56,6 +57,7 @@ def main() -> int:
     parser.add_argument("--account-origin")
     parser.add_argument("--arteligo-origin")
     parser.add_argument("--profile", default="default")
+    parser.add_argument("--state-directory")
     commands = parser.add_subparsers(dest="command", required=True)
     for name in (
         "login",
@@ -68,6 +70,9 @@ def main() -> int:
         "replace-addition-key",
     ):
         commands.add_parser(name)
+    device_login = commands.add_parser("device-login")
+    device_login.add_argument("--subject", required=True)
+    device_login.add_argument("--authorization-expires-at", required=True, type=int)
     confirm_owner = commands.add_parser(
         "confirm-owner", help="直接受け取った招待リンクで project の所有者を確認します"
     )
@@ -120,24 +125,27 @@ def main() -> int:
     mcp.add_argument(
         "--grant", required=True, help="実行中の mcp-grant が表示した短命 handle"
     )
-    grant_command = commands.add_parser(
-        "mcp-grant", help="人が確認した範囲だけを許可する foreground broker"
-    )
-    grant_command.add_argument(
-        "--project",
-        required=True,
-        action="append",
-        help="明示的に許可する既存 project ID",
-    )
-    grant_command.add_argument(
-        "--access", required=True, choices=("read-only", "update")
-    )
-    grant_command.add_argument(
-        "--expires-in", required=True, type=int, help="有効秒数。1〜86400"
-    )
-    grant_command.add_argument("--input-dir", help="読み込み専用の入力ディレクトリー")
-    grant_command.add_argument(
-        "--output-dir", help="新規ファイルだけを作る別の出力ディレクトリー"
+    for name, help_text in (
+        ("mcp-grant", "人が確認した範囲だけを許可する foreground broker"),
+        ("mcp-approve", "環境の継続認可へ local MCP の範囲と絶対期限を保存します"),
+    ):
+        grant_command = commands.add_parser(name, help=help_text)
+        grant_command.add_argument("--project", required=True, action="append")
+        grant_command.add_argument(
+            "--access", required=True, choices=("read-only", "update")
+        )
+        if name == "mcp-grant":
+            grant_command.add_argument(
+                "--expires-in", required=True, type=int, help="有効秒数。1〜86400"
+            )
+        else:
+            grant_command.add_argument(
+                "--expires-at", required=True, type=int, help="有効期限の Unix 秒"
+            )
+        grant_command.add_argument("--input-dir")
+        grant_command.add_argument("--output-dir")
+    commands.add_parser(
+        "mcp-start", help="保存済み承認の範囲だけで local MCP を開始します"
     )
     approve = commands.add_parser("approve")
     approve.add_argument(
@@ -164,28 +172,89 @@ def main() -> int:
             return 0
         if not args.account_origin or not args.arteligo_origin:
             raise E2eeError("account_and_arteligo_origins_required")
-        if args.command == "mcp-grant":
+        if args.command in {"mcp-grant", "mcp-approve"}:
             _require_terminal()
-            if not 0 < args.expires_in <= 86400:
-                raise E2eeError("invalid_local_grant")
-        store = SystemSecureStore(args.profile)
+        if args.command == "mcp-grant" and not 0 < args.expires_in <= 86400:
+            raise E2eeError("invalid_local_grant")
+        store = FileProfileStore(
+            args.state_directory,
+            args.profile,
+            create=args.command in {"login", "device-login"},
+        )
         oauth = ProfileVault(
             account_origin=args.account_origin,
             arteligo_origin=args.arteligo_origin,
             store=store,
         )
+        if args.command == "device-login":
+
+            def verification(response):
+                print(
+                    "本人鍵の認可を手元で承認してください。"
+                    if vault.profile == "account-keys"
+                    else "製品の利用認可を手元で承認してください。"
+                )
+                _print_result(
+                    {
+                        "verification_uri": response.verification_uri_complete,
+                        "user_code": response.user_code,
+                    }
+                )
+
+            for vault in (oauth.identity_vault(), oauth):
+                vault.login_device(
+                    subject=args.subject,
+                    authorization_expires_at=args.authorization_expires_at,
+                    on_verification=verification,
+                )
+            _print_result({"oauth_authorized": True, "keys_verified": False})
+            identity_session = IdentitySession(
+                store,
+                origin=oauth.account_origin,
+                subject=args.subject,
+                credentials=oauth.identity_bind(),
+            )
+            try:
+                identity_session.synchronize()
+                identity_session.require_approved()
+                _print_result({"oauth_authorized": True, "keys_verified": True})
+            finally:
+                identity_session.lock()
+            return 0
         if args.command == "login":
+            oauth.identity_vault().login()
+            print("本人鍵の認可が完了しました。製品の認可を続けてください。")
             oauth.login()
-            print("認証できました。status で端末の状態を確認してください。")
+            print("製品の認可が完了しました。status で端末の状態を確認してください。")
             return 0
         if args.command == "logout":
+            identity_outcome = oauth.identity_vault().logout()
             outcome = oauth.logout()
-            if outcome.known_family_revoked:
+            if outcome.known_family_revoked or identity_outcome.known_family_revoked:
                 print(
                     "このプロファイルからサインアウトし、保存されていた認証系列を失効させました。"
                 )
             else:
                 print("このプロファイルはサインアウトしています。")
+            return 0
+        if args.command == "mcp-start":
+            from ._file_boundary import FileBoundary
+            from ._local_broker import serve_local_worker
+            from ._local_mcp_approval import LocalMcpApproval
+
+            approval = LocalMcpApproval.load(oauth)
+            session = open_session(
+                account_origin=args.account_origin,
+                arteligo_origin=args.arteligo_origin,
+                profile=args.profile,
+                store=store,
+            )
+            session.require_approved()
+            files = FileBoundary(approval.input_directory, approval.output_directory)
+            try:
+                serve_local_worker(session, approval.worker_grant(oauth), files)
+            finally:
+                files.close()
             return 0
         session = open_session(
             account_origin=args.account_origin,
@@ -193,7 +262,7 @@ def main() -> int:
             profile=args.profile,
             store=store,
         )
-        if args.command == "mcp-grant":
+        if args.command in {"mcp-grant", "mcp-approve"}:
             from ._file_boundary import FileBoundary
             from ._local_broker import MemoryGrant, serve_local_grant
 
@@ -218,7 +287,11 @@ def main() -> int:
                     {
                         "projects": sorted(projects),
                         "access": args.access,
-                        "expires_in_seconds": args.expires_in,
+                        **(
+                            {"expires_at": args.expires_at}
+                            if args.command == "mcp-approve"
+                            else {"expires_in_seconds": args.expires_in}
+                        ),
                         "input_directory": files.input_directory,
                         "output_directory": files.output_directory,
                         "file_access_supported": files.file_access_supported,
@@ -238,6 +311,19 @@ def main() -> int:
                     != "authorize"
                 ):
                     raise E2eeError("local_grant_not_approved")
+                if args.command == "mcp-approve":
+                    from ._local_mcp_approval import LocalMcpApproval
+
+                    approval = LocalMcpApproval.approve(
+                        oauth,
+                        projects=projects,
+                        access=args.access,
+                        input_directory=files.input_directory,
+                        output_directory=files.output_directory,
+                        expires_at=args.expires_at,
+                    )
+                    _print_result({"approved": True, "expires_at": approval.expires_at})
+                    return 0
                 grant = MemoryGrant(projects, args.access, args.expires_in)
 
                 def announce(handle):
@@ -274,9 +360,9 @@ def main() -> int:
         elif args.command in {"setup", "replace-addition-key"}:
             _require_terminal()
             draft = (
-                session.prepare_setup()
+                session.identity.prepare_setup()
                 if args.command == "setup"
-                else session.prepare_addition_key()
+                else session.identity.prepare_addition_key()
             )
             try:
                 print(
@@ -289,9 +375,9 @@ def main() -> int:
                 ):
                     raise E2eeError("addition_key_confirmation_mismatch")
                 if args.command == "setup":
-                    session.setup(draft)
+                    session.identity.setup(draft)
                 else:
-                    session.replace_addition_key(draft)
+                    session.identity.replace_addition_key(draft)
             finally:
                 draft.clear()
             print(
@@ -300,29 +386,31 @@ def main() -> int:
                 else "端末追加キーを交換しました。"
             )
         elif args.command == "enroll":
-            _print_result(session.pairing_request())
+            _print_result(session.identity.pairing_request())
         elif args.command == "reanchor":
             _require_terminal()
-            _print_result(session.reanchor())
+            _print_result(session.identity.reanchor())
         elif args.command == "approve":
             _require_terminal()
             _print_result(
-                session.approve(
+                session.identity.approve(
                     ParseDict(_public_json(args.pairing_json), crypto.SignedBytes())
                 )
             )
         elif args.command == "accept-approval":
-            session.accept_approval(
-                ParseDict(_public_json(args.receipt_json), app.CommitCryptoResponse())
+            session.identity.accept_approval(
+                ParseDict(
+                    _public_json(args.receipt_json), identity.IdentityChangeResponse()
+                )
             )
             print("端末の承認を確認しました。")
         elif args.command == "add-by-key":
             _require_terminal()
-            session.add_by_key(getpass.getpass("端末追加キー: ").strip())
+            session.identity.add_by_key(getpass.getpass("端末追加キー: ").strip())
             print("他の端末を失効させず、この端末を追加しました。")
         elif args.command == "revoke-device":
             _require_terminal()
-            _print_result(session.revoke_device(args.device_id))
+            _print_result(session.identity.revoke_device(args.device_id))
         elif args.command == "confirm-owner":
             from ._invitations import confirm_project_owner
 
@@ -418,7 +506,7 @@ def main() -> int:
                     }
                 )
         return 0
-    except E2eeError as error:
+    except (E2eeError, IdentityError) as error:
         failure = {"error": error.code}
         if error.code == "authentication_login_uncertain":
             failure["message"] = (

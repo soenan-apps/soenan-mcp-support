@@ -1,6 +1,5 @@
 from enum import Enum
 
-
 class SessionAuthorizationOutcome(str, Enum):
     EXPIRED = "expired"
     PENDING = "pending"

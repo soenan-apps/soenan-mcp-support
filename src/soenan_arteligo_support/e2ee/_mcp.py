@@ -18,6 +18,7 @@ from mcp.types import Tool as MCPTool
 from pydantic import ValidationError
 from soenan.arteligo.application.v1 import application_pb2 as app
 from soenan.arteligo.domain.v1 import domain_pb2 as domain
+from soenan_account_identity_client import IdentityError
 
 from ..transfer import TransferError, upload_file, upload_wav_preview
 from ..transfer._workflow import _download_to_stream
@@ -183,7 +184,7 @@ class _GrantedMCP:
                 abandon_on_cancel=True,
             )
             return [MCPTool.model_validate(tool) for tool in tools]
-        except E2eeError as error:
+        except (E2eeError, IdentityError) as error:
             raise ToolError(error.code) from None
         except BaseException:
             self.close_grant()
@@ -201,7 +202,7 @@ class _GrantedMCP:
                 abandon_on_cancel=True,
             )
             return CallToolResult.model_validate(result)
-        except E2eeError as error:
+        except (E2eeError, IdentityError) as error:
             raise ToolError(error.code) from None
         except BaseException:
             self.close_grant()
@@ -278,7 +279,7 @@ def _broker_operations(
                     isError=True,
                 )
             return _public_result(result)
-        except E2eeError as error:
+        except (E2eeError, IdentityError) as error:
             raise ToolError(error.code) from None
         except TransferError as error:
             raise ToolError(error.code) from None

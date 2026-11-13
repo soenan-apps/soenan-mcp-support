@@ -11,6 +11,7 @@ import signal
 import socket
 import stat
 import struct
+import subprocess
 import sys
 import tempfile
 import threading
@@ -21,6 +22,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 import anyio
+from soenan_account_identity_client import IdentityError
 
 from ._crypto import E2eeError
 from ._file_boundary import FileBoundary
@@ -111,7 +113,7 @@ class MemoryGrant:
         self.deadline = time.monotonic() + self.expires_in
 
     def require_active(self) -> None:
-        if time.monotonic() >= self.deadline:
+        if time.monotonic() >= self.deadline or time.time() >= self.expires_at:
             raise E2eeError("local_grant_expired")
         if self._revoked.is_set():
             raise E2eeError(self._reason)
@@ -287,7 +289,7 @@ def serve_local_grant(
     session: DeviceSession,
     grant: MemoryGrant,
     files: FileBoundary,
-    announce: Callable[[LocalGrantHandle], None],
+    announce: Callable[[LocalGrantHandle], subprocess.Popen | None],
 ) -> None:
     from ._mcp import _broker_operations
 
@@ -393,7 +395,7 @@ def serve_local_grant(
                             else:
                                 raise E2eeError("invalid_local_broker_request")
                             response = {"id": identifier, "result": result}
-                        except E2eeError as error:
+                        except (E2eeError, IdentityError) as error:
                             response = {"id": identifier, "error": error.code}
                         try:
                             connection.settimeout(30.0)
@@ -402,17 +404,58 @@ def serve_local_grant(
                         except (OSError, EOFError):
                             break
 
+            worker: subprocess.Popen | None = None
+            worker_monitor: threading.Thread | None = None
+
             try:
-                announce(handle)
+                worker = announce(handle)
+                if worker is not None:
+
+                    def monitor_worker(process: subprocess.Popen) -> None:
+                        process.wait()
+                        stop("local_grant_connection_closed")
+
+                    worker_monitor = threading.Thread(
+                        target=monitor_worker, args=(worker,), daemon=True
+                    )
+                    worker_monitor.start()
                 anyio.run(anyio.to_thread.run_sync, serve_connection)
             except (EOFError, OSError):
                 pass
-            except E2eeError as error:
-                if error.code not in {"local_grant_expired", "local_grant_revoked"}:
+            except (E2eeError, IdentityError) as error:
+                if error.code not in {
+                    "local_grant_expired",
+                    "local_grant_revoked",
+                    "local_grant_connection_closed",
+                }:
                     raise
             finally:
                 timer.cancel()
                 stop("local_grant_connection_closed")
+                if worker is not None:
+                    if worker.poll() is None:
+                        worker.terminate()
+                    worker.wait()
+                if worker_monitor is not None:
+                    worker_monitor.join()
                 active.clear()
                 for signum, handler in previous_signals.items():
                     signal.signal(signum, handler)
+
+
+def serve_local_worker(
+    session: DeviceSession, grant: MemoryGrant, files: FileBoundary
+) -> None:
+    def start(handle: LocalGrantHandle) -> subprocess.Popen:
+        return subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "soenan_arteligo_support.e2ee._cli",
+                "mcp",
+                "--grant",
+                handle.encode(),
+            ]
+        )
+
+    serve_local_grant(session, grant, files, start)

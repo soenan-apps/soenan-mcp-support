@@ -2,55 +2,78 @@
 
 この SDK と local MCP はユーザの承認済み端末として Arteligo の内容を暗号化・復号します。プロジェクト名、ファイル名、フォルダー構成、提出物、コメント、チャットなどは送信前に暗号化します。Arteligo と remote MCP は平文の鍵や内容を受け取りません。
 
-Account が本人確認と OAuth を管理し、Arteligo が端末の承認状態、所属、権限、署名済み暗号文、revision、Bucket capability を管理します。暗号処理は Flutter と同じ `arteligo/native/e2ee` の Rust ライブラリーを使います。Python に別の HPKE や AES-GCM 実装はありません。
+Accountが本人認証、OAuth、Identity・Root・受信鍵U・端末承認・復旧を管理し、Arteligoが所属、製品内の権限、署名済み暗号文、revision、Bucket capabilityを管理します。本人鍵にはAccountのRustコア、P・DEKと内容にはArteligoのRustコアを使い、Flutterと同じ管理元からビルドします。Pythonに別のHPKEやAES-GCM実装はありません。
 
 ## 開発環境への導入
 
-Python 3.10 以降と Rust toolchain が必要です。資格情報の保存には、package が依存する `keyring>=25.5` と、macOS Keychain、Windows Credential Manager、Linux Secret Service のいずれかを使います。平文ファイルへ保存する keyring backend へは切り替えません。
+Python 3.10以降とRust toolchainが必要です。手元・クラウドとも`FileProfileStore`でプロファイルをファイルへ保存します。keyring、Secret Service、D-Bus、sudoはSDKの要件ではありません。アプリのOS保護保存とは別の経路です。
 
-Linux では通常の user D-Bus と、利用可能な既定 collection を持つ Secret Service が必要です。SSH・TTY から使う場合も既存の user bus に接続し、本人の通常 keyring を先に解除します。GUI prompt を利用できない環境で別の bus・collection や平文 backend を作って代用しません。保護ストアを利用できない場合、`login` は OAuth 開始前に `secure_store_unavailable` で停止します。
+既定の保存先は`platformdirs.user_state_path("soenan-arteligo-support", appauthor=False)`です。`--state-directory DIRECTORY`で変更できます。各プロファイルは名前のSHA-256で分け、その配下の`state.json`に資格情報、端末鍵、pin、署名済み要求と再開記録を保存します。
 
-端末鍵、信頼記録、再試行用の署名済み command は、暗号化した文書として端末内に保存します。OS の保護領域には固定サイズの復号鍵と確定済み文書への参照を置くため、journal が増えても Windows Credential Manager の項目容量を超えません。文書を永続化してから参照を置き換え、欠損・改ざん・保護鍵の喪失はエラーにします。保存済みの鍵を作り直したり、journal を空として扱ったりはしません。
+ファイルはOS保護領域と同等ではありません。POSIXではdirectoryを0700、ファイルを0600にし、Windowsでは実行ユーザの保護されたACLを使います。Windowsの保存先はローカル固定NTFSに限ります。同じプロファイルの操作はプロセス間で排他し、書き込みを同期してから原子的に置き換えます。同じOSユーザやホスト管理者からの隔離は保証しません。
 
-ワークスペースのルートから、二つのローカル package を同時に導入します。
+初回の保存先作成は`login`と`device-login`で行います。既存プロファイルの欠損・破損や権限の不一致は`profile_store_unavailable`で停止し、鍵の再生成や空の再開記録で代用しません。
+
+ワークスペースのルートから、四つのローカルpackageを同時に導入します。
 
 ```sh
 uv venv soenan-mcp-support/.venv
-uv pip install --python soenan-mcp-support/.venv/bin/python ./arteligo/native/e2ee './soenan-mcp-support[dev]'
+uv pip install --python soenan-mcp-support/.venv/bin/python \
+  ./soenan-account/native/identity \
+  ./soenan-account/packages/account_identity_client/python \
+  ./arteligo/native/e2ee './soenan-mcp-support[dev]'
 ```
 
 `dev` は型検査に使う `types-protobuf` を追加します。Ruff と ty はワークスペースの `bin/soenan check` が固定バージョンで起動します。
 
-`arteligo-e2ee-native` のビルドは、固定した `Cargo.lock` で Rust ライブラリーを作り、実行環境用の wheel に同梱します。wheel は OS と CPU ごとに作ります。
+二つのRust packageは固定した`Cargo.lock`で本人鍵・製品ライブラリーをそれぞれ作り、実行環境用のwheelに同梱します。wheelはOSとCPUごとに作ります。
 
 ## 端末の認証と承認
 
-以下の `ACCOUNT_ORIGIN` と `ARTELIGO_ORIGIN` は対象環境の origin に置き換えます。HTTPS を使い、ローカル開発の loopback だけ HTTP を許可します。OAuth token は OS の保護領域へ保存します。端末の秘密鍵は OS の保護鍵で暗号化し、origin と account ごとに分離します。
+以下の`ACCOUNT_ORIGIN`と`ARTELIGO_ORIGIN`は対象環境のoriginに置き換えます。HTTPSを使い、ローカル開発のloopbackだけHTTPを許可します。OAuth tokenと端末秘密鍵は同じプロファイルのファイルに保存し、本人鍵と製品の資格・再開記録は項目を分けます。
 
 ```sh
 arteligo --account-origin ACCOUNT_ORIGIN --arteligo-origin ARTELIGO_ORIGIN login
 arteligo --account-origin ACCOUNT_ORIGIN --arteligo-origin ARTELIGO_ORIGIN status
 ```
 
-`login` はブラウザーで Account の承認を開き、PKCE を使って loopback callback を受け取ります。ブラウザーへの認証情報入力はユーザが行います。CLI は固定の `arteligo-native-cli` public client と `arteligo:app` scope を使います。
+`login`は先に`account-keys-native-cli`の本人鍵専用OAuth、次に`arteligo-native-cli`の製品OAuthを認可します。本人鍵のaudienceはAccountの`/api/identity`、scopeは`account:keys:manage account:keys:receive`であり、製品の`arteligo:app`と混用しません。それぞれブラウザーでAccountの承認を開き、PKCEとloopback callbackを使います。認証情報の入力はユーザが行います。
 
-同じ profile の OAuth 資格情報は、session や process ごとのコピーではなく、OS の保護領域にある一つの項目で管理します。refresh はその profile の process 間で調整し、単回利用の proof を送る前に保留状態を保存します。応答や最終保存の結果が不明な場合は、古い proof を再送しません。保護ストアが使えない場合も、平文ファイルやメモリーだけの保存へ切り替えません。
+同じプロファイルのOAuth資格情報は、sessionやprocessごとのコピーではなく、一つのプロファイルファイルで管理します。refreshはそのプロファイルのprocess間で調整し、単回利用のproofを送る前に保留状態を保存します。応答や最終保存の結果が不明な場合は、古いproofを再送しません。保存失敗をメモリーだけの継続で隠しません。
 
-ブラウザーの操作待ちでは資格情報の lock を保持しません。同時に `login` を始めた場合は、最後に始めた操作だけが新しい資格情報を採用できます。code 交換の結果が不明なときは、以前の利用可能な資格情報を保持します。`logout` は先に古い操作を無効にし、既知の family の失効が保留中なら、それを解消するまで新しい login で上書きしません。同じ profile を古い SDK と同時に操作しないでください。旧形式の有効な access token は利用できても、refresh 可能な新形式へ自動昇格はしないため、再度 `login` が必要です。
+通常PKCEとクラウドのtoken応答はどちらも`subject`を必須にします。クラウドでは環境認可IDと絶対期限も検証します。通常のsubjectだけをクラウド承認として扱わず、refreshでsubject・環境ID・期限が変わる応答は採用しません。
+
+ブラウザーの操作待ちでは資格情報のlockを保持しません。同時に`login`を始めた場合は、最後に始めた操作だけが新しい資格情報を採用できます。code交換の結果が不明なときは、以前の利用可能な資格情報を保持します。`logout`は先に古い操作を無効にし、既知のfamilyの失効が保留中なら、それを解消するまで新しいloginで上書きしません。
 
 session の置換を検出したら、その session が保持する署名・復旧・scope の鍵を利用できなくします。既に受付済みの要求まで取り消されたことにはせず、保存が確定した結果は保持します。project の読取り権限を失ったことが明示された場合は、その scope だけを回収します。一般の認証エラー、利用権の不足、見つからない応答を、project 全体の権限喪失とは扱いません。
 
-最初の端末では `setup` を実行します。コアが端末固有の鍵、Root、受信鍵 U、端末追加キーを生成し、Account の署名と結び付けた genesis を登録します。表示された端末追加キーを安全な場所へ保存し、保存確認後に初期設定を確定します。キーを command argument、環境変数、MCP tool に渡しません。
+最初の端末では`setup`を実行します。Accountの本人鍵コアが端末固有の鍵、Root、受信鍵U、端末追加キーを生成し、Accountへgenesisを登録します。表示された端末追加キーを安全な場所へ保存し、保存確認後に初期設定を確定します。キーをcommand argument、環境変数、MCP toolに渡しません。
 
 追加端末では `add-by-key` を実行し、端末追加キーを入力します。コアは公開 Identity の署名系譜と pin、封印済み bootstrap の digest を検証してから復号し、秘密鍵から導出した公開鍵が証明と一致することを確認します。既存端末を失効させず、同じ Identity へ新端末を追加します。
 
-QR 承認では、追加端末の `enroll` が生成した署名付き公開情報を承認済み端末へ直接渡します。既存端末で `approve --pairing-json pairing.json` を実行し、その receipt を追加端末へ戻します。追加端末の `accept-approval --receipt-json approval.json` は共通コアで受理結果と配送された鍵を検証します。SDK内部ではFlutterと同じ生成型の`SignedBytes`と`CommitCryptoResponse`を使い、CLIの入出力でJSONへ変換します。
+QR承認では、追加端末の`enroll`が生成した署名付き公開情報を承認済み端末へ直接渡します。既存端末で`approve --pairing-json pairing.json`を実行し、そのreceiptを追加端末へ戻します。追加端末の`accept-approval --receipt-json approval.json`はAccountの共通コアで受理結果と配送鍵を検証します。SDK内部ではAccount管理の生成済みprotobuf型を使い、CLIの入出力だけでJSONへ変換します。
 
-`replace-addition-key` は新しい Root、受信鍵 U、端末追加キーを準備し、保存確認後に同じ operation として公開します。明示的な失効対象に含めていない承認済み端末は維持します。準備済み state と元の署名付き要求を保護領域へ保存し、応答が不明な場合は同じ要求で再開します。`reanchor` による通常の Root 更新でも、確認済み Identity と pin の検証を省略しません。
+`replace-addition-key`は新しいRoot、受信鍵U、端末追加キーを準備し、保存確認後に同じoperationとして公開します。明示的な失効対象に含めていない承認済み端末は維持します。準備済みstateと元の署名付き要求をプロファイルへ保存し、応答が不明な場合は同じ要求で再開します。`reanchor`による通常のRoot更新でも、確認済みIdentityとpinの検証を省略しません。
 
 `catalog` は現在利用できる組織とプロジェクトを取得します。組織の現在 Owner と Owner 候補は生成型の oneof で区別し、組織の購入権限がない外部プロジェクトへの参加はプロジェクト側だけに表します。Account の所属一覧から全組織へ順に認可要求を送る処理はありません。
 
 Python APIの`catalog_response()`は生成型の`ProjectCatalogResponse`を返します。CLIのJSON出力にはProtobufの標準表記を使い、`projectId`などを独自の別名へ変換しません。検証用の`bundle`はCLI出力から除き、local MCPでは許可したプロジェクトのentryだけを返します。
+
+## クラウド環境の継続認可
+
+クラウドでは環境専用の永続directoryを指定します。手元と同じファイル保存を使い、手元のパスワードや端末追加キーを要求しません。指定先が使えない場合に別の保存方式へ切り替えることはありません。
+
+```sh
+arteligo --account-origin ACCOUNT_ORIGIN --arteligo-origin ARTELIGO_ORIGIN \
+  --state-directory STATE_DIRECTORY \
+  device-login --subject SUBJECT --authorization-expires-at UNIX_SECONDS
+```
+
+対象ユーザのsubjectと認可の絶対期限を指定します。表示されたAccountの承認URLを手元で開き、対象環境と公開要求を確認して承認します。OAuth認可と鍵検証は別状態です。`oauth_authorized`だけで利用可能とせず、`keys_verified`まで確認します。同じdirectoryとprofileから再起動すれば、保存済みの環境専用資格で非対話の認証更新と鍵取得を行います。絶対期限や明示失効を超えて継続しません。
+
+クラウド認可はprofileごとにoperation IDを先に保存し、同じ端末鍵で要求を署名します。途中停止では元のIDと要求から再開します。再認可や`logout`は環境専用鍵を作り直しません。有効な認可が保存済みなら承認案内を出さず、交換済みの結果と現在の有効期限を分けて扱います。
+
+承認待ちcodeの期限は600秒です。手元で承認した後は、その承認の絶対期限まで交換を再開できます。公開要求から交換用codeを平文取得することはできず、要求の受信鍵とbindingに結び付いたHPKE envelopeを環境専用鍵で開きます。再送で期限を延ばしません。
 
 ## local MCP
 
@@ -64,6 +87,19 @@ arteligo --account-origin ACCOUNT_ORIGIN --arteligo-origin ARTELIGO_ORIGIN \
 
 `mcp-grant` は前景で許可対象を表示し、人が `authorize` を入力した後だけ handle を発行します。対象は明示した既存 project、`read-only` または `update` の範囲、期限、任意の入出力 directory に固定し、実行中に拡大できません。worker は通常の OAuth token や端末追加キーを受け取りません。出力先 directory には新規ファイルだけを作り、既存ファイルの置換や root 外の path を拒否します。
 
+クラウドのlocal MCPは、同じ環境directoryで範囲と絶対期限を一度承認します。
+
+```sh
+arteligo --account-origin ACCOUNT_ORIGIN --arteligo-origin ARTELIGO_ORIGIN \
+  --state-directory STATE_DIRECTORY \
+  mcp-approve --project PROJECT_ID --access read-only --expires-at UNIX_SECONDS \
+  [--input-dir INPUT_DIRECTORY] [--output-dir OUTPUT_DIRECTORY]
+arteligo --account-origin ACCOUNT_ORIGIN --arteligo-origin ARTELIGO_ORIGIN \
+  --state-directory STATE_DIRECTORY mcp-start
+```
+
+`mcp-start`は保存済みの許可範囲で再起動し、期限・失効・現在認可の制約を維持します。認可の再取得でproject・操作権限・入出力directoryを拡大しません。
+
 local MCPは許可したprojectだけを一覧に返し、復号したrecordと会話の読み取り、許可した場合の更新、原本転送、WAVプレビュー作成を提供します。project作成、端末承認、端末追加キー、OAuth token、秘密鍵、任意署名、許可拡大を扱うtoolはありません。各操作はローカルの許可・期限・端末状態を確認し、実APIがその要求の現在認可と失効を判定します。暗号処理は必要な操作で取得した同じ生成型の`CryptoReadBundle`を使い、独立した端末生存確認GETや毎操作のrefresh、定期ポーリングを挟みません。
 
 catalogとrecord readは共通コアで公開鍵の系譜、署名、受理receiptを検証します。保持履歴を理由に無関係なprojectへの現在権限を要求しません。Root交換も同じコアのIdentity更新で処理し、準備済みstateと元の署名付き要求から再開します。scopeやgateのproof graph、Root交換専用manifestは使いません。
@@ -76,11 +112,15 @@ broker は一つの AnyIO 実行環境と worker で操作を直列実行しま�
 
 内容の書き込みは生成型の`ValueMutation`と`RecordMutationBinding`で定義し、共通コアの`prepare`で署名付きprotobuf要求を作ります。recordの期待revisionとProtectionKeyを指定し、headと索引の更新を同じcommandへ含めます。受理receiptと元のCipherValueを検証してから復号し、保存済みの要求は同じoperation IDと元のbytesで再送します。
 
+招待文書は専用の`sign_documents`で署名します。操作別の型で元`SignedBytes`と作成リンクを送信前に保護保存し、再開には同じ要求を使います。返却された保存文書の一致と署名を確認してから文書の未完了状態だけを解放し、内容mutationのreceiptやjournalには混ぜません。
+
 recordの削除は`deleted`属性を持つ新しいrevisionです。元のCipherValueと署名は書き換えません。署名対象を独自のcanonical JSONとして組み立てる処理や、旧形式を通常処理へ変換する経路はありません。
 
 record の `expected_revision` と鍵世代は競合を検出するために必要です。`revision_conflict` の場合は現在の record を読み直してからユーザの変更を適用します。汎用 record 更新は自動的に再実行しません。会話 API は署名済みの操作 ID を確認し、競合した head と索引を読み直して最大 3 回まで再試行します。
 
 実HTTP409の応答が `revision_conflict` を明示した場合、SDKは保存済みの元commandだけを共通暗号コアで解放します。コアの更新と対応するpendingの削除を保護保存してから、競合を呼び出し元へ返します。結果不明の通信失敗や一般403では解放しません。
+
+確定結果を照合し直すときは元commandを冪等再送し、既存receiptと最新の公開履歴を取得します。本人stateの保存が成功してから製品stateとjournal解放を保存するため、本人保存に失敗しても元の製品操作を再開できます。
 
 ## Python API
 
@@ -132,7 +172,7 @@ def main():
 main()
 ```
 
-`open_session`は認証と設定の取得を行い、保存済み端末があれば共通コアで設定のbundleを開いて`DeviceSession`を返します。途中で失敗した場合はsessionをlockして例外を返します。呼び出し側は返されたsessionを`finally`でlockします。起動時のOwner保守は行いません。
+`open_session`は製品用と本人鍵専用の資格を分けて取得し、Account管理の本人鍵sessionとArteligoの製品状態を開いて`DeviceSession`を返します。本人鍵の履歴・配送はAccountのコア、P・DEKと内容の検証は製品コアが扱い、それぞれのreceiptだけで対応するjournalを解放します。途中で失敗した場合はsessionをlockして例外を返します。呼び出し側は返されたsessionを`finally`でlockします。起動時のOwner保守は行いません。
 
 保存を伴う公開APIは、正常な値と`AcceptedCommand`を区別します。後者は検証済みの元command・resultと、後続処理の最初の例外を`finalization_error`に保持します。保存後の失敗を未保存へ戻したり、正常なproject ID・空配列・取得完了で代用したりしません。受理済みの場合は後続業務を止め、同じ保存済みoperationから再開します。
 
@@ -206,18 +246,18 @@ Flutter と SDK は同じ生成型 `FileMetadata` を `file_metadata` record に
 
 ## 契約と検証
 
-HTTP 契約の正本は Arteligo の `contracts/openapi/arteligo-public.yaml` です。`generated/` はその契約から作る client で、手で変更しません。`GeneratedAPI` は生成済み endpoint と model を呼び出す transport adapter です。
+HTTP契約の正本はAccountの`contracts/openapi/account-public.yaml`とArteligoの`contracts/openapi/arteligo-public.yaml`です。本人鍵protobufはAccount、製品protobufはArteligoが管理します。各生成済みclientと型を手で変更しません。`GeneratedAPI`は製品の生成endpointとmodelを呼び出すtransport adapterです。
 
-ワークスペースのルートから、Swift・Dart・Python の生成物をまとめて更新します。protobuf の Python 実装と `.pyi` もこのコマンドで生成し、wheel に同梱します。生成物の一致は実サービスの動作を保証しません。
+ワークスペースのルートから全契約を依存順に更新します。Swift・Dart・TypeScript・Pythonとprivate snapshotを一括生成し、製品別のCLI生成入口は残しません。protobufのPython実装と`.pyi`も生成してwheelに同梱します。生成物の一致は実サービスの動作を保証しません。
 
 ```sh
-bin/soenan arteligo contract generate
+bin/soenan contract generate
 ```
 
 SDK の手書き source、生成補助ツール、Journey driver はワークスペースのルートから `bin/soenan check` で検査します。Ruff の lint と format 差分、ty の型検査を実行します。規則はこのリポジトリの `pyproject.toml`、実行対象はワークスペースの `scripts/soenan_cli/commands/check.py` に定義しています。
 
-SDK 本体と生成補助ツールは Python 3.10、Journey driver は Python 3.14 として検査します。ty は生成 protobuf の `.pyi` と導入済み package の型情報を使い、SDK の型付きインターフェースを検査します。生成 client の `generated/` は手書き source の lint・format 対象に含めません。静的検査は暗号・認可・転送の実サービス検証の代わりにはなりません。
+SDK本体と生成補助ツールはPython 3.10、Journey driverはPython 3.14として検査します。tyは生成protobufの`.pyi`と導入済みpackageの型情報を使い、SDKの型付きインターフェースを検査します。生成clientの`generated/`とIDL由来の`*_generated.py`は手書きsourceのlint・format対象に含めません。生成物の整合は一括生成と契約checkで確認します。静的検査は暗号・認可・転送の実サービス検証の代わりにはなりません。
 
-SDKの業務検証には、配布packageとRust crypto runtime、実際のAccount・Arteligo・PostgreSQL・Bucketを使います。通常構成にValkeyはありません。通常クライアントでOAuthのブラウザー認証、OSの保護ストアへの保存、端末設定を行い、実際のファイルを保存・取得して内容を確認します。[workspaceのユーザフロー](../docs/local-development.md#利用者フローの確認)を参照してください。
+SDKの業務検証には、配布packageとRust crypto runtime、実際のAccount・Arteligo・PostgreSQL・Bucketを使います。通常構成にValkeyはありません。通常クライアントでOAuthのブラウザー認証、プロファイルのファイル保存、端末設定を行い、実際のファイルを保存・取得して内容を確認します。[workspaceのユーザフロー](../docs/local-development.md#ユーザフローの確認)を参照してください。
 
 micro・mock・fakeのsuite、大量metadataの生成・測定driver、専用DBus・keyring・native library環境、identity・source hash・証跡台帳を使うacceptance helperは削除しました。このリポジトリには、通常の認証からファイル転送までを自動確認するstandalone suiteはありません。

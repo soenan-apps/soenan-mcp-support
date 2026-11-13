@@ -6,9 +6,12 @@ import threading
 import uuid
 from collections.abc import Callable, Sequence
 from contextlib import contextmanager
+from dataclasses import dataclass
+from typing import TypeVar, cast
 
 from arteligo_public_api_client.models.crypto_proto_message import CryptoProtoMessage
 from google.protobuf.message import DecodeError
+from soenan.account.crypto.v1 import crypto_pb2 as shared
 from soenan.arteligo.application.v1 import application_pb2 as app
 from soenan.arteligo.crypto.v1 import crypto_pb2 as crypto
 
@@ -16,14 +19,53 @@ from ._api import E2eeAPI, _ProviderRevisionConflict
 from ._core import CryptoCore
 from ._crypto import E2eeError, decode, encode
 from ._service_generated import CryptoServiceClient, EnvelopeCall
-from ._storage import ProfileSecureStore
+from ._storage import ProfileStore
+
+
+@dataclass(frozen=True)
+class InvitationCreationPending:
+    signed_document: bytes
+    invitation_link: bytes
+
+
+@dataclass(frozen=True)
+class InvitationRequestPending:
+    signed_document: bytes
+
+
+@dataclass(frozen=True)
+class InvitationRevocationPending:
+    signed_document: bytes
+
+
+InvitationPending = (
+    InvitationCreationPending | InvitationRequestPending | InvitationRevocationPending
+)
+InvitationPendingT = TypeVar(
+    "InvitationPendingT",
+    InvitationCreationPending,
+    InvitationRequestPending,
+    InvitationRevocationPending,
+)
+_INVITATION_PENDING_TYPES = {
+    "create": InvitationCreationPending,
+    "request": InvitationRequestPending,
+    "revoke": InvitationRevocationPending,
+}
 
 
 class DeviceSession:
     def __init__(
-        self, api: E2eeAPI, store: ProfileSecureStore, *, origin: str, subject: str
+        self,
+        api: E2eeAPI,
+        store: ProfileStore,
+        *,
+        origin: str,
+        subject: str,
+        identity,
     ):
         self._api, self.store, self.subject = api, store, subject
+        self.identity = identity
         self.origin = origin
         self._credentials = api.credentials
         self.service = CryptoServiceClient(self.exchange)
@@ -40,57 +82,50 @@ class DeviceSession:
         self._credentials.check_current()
         if self._locked:
             raise E2eeError("device_locked")
-        with self._lock, self.store.credential(self._storage_key) as item:
-            raw = item.read()
-            if raw is None:
-                document = {
-                    "state": encode(
-                        crypto.CoreState(subject=self.subject).SerializeToString()
-                    ),
-                    "pending": {},
-                }
-            else:
-                try:
-                    document = json.loads(raw)
-                    if (
-                        crypto.CoreState.FromString(
-                            bytes(decode(document["state"]))
-                        ).subject
-                        != self.subject
-                    ):
-                        raise ValueError()
-                except (ValueError, KeyError, TypeError, DecodeError):
-                    raise E2eeError("secure_store_corrupt") from None
-            yield document
-            self._credentials.check_current()
+        with (
+            self._lock,
+            self.identity._lock,
+            self.store.credential(self._storage_key) as item,
+        ):
+            with self.identity.document() as identity_document:
+                raw = item.read()
+                if raw is None:
+                    document = {
+                        "state": encode(crypto.ProductState().SerializeToString()),
+                        "pending": {},
+                    }
+                else:
+                    try:
+                        document = json.loads(raw)
+                        crypto.ProductState.FromString(bytes(decode(document["state"])))
+                    except (ValueError, KeyError, TypeError, DecodeError):
+                        raise E2eeError("secure_store_corrupt") from None
+                document["_identity"] = identity_document
+                yield document
+                self._credentials.check_current()
+                del document["_identity"]
             item.replace(json.dumps(document, separators=(",", ":")))
 
-    @staticmethod
-    def _state(document) -> crypto.CoreState:
-        return crypto.CoreState.FromString(bytes(decode(document["state"])))
+    def _state(self, document) -> crypto.CoreState:
+        return crypto.CoreState(
+            identity=self.identity._state(document["_identity"]),
+            product=crypto.ProductState.FromString(bytes(decode(document["state"]))),
+        )
+
+    def _save_state(self, document, state):
+        document["state"] = encode(state.product.SerializeToString())
+        document["_identity"]["state"] = encode(state.identity.SerializeToString())
 
     @property
     def device_id(self) -> str:
-        with self._document() as document:
-            return self._state(document).device_id
+        return self.identity.device_id
 
     @property
     def state(self) -> str:
-        with self._document() as document:
-            status = self._state(document).device_status
-        return {
-            crypto.DEVICE_STATUS_UNREGISTERED: "needs_setup",
-            crypto.DEVICE_STATUS_PENDING: "pending_approval",
-            crypto.DEVICE_STATUS_APPROVED: "approved",
-            crypto.DEVICE_STATUS_REVOKED: "revoked",
-        }[status]
+        return self.identity.state
 
     def require_approved(self) -> None:
-        status = self.state
-        if status == "revoked":
-            raise E2eeError("device_revoked")
-        if status != "approved":
-            raise E2eeError("device_approval_required")
+        self.identity.require_approved()
 
     def exchange(self, call: EnvelopeCall) -> CryptoProtoMessage:
         self._credentials.check_current()
@@ -135,23 +170,22 @@ class DeviceSession:
     def open_result(
         self, bundle: crypto.CryptoReadBundle, *, release_namespaces: Sequence[str] = ()
     ) -> crypto.OpenedValues:
+        self.identity.observe_receiver_generation(bundle)
         with self._document() as document:
-            operations = [
-                document["domain_documents"][namespace]["operation_id"]
-                for namespace in release_namespaces
-            ]
+            for namespace in release_namespaces:
+                if namespace not in document.get("invitation_publications", {}):
+                    raise E2eeError("invitation_publication_not_pending")
             opened = self.core.execute(
                 crypto.CoreRequest(
                     open=crypto.OpenInput(
                         state=self._state(document),
                         bundle=bundle,
-                        release_operation_ids=operations,
                     )
                 )
             ).opened
-            document["state"] = encode(opened.state.SerializeToString())
+            self._save_state(document, opened.state)
             for namespace in release_namespaces:
-                del document["domain_documents"][namespace]
+                del document["invitation_publications"][namespace]
             return opened
 
     def prepare(
@@ -170,6 +204,7 @@ class DeviceSession:
             bundle = self.read_bundle(
                 project_id, view="by_ids", value_ids=[value.id for value in values]
             ).bundle
+        self.identity.observe_receiver_generation(bundle)
         with self._document() as document:
             if project_id in document["pending"]:
                 raise E2eeError("record_publication_pending")
@@ -184,7 +219,7 @@ class DeviceSession:
                 application_binding=binding,
             )
             prepared = self.core.execute(crypto.CoreRequest(prepare=mutation)).prepared
-            document["state"] = encode(prepared.state.SerializeToString())
+            self._save_state(document, prepared.state)
             document["pending"][project_id] = mutation.operation_id
         return prepared.command
 
@@ -197,7 +232,7 @@ class DeviceSession:
 
     def verify_documents(
         self, bundle: crypto.CryptoReadBundle, *, release_namespaces: Sequence[str] = ()
-    ) -> list[crypto.SignedBytes]:
+    ) -> list[shared.SignedBytes]:
         return list(
             self.open_result(
                 bundle, release_namespaces=release_namespaces
@@ -230,7 +265,7 @@ class DeviceSession:
                         if any(
                             prepared.operation_id == pending
                             and prepared.command == command
-                            for prepared in state.prepared_operations
+                            for prepared in state.product.prepared_operations
                         ):
                             rejection = crypto.RejectPreparedOperationInput(
                                 state=state,
@@ -240,115 +275,38 @@ class DeviceSession:
                                 crypto.CoreRequest(reject_prepared_operation=rejection)
                             ).rejected_prepared_operation
                             if rejected.removed:
-                                document["state"] = encode(
-                                    rejected.state.SerializeToString()
-                                )
+                                self._save_state(document, rejected.state)
                                 del document["pending"][project_id]
             raise
+        if response.receipt.operation_id != pending:
+            raise E2eeError("receipt_conflict")
+        bundle = crypto.CryptoReadBundle()
+        bundle.CopyFrom(response.bundle)
+        bundle.commit_receipts.add().CopyFrom(response.receipt)
+        bundle.documents.add(signed=command)
+        bundle.commitments.add(
+            plaintext=command.body, expected_digest=response.receipt.mutation_digest
+        )
+        self.identity.observe_receiver_generation(bundle)
         with self._document() as document:
             opened = self.core.execute(
                 crypto.CoreRequest(
                     open=crypto.OpenInput(
                         state=self._state(document),
-                        bundle=response.bundle,
+                        bundle=bundle,
                         release_operation_ids=[pending],
                     )
                 )
             ).opened
-            document["state"] = encode(opened.state.SerializeToString())
+            self._save_state(document, opened.state)
             if document["pending"].get(project_id) == pending:
                 del document["pending"][project_id]
         return response, opened
 
-    def enroll(
-        self,
-        *,
-        action=crypto.ENROLLMENT_ACTION_APPROVE_DEVICE,
-        pairing_request=None,
-        addition_code=b"",
-        account_assertion="",
-        now_seconds=0,
-        sealed_bootstrap=b"",
-    ):
-        bundle = self.settings().bundle
-        with self._document() as document:
-            enrollment = crypto.DeviceEnrollment(
-                state=self._state(document),
-                bundle=bundle,
-                operation_id=str(uuid.uuid4()),
-                action=action,
-                addition_code=addition_code,
-                account_assertion=account_assertion,
-                now_seconds=now_seconds,
-                sealed_bootstrap=sealed_bootstrap,
-            )
-            if pairing_request is not None:
-                enrollment.pairing_request.CopyFrom(pairing_request)
-            change = self.core.execute(
-                crypto.CoreRequest(enroll=enrollment)
-            ).identity_change
-            document["state"] = encode(change.state.SerializeToString())
-        return change
-
-    def publish_identity(self, change, *, rotate=False):
-        operation = "rotateCrypto" if rotate else "enrollCrypto"
-        signer = self.signing_public_key
-        if not rotate:
-            body = crypto.EnrollmentBody.FromString(change.command.body)
-            if body.action == crypto.ENROLLMENT_ACTION_OPEN_CODE:
-                signer = body.code_public_key
-        request = app.IdentityChangeRequest(
-            command=change.command,
-            identity=change.identity,
-            bootstrap=change.bootstrap,
-            key_certificates=change.key_certificates,
-            deliveries=change.deliveries,
-            signer_public_key=signer,
-        )
-        with self._document() as document:
-            saved = document.get("identity_publication")
-            raw = encode(request.SerializeToString())
-            if saved is not None and (
-                saved["operation"] != operation or saved["request"] != raw
-            ):
-                raise E2eeError("identity_operation_pending")
-            document["identity_publication"] = {"operation": operation, "request": raw}
-        return self.resume_identity()
-
-    def rotate(self, *, revoke_device_ids=()):
-        with self._document() as document:
-            pending = document.get("identity_publication")
-        if pending is not None:
-            if pending["operation"] != "rotateCrypto":
-                raise E2eeError("identity_operation_pending")
-            request = app.IdentityChangeRequest.FromString(
-                bytes(decode(pending["request"]))
-            )
-            previous = crypto.RotationBody.FromString(request.command.body)
-            if (
-                list(previous.revoked_device_ids) != list(revoke_device_ids)
-                or previous.replace_addition_key
-            ):
-                raise E2eeError("identity_operation_pending")
-            return self.resume_identity()
-        bundle = self.settings().bundle
-        with self._document() as document:
-            change = self.core.execute(
-                crypto.CoreRequest(
-                    rotate=crypto.IdentityRotation(
-                        state=self._state(document),
-                        bundle=bundle,
-                        operation_id=str(uuid.uuid4()),
-                        revoke_device_ids=revoke_device_ids,
-                    )
-                )
-            ).identity_change
-            document["state"] = encode(change.state.SerializeToString())
-        return self.publish_identity(change, rotate=True)
-
     def lock(self) -> None:
         with self._lock:
             self._locked = True
+            self.identity.lock()
 
     def pending_command(self, project_id):
         with self._document() as document:
@@ -358,19 +316,6 @@ class DeviceSession:
                 if pending is not None
                 else None
             )
-
-    def configure(self, configuration: app.CryptoSettingsResponse) -> None:
-        with self._document() as document:
-            state = self._state(document)
-            state.account_jwks = configuration.account_jwks
-            state.account_issuer = configuration.account_issuer
-            state.account_audience = configuration.account_audience
-            document["state"] = encode(state.SerializeToString())
-
-    def settings(self) -> app.CryptoSettingsResponse:
-        response = self.service.get_crypto_settings(app.CryptoSettingsRequest())
-        self.configure(response)
-        return response
 
     def catalog_response(
         self, *, cursor: str = "", limit: int = 256
@@ -455,198 +400,71 @@ class DeviceSession:
         )
         return {"project_id": project_id, "subject": subject, "state": "prepared"}
 
-    def _save_identity_draft(self, change, kind):
-        operation_kind = (
-            crypto.IDENTITY_OPERATION_KIND_ENROLLMENT
-            if kind == "genesis"
-            else crypto.IDENTITY_OPERATION_KIND_ROOT_ROTATION
-        )
+    def pending_documents(
+        self, namespace: str, pending_type: type[InvitationPendingT]
+    ) -> InvitationPendingT | None:
         with self._document() as document:
-            operation = next(
-                (
-                    operation
-                    for operation in self._state(document).identity_operations
-                    if operation.kind == operation_kind
-                    and operation.command == change.command
-                    and operation.binding_bytes == change.binding_bytes
-                ),
-                None,
-            )
-            if operation is None:
-                raise E2eeError("identity_operation_not_pending")
-            token = operation.operation_id
-            document.setdefault("identity_drafts", {})[token] = {
-                "kind": kind,
-                "operation_id": token,
-            }
-        return {"draft_id": token, "code": encode(operation.addition_code)}
-
-    def _identity_draft(self, draft, kind):
-        with self._document() as document:
-            saved = document.get("identity_drafts", {}).get(draft.get("draft_id"))
-            if saved is None or saved["kind"] != kind:
-                raise E2eeError("identity_operation_not_pending")
-            return self._identity_operation(
-                self._state(document), saved["operation_id"]
-            )
-
-    def prepare_setup(self):
-        pending = self._pending_identity_draft("genesis")
-        if pending is not None:
-            return pending
-        change = self.enroll(action=crypto.ENROLLMENT_ACTION_PREPARE_GENESIS)
-        return self._save_identity_draft(change, "genesis")
-
-    def setup(self, draft):
-        import time
-
-        change = self._identity_draft(draft, "genesis")
-        if not change.HasField("identity"):
-            attestation = self.service.attest_crypto(
-                app.NonceAttestationRequest(
-                    nonce=change.binding_nonce, binding_bytes=change.binding_bytes
-                )
-            )
-            with self._document() as document:
-                state = self._state(document)
-                state.account_jwks = attestation.configuration.account_jwks
-                state.account_issuer = attestation.configuration.account_issuer
-                state.account_audience = attestation.configuration.account_audience
-                operation_id = str(uuid.uuid4())
-                change = self.core.execute(
-                    crypto.CoreRequest(
-                        enroll=crypto.DeviceEnrollment(
-                            state=state,
-                            action=crypto.ENROLLMENT_ACTION_COMMIT_GENESIS,
-                            account_assertion=attestation.assertion,
-                            now_seconds=int(time.time()),
-                            operation_id=operation_id,
-                        )
-                    )
-                ).identity_change
-                document["identity_drafts"][draft["draft_id"]]["operation_id"] = (
-                    operation_id
-                )
-                document["state"] = encode(change.state.SerializeToString())
-        binding = crypto.GenesisPublicBinding.FromString(change.binding_bytes)
-        response = self.service.genesis_crypto(
-            app.GenesisRequest(
-                binding=binding,
-                binding_bytes=change.binding_bytes,
-                identity=change.identity,
-                account_assertion=crypto.IdentityStatement.FromString(
-                    change.identity.statement.body
-                ).account_attestation.decode(),
-                bootstrap=change.bootstrap,
-                key_certificates=change.key_certificates,
-            )
-        )
-        with self._document() as document:
-            state = self._state(document)
-            release = self._identity_release_ids(
-                state, change.command, binding_bytes=change.binding_bytes
-            )
-            opened = self.core.execute(
-                crypto.CoreRequest(
-                    open=crypto.OpenInput(
-                        state=state,
-                        bundle=response.bundle,
-                        release_operation_ids=release,
-                    )
-                )
-            ).opened
-            document["state"] = encode(opened.state.SerializeToString())
-            del document["identity_drafts"][draft["draft_id"]]
-        return {"state": "approved", "device_id": self.device_id}
-
-    def prepare_addition_key(self):
-        pending = self._pending_identity_draft("addition")
-        if pending is not None:
-            return pending
-        bundle = self.settings().bundle
-        with self._document() as document:
-            change = self.core.execute(
-                crypto.CoreRequest(
-                    rotate=crypto.IdentityRotation(
-                        state=self._state(document),
-                        bundle=bundle,
-                        operation_id=str(uuid.uuid4()),
-                        replace_addition_key=True,
-                    )
-                )
-            ).identity_change
-            document["state"] = encode(change.state.SerializeToString())
-        return self._save_identity_draft(change, "addition")
-
-    def replace_addition_key(self, draft):
-        change = self._identity_draft(draft, "addition")
-        self.publish_identity(change, rotate=True)
-        return {"state": "approved", "device_id": self.device_id}
-
-    def add_by_key(self, code):
-        with self._document() as document:
-            pending = document.get("identity_publication")
-        if pending is not None:
-            request = app.IdentityChangeRequest.FromString(
-                bytes(decode(pending["request"]))
-            )
-            body = crypto.EnrollmentBody.FromString(request.command.body)
-            if (
-                pending["operation"] != "enrollCrypto"
-                or body.action != crypto.ENROLLMENT_ACTION_OPEN_CODE
-            ):
-                raise E2eeError("identity_operation_pending")
-            self.resume_identity()
-        else:
-            settings = self.settings()
-            change = self.enroll(
-                action=crypto.ENROLLMENT_ACTION_OPEN_CODE,
-                addition_code=bytes(decode(code)),
-                sealed_bootstrap=settings.sealed_bootstrap,
-            )
-            self.publish_identity(change)
-        return {"state": "approved", "device_id": self.device_id}
-
-    def addition_code(self):
-        change = self.enroll(action=crypto.ENROLLMENT_ACTION_EXPORT_CODE)
-        return encode(change.addition_code)
-
-    def pending_documents(self, namespace):
-        with self._document() as document:
-            saved = document.get("domain_documents", {}).get(namespace)
+            saved = document.get("invitation_publications", {}).get(namespace)
             if saved is None:
                 return None
-            prepared = self._prepared(self._state(document), saved["operation_id"])
-            return list(prepared.signed_documents), bytes(decode(saved["local"]))
+            try:
+                stored_type = _INVITATION_PENDING_TYPES[saved["kind"]]
+                if stored_type is not pending_type:
+                    raise E2eeError("invitation_publication_pending")
+                signed_document = bytes(decode(saved["signed_document"]))
+                shared.SignedBytes.FromString(signed_document)
+                if stored_type is InvitationCreationPending:
+                    invitation_link = bytes(decode(saved["invitation_link"]))
+                    app.InvitationLink.FromString(invitation_link)
+                    pending: InvitationPending = stored_type(
+                        signed_document, invitation_link
+                    )
+                else:
+                    pending = stored_type(signed_document)
+                return cast(InvitationPendingT, pending)
+            except (KeyError, TypeError, ValueError, DecodeError):
+                raise E2eeError("secure_store_corrupt") from None
 
-    def prepare_documents(self, namespace, project_id, documents, bundle, *, local=b""):
+    def prepare_documents(
+        self,
+        namespace: str,
+        body: bytes,
+        bundle: crypto.CryptoReadBundle,
+        make_pending: Callable[[bytes], InvitationPendingT],
+    ) -> InvitationPendingT:
+        self.identity.observe_receiver_generation(bundle)
         with self._document() as document:
-            saved = document.setdefault("domain_documents", {}).get(namespace)
-            if saved is not None:
-                prepared = self._prepared(self._state(document), saved["operation_id"])
-                return list(prepared.signed_documents), bytes(decode(saved["local"]))
-            operation_id = str(uuid.uuid4())
-            prepared = self.core.execute(
+            publications = document.setdefault("invitation_publications", {})
+            if namespace in publications:
+                raise E2eeError("invitation_publication_pending")
+            signed = self.core.execute(
                 crypto.CoreRequest(
-                    prepare=crypto.CryptoMutationInput(
+                    sign_documents=crypto.SignDocumentsInput(
                         state=self._state(document),
                         bundle=bundle,
-                        namespace_id=project_id,
-                        operation_id=operation_id,
-                        documents=documents,
+                        documents=[body],
                     )
                 )
-            ).prepared
-            document["state"] = encode(prepared.state.SerializeToString())
-            document["domain_documents"][namespace] = {
-                "operation_id": operation_id,
-                "local": encode(local),
+            ).signed_documents
+            self._save_state(document, signed.state)
+            pending = make_pending(signed.documents[0].SerializeToString())
+            kind = next(
+                kind
+                for kind, pending_type in _INVITATION_PENDING_TYPES.items()
+                if type(pending) is pending_type
+            )
+            saved = {
+                "kind": kind,
+                "signed_document": encode(pending.signed_document),
             }
-            return list(prepared.signed_documents), local
+            if isinstance(pending, InvitationCreationPending):
+                saved["invitation_link"] = encode(pending.invitation_link)
+            publications[namespace] = saved
+            return pending
 
     @staticmethod
     def _prepared(state, operation_id):
-        for prepared in state.prepared_operations:
+        for prepared in state.product.prepared_operations:
             if prepared.operation_id == operation_id:
                 return prepared
         raise E2eeError("prepared_operation_missing")
@@ -655,126 +473,20 @@ class DeviceSession:
         return hashlib.sha256(value).digest()
 
     def random_bytes(self, length):
-        return self.core.execute_utility(
-            crypto.CoreUtilityRequest(random=crypto.RandomInput(length=length))
+        return self.identity.core.execute_utility(
+            shared.CoreUtilityRequest(random=shared.RandomInput(length=length))
         ).random_bytes
 
-    def trusted_root_digest(self):
-        with self._document() as document:
-            for anchor in self._state(document).trust_anchors:
-                if anchor.subject == self.subject:
-                    return bytes(anchor.root_digest)
-        raise E2eeError("untrusted_identity")
-
-    def pairing_request(self) -> crypto.SignedBytes:
-        change = self.enroll(action=crypto.ENROLLMENT_ACTION_PREPARE_DEVICE)
-        return change.command
-
-    def approve(self, pairing_request: crypto.SignedBytes) -> app.CommitCryptoResponse:
-        device = crypto.EnrollmentBody.FromString(pairing_request.body).device
-        with self._document() as document:
-            pending = document.get("identity_publication")
-        if pending is not None:
-            request = app.IdentityChangeRequest.FromString(
-                bytes(decode(pending["request"]))
-            )
-            body = crypto.EnrollmentBody.FromString(request.command.body)
-            if (
-                pending["operation"] != "enrollCrypto"
-                or body.action != crypto.ENROLLMENT_ACTION_APPROVE_DEVICE
-                or body.device != device
-            ):
-                raise E2eeError("identity_operation_pending")
-            response = self.resume_identity()
-        else:
-            change = self.enroll(
-                action=crypto.ENROLLMENT_ACTION_APPROVE_DEVICE,
-                pairing_request=pairing_request,
-            )
-            response = self.publish_identity(change)
-        return response
-
-    def accept_approval(self, response: app.CommitCryptoResponse):
-        self.open_bundle(response.bundle)
-        self.require_approved()
-        return {"state": "approved", "device_id": self.device_id}
-
-    def reanchor(self):
-        self.rotate()
-        return {"state": "approved", "device_id": self.device_id}
-
-    def _pending_identity_draft(self, kind):
-        with self._document() as document:
-            for token, saved in document.get("identity_drafts", {}).items():
-                if saved["kind"] == kind:
-                    change = self._identity_operation(
-                        self._state(document), saved["operation_id"]
-                    )
-                    return {"draft_id": token, "code": encode(change.addition_code)}
-        return None
-
-    def resume_identity(self):
-        with self._document() as document:
-            pending = document.get("identity_publication")
-            if pending is None:
-                raise E2eeError("identity_operation_not_pending")
-            request = app.IdentityChangeRequest.FromString(
-                bytes(decode(pending["request"]))
-            )
-        match pending["operation"]:
-            case "enrollCrypto":
-                response = self.service.enroll_crypto(request)
-            case "rotateCrypto":
-                response = self.service.rotate_crypto(request)
-            case _:
-                raise E2eeError("secure_store_corrupt")
-        with self._document() as document:
-            state = self._state(document)
-            release = self._identity_release_ids(state, request.command)
-            opened = self.core.execute(
-                crypto.CoreRequest(
-                    open=crypto.OpenInput(
-                        state=state,
-                        bundle=response.bundle,
-                        release_operation_ids=release,
-                    )
-                )
-            ).opened
-            document["state"] = encode(opened.state.SerializeToString())
-            for token, saved in list(document.get("identity_drafts", {}).items()):
-                if saved["operation_id"] in release:
-                    del document["identity_drafts"][token]
-            if document.get("identity_publication") == pending:
-                del document["identity_publication"]
-        return response
-
-    @staticmethod
-    def _identity_release_ids(state, command, *, binding_bytes=b""):
-        return [
-            operation.operation_id
-            for operation in state.identity_operations
-            if operation.command == command
-            or (binding_bytes and operation.binding_bytes == binding_bytes)
-        ]
-
-    @staticmethod
-    def _identity_operation(state, operation_id):
-        for operation in state.identity_operations:
-            if operation.operation_id == operation_id:
-                return operation
-        raise E2eeError("identity_operation_not_pending")
-
     def possession_proof(self, secret, challenge):
-        return self.core.execute_utility(
-            crypto.CoreUtilityRequest(
-                prove=crypto.ProofInput(secret=secret, challenge=challenge)
+        return self.identity.core.execute_utility(
+            shared.CoreUtilityRequest(
+                prove=shared.ProofInput(secret=secret, challenge=challenge)
             )
         ).proof
 
     @property
     def signing_public_key(self):
-        with self._document() as document:
-            return bytes(self._state(document).device_signing_public)
+        return self.identity.signing_public_key
 
     def prepare_group_member(self, group_id, subject):
         self.initialize_organization(group_id)
@@ -856,22 +568,17 @@ class DeviceSession:
             raise E2eeError("invalid_commit_receipt")
         with self._document() as document:
             state = self._state(document)
-            for index, result in enumerate(response.results):
-                release = (
-                    list(operation_ids.values())
-                    if index == len(response.results) - 1
-                    else []
-                )
+            for result, mutation in zip(response.results, mutations, strict=False):
                 state = self.core.execute(
                     crypto.CoreRequest(
                         open=crypto.OpenInput(
                             state=state,
                             bundle=result.bundle,
-                            release_operation_ids=release,
+                            release_operation_ids=[operation_ids[mutation.project_id]],
                         )
                     )
                 ).opened.state
-            document["state"] = encode(state.SerializeToString())
+            self._save_state(document, state)
             for project_id, operation_id in operation_ids.items():
                 if document["pending"].get(project_id) == operation_id:
                     del document["pending"][project_id]
@@ -881,10 +588,6 @@ class DeviceSession:
             "state": "prepared",
             "project_count": len(mutations),
         }
-
-    def revoke_device(self, device_id):
-        self.rotate(revoke_device_ids=[device_id])
-        return {"state": "revoked", "device_id": device_id}
 
     def remove_project_member(self, project_id, subject):
         project = self.project(project_id)
@@ -903,7 +606,7 @@ class DeviceSession:
             ):
                 raise E2eeError("record_publication_pending")
         else:
-            key = crypto.KeyRef(
+            key = shared.KeyRef(
                 id=project.protection_key.id,
                 generation=project.protection_key.generation + 1,
             )

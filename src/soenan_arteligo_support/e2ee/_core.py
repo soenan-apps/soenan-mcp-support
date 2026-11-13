@@ -22,9 +22,8 @@ class CryptoCore:
         expected = {
             "open": "opened",
             "prepare": "prepared",
-            "enroll": "identity_change",
-            "rotate": "identity_change",
             "reject_prepared_operation": "rejected_prepared_operation",
+            "sign_documents": "signed_documents",
         }
         if result != expected.get(request.WhichOneof("operation")):
             raise E2eeError("invalid_crypto_response")
@@ -47,10 +46,6 @@ class CryptoCore:
         expected = {
             "seal_stream": "stream_sealed",
             "open_stream": "stream_opened",
-            "seal_local": "local_sealed",
-            "open_local": "local_plaintext",
-            "prove": "proof",
-            "random": "random_bytes",
         }
         if result != expected.get(request.WhichOneof("operation")):
             raise E2eeError("invalid_crypto_response")

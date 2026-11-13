@@ -1,4 +1,5 @@
 from soenan.arteligo.crypto.v1 import crypto_pb2 as _crypto_pb2
+from soenan.account.crypto.v1 import crypto_pb2 as _crypto_pb2_1
 from soenan.arteligo.domain.v1 import domain_pb2 as _domain_pb2
 from google.protobuf.internal import containers as _containers
 from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
@@ -30,7 +31,7 @@ class ReadCryptoRequest(_message.Message):
     HISTORY_LIMIT_FIELD_NUMBER: _ClassVar[int]
     COMMENT_ANCHOR_ID_FIELD_NUMBER: _ClassVar[int]
     value_ids: _containers.RepeatedScalarFieldContainer[str]
-    protection_keys: _containers.RepeatedCompositeFieldContainer[_crypto_pb2.KeyRef]
+    protection_keys: _containers.RepeatedCompositeFieldContainer[_crypto_pb2_1.KeyRef]
     project_id: str
     device_id: str
     kind: str
@@ -47,17 +48,17 @@ class ReadCryptoRequest(_message.Message):
     comment_limit: int
     history_limit: int
     comment_anchor_id: str
-    def __init__(self, value_ids: _Optional[_Iterable[str]] = ..., protection_keys: _Optional[_Iterable[_Union[_crypto_pb2.KeyRef, _Mapping]]] = ..., project_id: _Optional[str] = ..., device_id: _Optional[str] = ..., kind: _Optional[str] = ..., cursor: _Optional[str] = ..., limit: _Optional[int] = ..., view: _Optional[str] = ..., value_id: _Optional[str] = ..., live_only: bool = ..., id_prefix: _Optional[str] = ..., snapshot_cursor: _Optional[int] = ..., immutable_only: bool = ..., comment_cursor: _Optional[_Union[_domain_pb2.CommentCursor, _Mapping]] = ..., history_cursor: _Optional[str] = ..., comment_limit: _Optional[int] = ..., history_limit: _Optional[int] = ..., comment_anchor_id: _Optional[str] = ...) -> None: ...
+    def __init__(self, value_ids: _Optional[_Iterable[str]] = ..., protection_keys: _Optional[_Iterable[_Union[_crypto_pb2_1.KeyRef, _Mapping]]] = ..., project_id: _Optional[str] = ..., device_id: _Optional[str] = ..., kind: _Optional[str] = ..., cursor: _Optional[str] = ..., limit: _Optional[int] = ..., view: _Optional[str] = ..., value_id: _Optional[str] = ..., live_only: bool = ..., id_prefix: _Optional[str] = ..., snapshot_cursor: _Optional[int] = ..., immutable_only: bool = ..., comment_cursor: _Optional[_Union[_domain_pb2.CommentCursor, _Mapping]] = ..., history_cursor: _Optional[str] = ..., comment_limit: _Optional[int] = ..., history_limit: _Optional[int] = ..., comment_anchor_id: _Optional[str] = ...) -> None: ...
 
 class CommitCryptoRequest(_message.Message):
     __slots__ = ("command", "project_id", "signer_public_key")
     COMMAND_FIELD_NUMBER: _ClassVar[int]
     PROJECT_ID_FIELD_NUMBER: _ClassVar[int]
     SIGNER_PUBLIC_KEY_FIELD_NUMBER: _ClassVar[int]
-    command: _crypto_pb2.SignedBytes
+    command: _crypto_pb2_1.SignedBytes
     project_id: str
     signer_public_key: bytes
-    def __init__(self, command: _Optional[_Union[_crypto_pb2.SignedBytes, _Mapping]] = ..., project_id: _Optional[str] = ..., signer_public_key: _Optional[bytes] = ...) -> None: ...
+    def __init__(self, command: _Optional[_Union[_crypto_pb2_1.SignedBytes, _Mapping]] = ..., project_id: _Optional[str] = ..., signer_public_key: _Optional[bytes] = ...) -> None: ...
 
 class CommitCryptoResponse(_message.Message):
     __slots__ = ("receipt", "bundle")
@@ -86,15 +87,13 @@ class RecordHead(_message.Message):
     def __init__(self, id: _Optional[str] = ..., revision: _Optional[int] = ..., kind: _Optional[str] = ..., deleted: bool = ..., immutable: bool = ..., author_device_id: _Optional[str] = ..., cursor: _Optional[str] = ...) -> None: ...
 
 class ReadCryptoResponse(_message.Message):
-    __slots__ = ("bundle", "heads", "cursor", "has_more", "configuration", "snapshot_cursor", "sealed_bootstrap", "addition_public_key", "comments", "latest_comment_sequence", "next_comment_cursor", "next_history_cursor", "has_more_comments", "has_more_history", "project")
+    __slots__ = ("bundle", "heads", "cursor", "has_more", "configuration", "snapshot_cursor", "comments", "latest_comment_sequence", "next_comment_cursor", "next_history_cursor", "has_more_comments", "has_more_history", "project")
     BUNDLE_FIELD_NUMBER: _ClassVar[int]
     HEADS_FIELD_NUMBER: _ClassVar[int]
     CURSOR_FIELD_NUMBER: _ClassVar[int]
     HAS_MORE_FIELD_NUMBER: _ClassVar[int]
     CONFIGURATION_FIELD_NUMBER: _ClassVar[int]
     SNAPSHOT_CURSOR_FIELD_NUMBER: _ClassVar[int]
-    SEALED_BOOTSTRAP_FIELD_NUMBER: _ClassVar[int]
-    ADDITION_PUBLIC_KEY_FIELD_NUMBER: _ClassVar[int]
     COMMENTS_FIELD_NUMBER: _ClassVar[int]
     LATEST_COMMENT_SEQUENCE_FIELD_NUMBER: _ClassVar[int]
     NEXT_COMMENT_CURSOR_FIELD_NUMBER: _ClassVar[int]
@@ -108,8 +107,6 @@ class ReadCryptoResponse(_message.Message):
     has_more: bool
     configuration: CryptoConfiguration
     snapshot_cursor: int
-    sealed_bootstrap: bytes
-    addition_public_key: bytes
     comments: _containers.RepeatedCompositeFieldContainer[CommentViewItem]
     latest_comment_sequence: int
     next_comment_cursor: _domain_pb2.CommentCursor
@@ -117,45 +114,13 @@ class ReadCryptoResponse(_message.Message):
     has_more_comments: bool
     has_more_history: bool
     project: ProjectCatalogEntry
-    def __init__(self, bundle: _Optional[_Union[_crypto_pb2.CryptoReadBundle, _Mapping]] = ..., heads: _Optional[_Iterable[_Union[RecordHead, _Mapping]]] = ..., cursor: _Optional[str] = ..., has_more: bool = ..., configuration: _Optional[_Union[CryptoConfiguration, _Mapping]] = ..., snapshot_cursor: _Optional[int] = ..., sealed_bootstrap: _Optional[bytes] = ..., addition_public_key: _Optional[bytes] = ..., comments: _Optional[_Iterable[_Union[CommentViewItem, _Mapping]]] = ..., latest_comment_sequence: _Optional[int] = ..., next_comment_cursor: _Optional[_Union[_domain_pb2.CommentCursor, _Mapping]] = ..., next_history_cursor: _Optional[str] = ..., has_more_comments: bool = ..., has_more_history: bool = ..., project: _Optional[_Union[ProjectCatalogEntry, _Mapping]] = ...) -> None: ...
+    def __init__(self, bundle: _Optional[_Union[_crypto_pb2.CryptoReadBundle, _Mapping]] = ..., heads: _Optional[_Iterable[_Union[RecordHead, _Mapping]]] = ..., cursor: _Optional[str] = ..., has_more: bool = ..., configuration: _Optional[_Union[CryptoConfiguration, _Mapping]] = ..., snapshot_cursor: _Optional[int] = ..., comments: _Optional[_Iterable[_Union[CommentViewItem, _Mapping]]] = ..., latest_comment_sequence: _Optional[int] = ..., next_comment_cursor: _Optional[_Union[_domain_pb2.CommentCursor, _Mapping]] = ..., next_history_cursor: _Optional[str] = ..., has_more_comments: bool = ..., has_more_history: bool = ..., project: _Optional[_Union[ProjectCatalogEntry, _Mapping]] = ...) -> None: ...
 
 class ContentChangeHint(_message.Message):
     __slots__ = ("heads",)
     HEADS_FIELD_NUMBER: _ClassVar[int]
     heads: _containers.RepeatedCompositeFieldContainer[RecordHead]
     def __init__(self, heads: _Optional[_Iterable[_Union[RecordHead, _Mapping]]] = ...) -> None: ...
-
-class IdentityChangeRequest(_message.Message):
-    __slots__ = ("command", "signer_public_key", "identity", "bootstrap", "key_certificates", "deliveries")
-    COMMAND_FIELD_NUMBER: _ClassVar[int]
-    SIGNER_PUBLIC_KEY_FIELD_NUMBER: _ClassVar[int]
-    IDENTITY_FIELD_NUMBER: _ClassVar[int]
-    BOOTSTRAP_FIELD_NUMBER: _ClassVar[int]
-    KEY_CERTIFICATES_FIELD_NUMBER: _ClassVar[int]
-    DELIVERIES_FIELD_NUMBER: _ClassVar[int]
-    command: _crypto_pb2.SignedBytes
-    signer_public_key: bytes
-    identity: _crypto_pb2.IdentityRecord
-    bootstrap: bytes
-    key_certificates: _containers.RepeatedCompositeFieldContainer[_crypto_pb2.SignedBytes]
-    deliveries: _containers.RepeatedCompositeFieldContainer[_crypto_pb2.SignedBytes]
-    def __init__(self, command: _Optional[_Union[_crypto_pb2.SignedBytes, _Mapping]] = ..., signer_public_key: _Optional[bytes] = ..., identity: _Optional[_Union[_crypto_pb2.IdentityRecord, _Mapping]] = ..., bootstrap: _Optional[bytes] = ..., key_certificates: _Optional[_Iterable[_Union[_crypto_pb2.SignedBytes, _Mapping]]] = ..., deliveries: _Optional[_Iterable[_Union[_crypto_pb2.SignedBytes, _Mapping]]] = ...) -> None: ...
-
-class GenesisRequest(_message.Message):
-    __slots__ = ("binding", "binding_bytes", "identity", "account_assertion", "bootstrap", "key_certificates")
-    BINDING_FIELD_NUMBER: _ClassVar[int]
-    BINDING_BYTES_FIELD_NUMBER: _ClassVar[int]
-    IDENTITY_FIELD_NUMBER: _ClassVar[int]
-    ACCOUNT_ASSERTION_FIELD_NUMBER: _ClassVar[int]
-    BOOTSTRAP_FIELD_NUMBER: _ClassVar[int]
-    KEY_CERTIFICATES_FIELD_NUMBER: _ClassVar[int]
-    binding: _crypto_pb2.GenesisPublicBinding
-    binding_bytes: bytes
-    identity: _crypto_pb2.IdentityRecord
-    account_assertion: str
-    bootstrap: bytes
-    key_certificates: _containers.RepeatedCompositeFieldContainer[_crypto_pb2.SignedBytes]
-    def __init__(self, binding: _Optional[_Union[_crypto_pb2.GenesisPublicBinding, _Mapping]] = ..., binding_bytes: _Optional[bytes] = ..., identity: _Optional[_Union[_crypto_pb2.IdentityRecord, _Mapping]] = ..., account_assertion: _Optional[str] = ..., bootstrap: _Optional[bytes] = ..., key_certificates: _Optional[_Iterable[_Union[_crypto_pb2.SignedBytes, _Mapping]]] = ...) -> None: ...
 
 class ProjectCreateRequest(_message.Message):
     __slots__ = ("project_id", "mutation", "group_id", "shared", "protection_key")
@@ -168,8 +133,8 @@ class ProjectCreateRequest(_message.Message):
     mutation: CommitCryptoRequest
     group_id: str
     shared: bool
-    protection_key: _crypto_pb2.KeyRef
-    def __init__(self, project_id: _Optional[str] = ..., mutation: _Optional[_Union[CommitCryptoRequest, _Mapping]] = ..., group_id: _Optional[str] = ..., shared: bool = ..., protection_key: _Optional[_Union[_crypto_pb2.KeyRef, _Mapping]] = ...) -> None: ...
+    protection_key: _crypto_pb2_1.KeyRef
+    def __init__(self, project_id: _Optional[str] = ..., mutation: _Optional[_Union[CommitCryptoRequest, _Mapping]] = ..., group_id: _Optional[str] = ..., shared: bool = ..., protection_key: _Optional[_Union[_crypto_pb2_1.KeyRef, _Mapping]] = ...) -> None: ...
 
 class InvitationRequest(_message.Message):
     __slots__ = ("project_id", "invitation_id", "descriptor")
@@ -178,8 +143,8 @@ class InvitationRequest(_message.Message):
     DESCRIPTOR_FIELD_NUMBER: _ClassVar[int]
     project_id: str
     invitation_id: str
-    descriptor: _crypto_pb2.SignedBytes
-    def __init__(self, project_id: _Optional[str] = ..., invitation_id: _Optional[str] = ..., descriptor: _Optional[_Union[_crypto_pb2.SignedBytes, _Mapping]] = ...) -> None: ...
+    descriptor: _crypto_pb2_1.SignedBytes
+    def __init__(self, project_id: _Optional[str] = ..., invitation_id: _Optional[str] = ..., descriptor: _Optional[_Union[_crypto_pb2_1.SignedBytes, _Mapping]] = ...) -> None: ...
 
 class InvitationApproval(_message.Message):
     __slots__ = ("project_id", "invitation_id", "subject", "mutation")
@@ -241,11 +206,11 @@ class ProjectPolicyBinding(_message.Message):
     project_id: str
     group_id: str
     shared: bool
-    current_protection_key: _crypto_pb2.KeyRef
+    current_protection_key: _crypto_pb2_1.KeyRef
     expected_distribution_revision: int
     prepare_owner_deliveries: bool
     lifecycle: str
-    def __init__(self, project_id: _Optional[str] = ..., group_id: _Optional[str] = ..., shared: bool = ..., current_protection_key: _Optional[_Union[_crypto_pb2.KeyRef, _Mapping]] = ..., expected_distribution_revision: _Optional[int] = ..., prepare_owner_deliveries: bool = ..., lifecycle: _Optional[str] = ...) -> None: ...
+    def __init__(self, project_id: _Optional[str] = ..., group_id: _Optional[str] = ..., shared: bool = ..., current_protection_key: _Optional[_Union[_crypto_pb2_1.KeyRef, _Mapping]] = ..., expected_distribution_revision: _Optional[int] = ..., prepare_owner_deliveries: bool = ..., lifecycle: _Optional[str] = ...) -> None: ...
 
 class InvitationBinding(_message.Message):
     __slots__ = ("invitation_id", "expires_at", "secret_digest", "inviter_root_digest", "descriptor_digest")
@@ -336,28 +301,10 @@ class FileView(_message.Message):
     FILE_ID_FIELD_NUMBER: _ClassVar[int]
     metadata: _domain_pb2.FileMetadata
     file_revision: int
-    protection_key: _crypto_pb2.KeyRef
+    protection_key: _crypto_pb2_1.KeyRef
     snapshot: ReadCryptoResponse
     file_id: str
-    def __init__(self, metadata: _Optional[_Union[_domain_pb2.FileMetadata, _Mapping]] = ..., file_revision: _Optional[int] = ..., protection_key: _Optional[_Union[_crypto_pb2.KeyRef, _Mapping]] = ..., snapshot: _Optional[_Union[ReadCryptoResponse, _Mapping]] = ..., file_id: _Optional[str] = ...) -> None: ...
-
-class CryptoSettingsRequest(_message.Message):
-    __slots__ = ()
-    def __init__(self) -> None: ...
-
-class CryptoSettingsResponse(_message.Message):
-    __slots__ = ("account_jwks", "account_issuer", "account_audience", "bundle", "sealed_bootstrap")
-    ACCOUNT_JWKS_FIELD_NUMBER: _ClassVar[int]
-    ACCOUNT_ISSUER_FIELD_NUMBER: _ClassVar[int]
-    ACCOUNT_AUDIENCE_FIELD_NUMBER: _ClassVar[int]
-    BUNDLE_FIELD_NUMBER: _ClassVar[int]
-    SEALED_BOOTSTRAP_FIELD_NUMBER: _ClassVar[int]
-    account_jwks: str
-    account_issuer: str
-    account_audience: str
-    bundle: _crypto_pb2.CryptoReadBundle
-    sealed_bootstrap: bytes
-    def __init__(self, account_jwks: _Optional[str] = ..., account_issuer: _Optional[str] = ..., account_audience: _Optional[str] = ..., bundle: _Optional[_Union[_crypto_pb2.CryptoReadBundle, _Mapping]] = ..., sealed_bootstrap: _Optional[bytes] = ...) -> None: ...
+    def __init__(self, metadata: _Optional[_Union[_domain_pb2.FileMetadata, _Mapping]] = ..., file_revision: _Optional[int] = ..., protection_key: _Optional[_Union[_crypto_pb2_1.KeyRef, _Mapping]] = ..., snapshot: _Optional[_Union[ReadCryptoResponse, _Mapping]] = ..., file_id: _Optional[str] = ...) -> None: ...
 
 class ProjectCatalogRequest(_message.Message):
     __slots__ = ("device_id", "cursor", "limit")
@@ -385,13 +332,13 @@ class ProjectCatalogEntry(_message.Message):
     group_id: str
     shared: bool
     role: str
-    protection_key: _crypto_pb2.KeyRef
+    protection_key: _crypto_pb2_1.KeyRef
     distribution_revision: int
     lifecycle: str
     storage_used_bytes: int
     access_source: str
     key_distribution_revision: int
-    def __init__(self, project_id: _Optional[str] = ..., group_id: _Optional[str] = ..., shared: bool = ..., role: _Optional[str] = ..., protection_key: _Optional[_Union[_crypto_pb2.KeyRef, _Mapping]] = ..., distribution_revision: _Optional[int] = ..., lifecycle: _Optional[str] = ..., storage_used_bytes: _Optional[int] = ..., access_source: _Optional[str] = ..., key_distribution_revision: _Optional[int] = ...) -> None: ...
+    def __init__(self, project_id: _Optional[str] = ..., group_id: _Optional[str] = ..., shared: bool = ..., role: _Optional[str] = ..., protection_key: _Optional[_Union[_crypto_pb2_1.KeyRef, _Mapping]] = ..., distribution_revision: _Optional[int] = ..., lifecycle: _Optional[str] = ..., storage_used_bytes: _Optional[int] = ..., access_source: _Optional[str] = ..., key_distribution_revision: _Optional[int] = ...) -> None: ...
 
 class CatalogGroup(_message.Message):
     __slots__ = ("group_id", "current_owner", "owner_candidate")
@@ -434,8 +381,8 @@ class InvitationJoinRequest(_message.Message):
     REQUEST_FIELD_NUMBER: _ClassVar[int]
     project_id: str
     invitation_id: str
-    request: _crypto_pb2.SignedBytes
-    def __init__(self, project_id: _Optional[str] = ..., invitation_id: _Optional[str] = ..., request: _Optional[_Union[_crypto_pb2.SignedBytes, _Mapping]] = ...) -> None: ...
+    request: _crypto_pb2_1.SignedBytes
+    def __init__(self, project_id: _Optional[str] = ..., invitation_id: _Optional[str] = ..., request: _Optional[_Union[_crypto_pb2_1.SignedBytes, _Mapping]] = ...) -> None: ...
 
 class GroupReceiverRequest(_message.Message):
     __slots__ = ("group_id", "subject")
@@ -495,22 +442,6 @@ class CryptoConfiguration(_message.Message):
     account_audience: str
     def __init__(self, account_jwks: _Optional[str] = ..., account_issuer: _Optional[str] = ..., account_audience: _Optional[str] = ...) -> None: ...
 
-class NonceAttestationRequest(_message.Message):
-    __slots__ = ("nonce", "binding_bytes")
-    NONCE_FIELD_NUMBER: _ClassVar[int]
-    BINDING_BYTES_FIELD_NUMBER: _ClassVar[int]
-    nonce: bytes
-    binding_bytes: bytes
-    def __init__(self, nonce: _Optional[bytes] = ..., binding_bytes: _Optional[bytes] = ...) -> None: ...
-
-class NonceAttestationResponse(_message.Message):
-    __slots__ = ("assertion", "configuration")
-    ASSERTION_FIELD_NUMBER: _ClassVar[int]
-    CONFIGURATION_FIELD_NUMBER: _ClassVar[int]
-    assertion: str
-    configuration: CryptoConfiguration
-    def __init__(self, assertion: _Optional[str] = ..., configuration: _Optional[_Union[CryptoConfiguration, _Mapping]] = ...) -> None: ...
-
 class ProjectAudienceRequest(_message.Message):
     __slots__ = ("group_id", "project_id", "device_id")
     GROUP_ID_FIELD_NUMBER: _ClassVar[int]
@@ -532,8 +463,8 @@ class ProjectAudienceMember(_message.Message):
     role: str
     revision: int
     owner_candidate: bool
-    receiver: _crypto_pb2.PublicKey
-    def __init__(self, subject: _Optional[str] = ..., role: _Optional[str] = ..., revision: _Optional[int] = ..., owner_candidate: bool = ..., receiver: _Optional[_Union[_crypto_pb2.PublicKey, _Mapping]] = ...) -> None: ...
+    receiver: _crypto_pb2_1.PublicKey
+    def __init__(self, subject: _Optional[str] = ..., role: _Optional[str] = ..., revision: _Optional[int] = ..., owner_candidate: bool = ..., receiver: _Optional[_Union[_crypto_pb2_1.PublicKey, _Mapping]] = ...) -> None: ...
 
 class ProjectRosterMember(_message.Message):
     __slots__ = ("subject", "role", "state", "origin_kind", "revision", "display_name")
@@ -624,10 +555,10 @@ class InvitationJoinBinding(_message.Message):
     invitation_id: str
     subject: str
     descriptor_digest: bytes
-    proof: _crypto_pb2.PossessionProof
+    proof: _crypto_pb2_1.PossessionProof
     challenge_bytes: bytes
     receiver_digest: bytes
-    def __init__(self, invitation_id: _Optional[str] = ..., subject: _Optional[str] = ..., descriptor_digest: _Optional[bytes] = ..., proof: _Optional[_Union[_crypto_pb2.PossessionProof, _Mapping]] = ..., challenge_bytes: _Optional[bytes] = ..., receiver_digest: _Optional[bytes] = ...) -> None: ...
+    def __init__(self, invitation_id: _Optional[str] = ..., subject: _Optional[str] = ..., descriptor_digest: _Optional[bytes] = ..., proof: _Optional[_Union[_crypto_pb2_1.PossessionProof, _Mapping]] = ..., challenge_bytes: _Optional[bytes] = ..., receiver_digest: _Optional[bytes] = ...) -> None: ...
 
 class InvitationStatus(_message.Message):
     __slots__ = ("invitation_id", "project_id", "state", "descriptor", "requests", "current_owner_subject", "applicants")
@@ -641,11 +572,11 @@ class InvitationStatus(_message.Message):
     invitation_id: str
     project_id: str
     state: str
-    descriptor: _crypto_pb2.SignedBytes
-    requests: _containers.RepeatedCompositeFieldContainer[_crypto_pb2.SignedBytes]
+    descriptor: _crypto_pb2_1.SignedBytes
+    requests: _containers.RepeatedCompositeFieldContainer[_crypto_pb2_1.SignedBytes]
     current_owner_subject: str
     applicants: _containers.RepeatedCompositeFieldContainer[ProjectAudienceMember]
-    def __init__(self, invitation_id: _Optional[str] = ..., project_id: _Optional[str] = ..., state: _Optional[str] = ..., descriptor: _Optional[_Union[_crypto_pb2.SignedBytes, _Mapping]] = ..., requests: _Optional[_Iterable[_Union[_crypto_pb2.SignedBytes, _Mapping]]] = ..., current_owner_subject: _Optional[str] = ..., applicants: _Optional[_Iterable[_Union[ProjectAudienceMember, _Mapping]]] = ...) -> None: ...
+    def __init__(self, invitation_id: _Optional[str] = ..., project_id: _Optional[str] = ..., state: _Optional[str] = ..., descriptor: _Optional[_Union[_crypto_pb2_1.SignedBytes, _Mapping]] = ..., requests: _Optional[_Iterable[_Union[_crypto_pb2_1.SignedBytes, _Mapping]]] = ..., current_owner_subject: _Optional[str] = ..., applicants: _Optional[_Iterable[_Union[ProjectAudienceMember, _Mapping]]] = ...) -> None: ...
 
 class InvitationReadRequest(_message.Message):
     __slots__ = ("project_id", "invitation_id", "device_id")

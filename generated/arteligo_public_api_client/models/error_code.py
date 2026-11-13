@@ -1,6 +1,5 @@
 from enum import Enum
 
-
 class ErrorCode(str, Enum):
     ACCESS_DENIED = "access_denied"
     AUTHORIZATION_UNAVAILABLE = "authorization_unavailable"

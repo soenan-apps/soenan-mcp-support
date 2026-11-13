@@ -1,58 +1,10 @@
 from __future__ import annotations
 
 import ctypes
-import hashlib
 import os
 import stat
 import sys
-from collections.abc import Iterator
-from contextlib import ExitStack, contextmanager
-
-
-@contextmanager
-def private_directory(name: str) -> Iterator[int]:
-    import pwd
-
-    home = pwd.getpwuid(os.getuid()).pw_dir
-    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
-    if not os.path.isabs(home):
-        raise PermissionError
-    with ExitStack() as handles:
-        parent = os.open("/", flags)
-        handles.callback(os.close, parent)
-        for part in home.split("/"):
-            if not part:
-                continue
-            if part in {".", ".."}:
-                raise PermissionError
-            parent = os.open(part, flags, dir_fd=parent)
-            handles.callback(os.close, parent)
-            info = os.fstat(parent)
-            if info.st_uid not in {0, os.getuid()} or info.st_mode & 0o022:
-                raise PermissionError
-        if os.fstat(parent).st_uid != os.getuid():
-            raise PermissionError
-        with private_subdirectory(parent, name) as directory:
-            yield directory
-
-
-@contextmanager
-def private_subdirectory(parent: int, name: str) -> Iterator[int]:
-    try:
-        os.mkdir(name, mode=0o700, dir_fd=parent)
-        os.fsync(parent)
-    except FileExistsError:
-        pass
-    directory = os.open(
-        name,
-        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
-        dir_fd=parent,
-    )
-    try:
-        validate_private_handle(directory, directory=True)
-        yield directory
-    finally:
-        os.close(directory)
+from contextlib import contextmanager
 
 
 def validate_private_handle(descriptor: int, *, directory: bool = False) -> None:
@@ -83,30 +35,6 @@ def validate_private_handle(descriptor: int, *, directory: bool = False) -> None
                 raise PermissionError
         finally:
             libc.acl_free(acl)
-
-
-@contextmanager
-def credential_lock(service: str, name: str) -> Iterator[None]:
-    if sys.platform == "win32":
-        with _windows_lock():
-            yield
-        return
-    import fcntl
-
-    with private_directory(".soenan-credential-locks") as directory:
-        digest = hashlib.sha256((service + "\n" + name).encode()).hexdigest()
-        lock_fd = os.open(
-            digest,
-            os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC,
-            0o600,
-            dir_fd=directory,
-        )
-        try:
-            validate_private_handle(lock_fd)
-            fcntl.flock(lock_fd, fcntl.LOCK_EX)
-            yield
-        finally:
-            os.close(lock_fd)
 
 
 @contextmanager
@@ -168,39 +96,3 @@ def windows_security():
             kernel.LocalFree(ctypes.cast(sid_string, w.HLOCAL))
         if token:
             kernel.CloseHandle(token)
-
-
-@contextmanager
-def _windows_lock() -> Iterator[None]:
-    from ctypes import wintypes as w
-
-    with windows_security() as (kernel, _, attributes, _, user):
-        kernel.CreateMutexW.argtypes = [
-            ctypes.POINTER(type(attributes)),
-            w.BOOL,
-            w.LPCWSTR,
-        ]
-        kernel.CreateMutexW.restype = w.HANDLE
-        kernel.WaitForSingleObject.argtypes = [w.HANDLE, w.DWORD]
-        kernel.WaitForSingleObject.restype = w.DWORD
-        kernel.ReleaseMutex.argtypes = [w.HANDLE]
-        # All names share the legacy service slot, and Windows names ignore case.
-        mutex = kernel.CreateMutexW(
-            ctypes.byref(attributes),
-            False,
-            "Global\\SoenanCredential-" + hashlib.sha256(user.encode()).hexdigest(),
-        )
-        if not mutex:
-            raise ctypes.WinError(ctypes.get_last_error())
-        acquired = False
-        try:
-            result = kernel.WaitForSingleObject(mutex, 0xFFFFFFFF)
-            if result not in (0, 0x80):
-                raise ctypes.WinError(ctypes.get_last_error())
-            acquired = True
-            # The caller always reloads, including after native mutex abandonment.
-            yield
-        finally:
-            if acquired:
-                kernel.ReleaseMutex(mutex)
-            kernel.CloseHandle(mutex)
