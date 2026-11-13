@@ -186,7 +186,7 @@ main()
 
 フォルダーは暗号化した header と B+tree を端末で解釈します。`EncryptedDirectory.page` は正の `limit` 件まで名前順で返し、既定の処理単位は 100 件です。続きは返却された `cursor` を渡します。folder の revision が変わると `revision_conflict` になるため、その folder の先頭から取り直します。アップロードは対象 folder の索引の枝と file record を一つの batch で更新し、他の folder の内容を読みません。
 
-新規 project の独立した ProtectionKey は、現在の読者の受信鍵 U と、Owner 候補向けの事前配送先へ同じ command で封印します。候補向けの `owner_prepared` 配送は、その候補が現在 Owner になったときだけ取得できます。端末ごとに project 鍵を配り直さず、端末と U の配送、過去 P への直接配送、確定済み要求の再送は [鍵配布契約](../arteligo/docs/E2EE.md) に従います。
+新規 project の独立した ProtectionKey は、IDを正規project IDと一致させ、現在の読者の受信鍵 U と、Owner 候補向けの事前配送先へ同じ command で封印します。候補向けの `owner_prepared` 配送は、その候補が現在 Owner になったときだけ取得できます。端末ごとに project 鍵を配り直さず、端末と U の配送、過去 P への直接配送、確定済み要求の再送は [鍵配布契約](../arteligo/docs/E2EE.md) に従います。
 
 ### 会話 API
 

@@ -333,7 +333,7 @@ class EncryptedRecords:
             raise E2eeError("invalid_project_policy")
         self.session.initialize_organization(owner_org)
         identifier = project_id or "prj_" + secrets.token_hex(16)
-        key = shared.KeyRef(id="pk_" + secrets.token_hex(16), generation=1)
+        key = shared.KeyRef(id=identifier, generation=1)
         directory_id, drafts = initial_directory()
         drafts.extend(initial_records(identifier))
         project = domain.ProjectInfo()
