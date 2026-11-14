@@ -1,427 +1,785 @@
 from __future__ import annotations
 
+from soenan.arteligo.application.v1 import application_pb2 as app
+from soenan.arteligo.crypto.v1 import crypto_pb2 as crypto
+from soenan.arteligo.domain.v1 import domain_pb2 as domain
+
 from ._conversation_context import (
-    COMMENT_HEADER,
-    FORMAT,
-    anchor_key,
-    ascending,
+    MAX_INTEGER,
+    M,
     conflict_retry,
-    descending,
     number,
     reference,
     text,
     verify_actor,
     write,
 )
+from ._conversation_text import TextOperations, target_type, valid_body
 from ._crypto import E2eeError
+from ._records import ReadRecord
+from ._signed_commands import AcceptedCommand
 
 
-class CommentOperations:
-    def _comment_record(self, record, record_type):
-        result = self._record(record, "comment", record_type, immutable=True)
+def comment_target(
+    identifier: str, revision: int, incarnation: str, *, expected: int | None = None
+) -> crypto.TargetHead:
+    return crypto.TargetHead(
+        id=identifier,
+        revision=revision,
+        incarnation=incarnation,
+        expected_revision=revision - 1 if expected is None else expected,
+    )
+
+
+def comment_binding(
+    item: app.CommentViewItem,
+    *,
+    operation: str,
+    value_id: str,
+    value_revision: int,
+) -> app.CommentRevisionBinding:
+    binding = app.CommentRevisionBinding(
+        thread_id=item.thread_id,
+        comment_id=item.comment_id,
+        revision=item.revision,
+        value_id=value_id,
+        value_revision=value_revision,
+        origin=item.origin,
+        thread_head=item.thread_head,
+        body_head=item.body_head,
+        text_revisions=list(item.text_revisions[-1:]),
+        anchor_id=item.anchor_id,
+        sequence=item.sequence,
+        reply_sequence=item.reply_sequence,
+        operation=operation,
+        parent_comment_id=item.parent_comment_id,
+    )
+    if item.HasField("resolution"):
+        binding.resolution.CopyFrom(item.resolution)
+    return binding
+
+
+class CommentOperations(TextOperations):
+    def _comment_anchor_id(self, anchor):
+        case = anchor.WhichOneof("target")
+        if case is None:
+            raise E2eeError("invalid_conversation")
+        return text(getattr(anchor, case))
+
+    def _comment_snapshot(
+        self,
+        *,
+        identifier="",
+        ids=(),
+        anchor=None,
+        after: domain.CommentCursor | None = None,
+        limit=100,
+    ):
+        if type(limit) is not int or limit < 1:
+            raise E2eeError("invalid_cursor")
+        if after is not None and (
+            not 1 <= after.sequence <= MAX_INTEGER
+            or not 1 <= len(after.id) <= 128
+            or any(
+                not (
+                    "a" <= char <= "z"
+                    or "A" <= char <= "Z"
+                    or "0" <= char <= "9"
+                    or char in "_-"
+                )
+                for char in after.id
+            )
+        ):
+            raise E2eeError("invalid_cursor")
+        if ids and (after is not None or anchor is not None):
+            raise E2eeError("invalid_request")
+        self.checkpoint()
+        anchor_id = self._comment_anchor_id(anchor) if anchor is not None else ""
+        response = self.records.session.read_bundle(
+            self.scope,
+            view="comments",
+            value_id=identifier,
+            value_ids=ids,
+            comment_anchor_id=anchor_id,
+            comment_cursor=after,
+            limit=limit,
+        )
+        records = {
+            record["record_id"]: record
+            for record in self.records._open_page(self.scope, response)
+        }
+        self.checkpoint()
+        for item in response.comments:
+            if not item.parent_comment_id:
+                original = self._comment_record(
+                    self._comment_reference(records, item.origin), domain.CommentOrigin
+                )
+                if item.anchor_id != self._comment_anchor_id(original["value"].anchor):
+                    raise E2eeError("invalid_conversation_comment")
+        return response, records
+
+    @staticmethod
+    def _comment_item(
+        response: app.ReadCryptoResponse, identifier: str
+    ) -> app.CommentViewItem | None:
+        return next(
+            (item for item in response.comments if item.comment_id == identifier), None
+        )
+
+    def _comment_reference(self, records, target):
+        record = records.get(target.id)
         if (
-            result["value"].get("format") != FORMAT
-            or result["value"].get("id") != result["record_id"]
+            record is None
+            or record["revision"] != target.revision
+            or record["incarnation"] != target.incarnation
         ):
             raise E2eeError("invalid_conversation_comment")
+        return record
+
+    def _comment_record(self, record, record_type: type[M]) -> ReadRecord[M]:
+        result = self._record(record, "comment", record_type, immutable=True)
         verify_actor(result, "author")
         return result
 
-    def _resolution_record(self, record, parent_id):
-        result = self._record(record, "comment", "resolution", immutable=True)
+    def _resolution_record(self, record, parent_id, incarnation):
+        result = self._record(record, "comment", domain.ResolutionEvent, immutable=True)
         value = result["value"]
-        if (
-            value.get("format") != FORMAT
-            or value.get("parentCommentId") != parent_id
-            or type(value.get("resolved")) is not bool
-            or result["record_id"] != "cres_" + text(value.get("operationID"))
-        ):
+        if value.original != domain.RecordReference(
+            id=parent_id, revision=1, incarnation=incarnation
+        ) or result["record_id"] != "cres_" + text(value.operation_id):
             raise E2eeError("invalid_conversation_resolution")
         verify_actor(result, "actor")
         return result
 
-    def _thread_contexts(self, ids, originals=None):
-        originals = {
-            **(originals or {}),
-            **self._read(set(ids) - (originals or {}).keys()),
-        }
-        wanted = set()
-        for identifier in ids:
-            original = self._comment_record(originals.get(identifier), "comment")
-            wanted.update(
-                (
-                    text(original["value"].get("threadHeadId")),
-                    text(original["value"].get("bodyHeadId")),
-                )
-            )
-        heads = self._read(wanted)
-        refs = set()
-        for identifier in ids:
-            original = originals[identifier]
-            head = self._header(
-                heads.get(original["value"]["threadHeadId"]), "comment", "thread_head"
-            )
-            if head["value"].get("commentId") != identifier or reference(
-                head["value"].get("original")
-            ) != {"id": identifier, "revision": 1}:
-                raise E2eeError("invalid_conversation_comment")
-            number(head["value"].get("replyCount"))
-            reference(head["value"].get("replies"))
-            body = self._header(
-                heads.get(original["value"]["bodyHeadId"]), "comment", "text_head"
-            )
-            for ref in (
-                reference(head["value"].get("resolution")),
-                reference(body["value"].get("lastEdit")),
-            ):
-                if ref:
-                    if ref["revision"] != 1:
-                        raise E2eeError("invalid_conversation_comment")
-                    refs.add(ref["id"])
-        events = self._read(refs)
-        texts = self._text_contexts(
-            {identifier: originals[identifier] for identifier in ids},
-            {**heads, **events},
+    def _snapshot_text(self, response, records, item):
+        original = self._comment_record(
+            self._comment_reference(records, item.origin),
+            domain.ReplyOrigin if item.parent_comment_id else domain.CommentOrigin,
         )
-        result = {}
-        for identifier in ids:
-            original = originals[identifier]
-            head = heads[original["value"]["threadHeadId"]]
-            ref = reference(head["value"].get("resolution"))
-            result[identifier] = {
-                "comment": original,
-                "head": head,
-                "text": texts[identifier],
-                "resolution": self._resolution_record(events.get(ref["id"]), identifier)
-                if ref
-                else None,
-            }
-        return result
-
-    def _thread_view(self, context):
-        count = number(context["head"]["value"]["replyCount"])
-        return {
-            **self._text_view(context["text"]),
-            "resolved": context["resolution"]["value"]["resolved"]
-            if context["resolution"]
-            else False,
-            "replies": [],
-            "replyCount": count,
-            "hasMoreReplies": count > 0,
-        }
-
-    def _check_thread_heads(self, contexts):
-        self._same_records(
-            [
-                record
-                for context in contexts
-                for record in (context["head"], context["text"]["head"])
-            ]
-        )
-
-    @conflict_retry
-    def comment_thread(self, identifier):
-        originals = self._read([identifier])
-        if identifier not in originals:
-            return None
-        context = self._thread_contexts({identifier}, originals)[identifier]
-        result = self._thread_view(context)
-        self._check_thread_heads([context])
-        return result
-
-    @conflict_retry
-    def comment_threads(self, *, anchor=None, after=None, limit=100):
-        if type(limit) is not int or limit < 1:
-            raise E2eeError("invalid_cursor")
-        header = self._load_header(COMMENT_HEADER, "comment", "comment_header")
-        key = anchor_key(anchor) if anchor is not None else None
-        if key is not None and after and not after[0].startswith(key + "\0"):
-            raise E2eeError("invalid_cursor")
-        entries, following = self._index("comment").page(
-            reference(header["value"].get("threads")),
-            after=after or ((key + "\0", "") if key is not None else None),
-            limit=limit,
-        )
-        selected = []
-        for entry in entries:
-            if key is not None and entry.get("anchorKey") != key:
-                break
-            selected.append(entry)
-        ids = {text(entry.get("id")) for entry in selected}
-        if len(ids) != len(selected):
-            raise E2eeError("invalid_conversation_index")
-        contexts = self._thread_contexts(ids)
-        threads = []
-        for entry in selected:
-            context = contexts[entry["id"]]
-            sequence = number(context["comment"]["value"].get("sequence"), 1)
-            original_key = anchor_key(context["comment"]["value"].get("anchor"))
-            if (
-                entry.get("headID") != context["head"]["record_id"]
-                or entry.get("sequence") != sequence
-                or entry.get("anchorKey") != original_key
-                or entry.get("name") != original_key + "\0" + descending(sequence)
-                or sequence > number(header["value"].get("sequence"))
-            ):
-                raise E2eeError("invalid_conversation_index")
-            threads.append(self._thread_view(context))
-        self._same_records([header])
-        self._check_thread_heads(contexts.values())
-        return {
-            "threads": threads,
-            "next_key": following if len(selected) == len(entries) else None,
-        }
-
-    @conflict_retry
-    def comment_replies(self, parent_id, *, after=None, limit=100):
-        if type(limit) is not int or limit < 1:
-            raise E2eeError("invalid_cursor")
-        context = self._thread_contexts({parent_id})[parent_id]
-        total = number(context["head"]["value"]["replyCount"])
-        try:
-            prior = number(int(after[0]), 1) if after else 0
-        except (ValueError, TypeError):
-            raise E2eeError("invalid_cursor") from None
-        entries, following = self._index("comment").page(
-            reference(context["head"]["value"].get("replies")), after=after, limit=limit
-        )
-        records = self._read(text(entry.get("id")) for entry in entries)
-        originals = {
-            entry["id"]: self._comment_record(records.get(entry["id"]), "reply")
-            for entry in entries
-        }
-        contexts = self._text_contexts(originals)
-        replies, sequence = [], prior
-        for entry in entries:
-            original = originals[entry["id"]]
-            sequence += 1
-            if (
-                original["value"].get("parentCommentId") != parent_id
-                or original["value"].get("sequence") != sequence
-                or entry.get("sequence") != sequence
-                or entry.get("name") != ascending(sequence)
-            ):
-                raise E2eeError("invalid_conversation_index")
-            replies.append(self._text_view(contexts[entry["id"]]))
-        if (following is None and sequence != total) or (
-            following is not None and sequence == total
+        value = original["value"]
+        if original["record_id"] != item.comment_id or original["value"].sequence != (
+            item.reply_sequence if item.parent_comment_id else item.sequence
         ):
-            raise E2eeError("invalid_conversation_index")
-        self._check_thread_heads([context])
-        self._same_records([value["head"] for value in contexts.values()])
-        return {"replies": replies, "next_key": following, "total_count": total}
+            raise E2eeError("invalid_conversation_comment")
+        if isinstance(value, domain.ReplyOrigin):
+            root = self._comment_item(response, item.thread_id)
+            if (
+                root is None
+                or root.comment_id != item.parent_comment_id
+                or value.parent_comment_id != item.parent_comment_id
+                or item.anchor_id != root.anchor_id
+                or item.sequence != root.sequence
+            ):
+                raise E2eeError("invalid_conversation_comment")
+        head = self._comment_reference(records, item.body_head)
+        if head["record_id"] != original["value"].body_head_id:
+            raise E2eeError("invalid_conversation_text")
+        context = self._text_context(original, head, records)
+        edit = context["edit"]
+        latest = item.text_revisions[-1] if item.text_revisions else None
+        if (edit is None) != (latest is None) or (
+            edit is not None
+            and latest is not None
+            and (
+                latest.id != edit["record_id"]
+                or latest.revision != edit["revision"]
+                or latest.incarnation != edit["incarnation"]
+            )
+        ):
+            raise E2eeError("invalid_conversation_text")
+        return context
 
-    @conflict_retry
-    def comment_reply(self, identifier):
-        originals = self._read([identifier])
-        if identifier not in originals:
-            return None
-        original = self._comment_record(originals[identifier], "reply")
-        parent_id, sequence = (
-            text(original["value"].get("parentCommentId")),
-            number(original["value"].get("sequence"), 1),
+    def _snapshot_thread(self, response, records, item):
+        if item is None or item.parent_comment_id or item.thread_id != item.comment_id:
+            raise E2eeError("invalid_conversation_comment")
+        context = self._snapshot_text(response, records, item)
+        original = context["original"]
+        head = self._header(
+            self._comment_reference(records, item.thread_head),
+            "comment",
+            domain.ThreadHead,
         )
-        parent = self._thread_contexts({parent_id})[parent_id]
-        entries, _ = self._index("comment").page(
-            reference(parent["head"]["value"].get("replies")),
-            after=(ascending(sequence), ""),
-            limit=1,
+        if head["record_id"] != original["value"].thread_head_id or head[
+            "value"
+        ].original != domain.RecordReference(
+            id=item.comment_id, revision=1, incarnation=original["incarnation"]
+        ):
+            raise E2eeError("invalid_conversation_comment")
+        number(head["value"].reply_count)
+        ref = (
+            reference(head["value"].resolution)
+            if head["value"].HasField("resolution")
+            else None
+        )
+        if (ref is None) != (not item.HasField("resolution")) or (
+            ref is not None
+            and (
+                ref.revision != 1
+                or ref.id != item.resolution.id
+                or ref.revision != item.resolution.revision
+                or ref.incarnation != item.resolution.incarnation
+            )
+        ):
+            raise E2eeError("invalid_conversation_resolution")
+        resolution = (
+            self._resolution_record(
+                self._comment_reference(records, item.resolution),
+                item.comment_id,
+                original["incarnation"],
+            )
+            if ref
+            else None
+        )
+        return {
+            "comment": original,
+            "head": head,
+            "text": context,
+            "resolution": resolution,
+        }
+
+    def _thread_view(self, context) -> domain.CommentView:
+        value = self._comment_view(context["text"])
+        value.thread_head.CopyFrom(context["head"]["value"])
+        value.has_more_replies = context["head"]["value"].reply_count > 0
+        if context["resolution"]:
+            value.resolution.CopyFrom(context["resolution"]["value"])
+        return value
+
+    def comment_thread(self, identifier):
+        response, records = self._comment_snapshot(ids=[identifier])
+        item = self._comment_item(response, identifier)
+        return (
+            self._thread_view(self._snapshot_thread(response, records, item))
+            if item is not None
+            else None
+        )
+
+    def comment_threads(
+        self, *, anchor=None, after: domain.CommentCursor | None = None, limit=100
+    ):
+        response, records = self._comment_snapshot(
+            anchor=anchor, after=after, limit=limit
+        )
+        threads = []
+        previous = after
+        for item in response.comments:
+            if not item.parent_comment_id:
+                context = self._snapshot_thread(response, records, item)
+                if anchor is not None and item.anchor_id != self._comment_anchor_id(
+                    anchor
+                ):
+                    raise E2eeError("invalid_conversation_comment")
+                if item.sequence < 1 or (
+                    previous is not None
+                    and (
+                        item.sequence < previous.sequence
+                        or (
+                            item.sequence == previous.sequence
+                            and item.comment_id <= previous.id
+                        )
+                    )
+                ):
+                    raise E2eeError("invalid_conversation_index")
+                threads.append(self._thread_view(context))
+                previous = domain.CommentCursor(
+                    sequence=item.sequence, id=item.comment_id
+                )
+        following = (
+            response.next_comment_cursor
+            if response.HasField("next_comment_cursor")
+            else None
+        )
+        if following is not None and (not threads or following != previous):
+            raise E2eeError("invalid_conversation_index")
+        return {"threads": threads, "next_key": following}
+
+    def comment_replies(
+        self, parent_id, *, after: domain.CommentCursor | None = None, limit=100
+    ):
+        response, records = self._comment_snapshot(
+            identifier=parent_id, after=after, limit=limit
+        )
+        root = self._comment_item(response, parent_id)
+        if root is None:
+            raise E2eeError("comment_not_found")
+        context = self._snapshot_thread(response, records, root)
+        sequence = after.sequence if after is not None else 0
+        last = None
+        replies = []
+        for item in response.comments:
+            if item.parent_comment_id:
+                sequence += 1
+                if (
+                    item.parent_comment_id != parent_id
+                    or item.reply_sequence != sequence
+                ):
+                    raise E2eeError("invalid_conversation_index")
+                replies.append(
+                    self._reply_view(self._snapshot_text(response, records, item))
+                )
+                last = domain.CommentCursor(sequence=sequence, id=item.comment_id)
+        total = number(context["head"]["value"].reply_count)
+        following = (
+            response.next_comment_cursor
+            if response.HasField("next_comment_cursor")
+            else None
         )
         if (
-            not entries
-            or entries[0].get("id") != identifier
-            or entries[0].get("sequence") != sequence
-            or entries[0].get("name") != ascending(sequence)
-            or sequence > number(parent["head"]["value"]["replyCount"])
+            sequence > total
+            or (following is None and sequence != total)
+            or (
+                following is not None
+                and (last is None or following != last or sequence >= total)
+            )
         ):
             raise E2eeError("invalid_conversation_index")
-        context = self._text_contexts({identifier: original})[identifier]
-        self._check_thread_heads([parent])
-        self._same_records([context["head"]])
-        return self._text_view(context)
+        return {"replies": replies, "next_key": following, "total_count": total}
+
+    def comment_reply(self, identifier):
+        response, records = self._comment_snapshot(ids=[identifier])
+        item = self._comment_item(response, identifier)
+        if item is None:
+            return None
+        if not item.parent_comment_id:
+            raise E2eeError("invalid_conversation_comment")
+        root = self._comment_item(response, item.thread_id)
+        context = self._snapshot_thread(response, records, root)
+        if (
+            item.parent_comment_id != context["comment"]["record_id"]
+            or item.reply_sequence > context["head"]["value"].reply_count
+        ):
+            raise E2eeError("invalid_conversation_comment")
+        return self._reply_view(self._snapshot_text(response, records, item))
 
     def _same_comment_input(self, record, value):
-        generated = {
-            "format",
-            "recordType",
-            "id",
-            "threadHeadId",
-            "bodyHeadId",
+        current = type(value)()
+        current.CopyFrom(record["value"])
+        for field in (
+            "thread_head_id",
+            "body_head_id",
             "sequence",
-            "parentCommentId",
-            "createdAt",
+            "created_at",
             "author",
-        }
-        content = lambda item: {
-            key: value for key, value in item.items() if key not in generated
-        }
-        return record["author_subject"] == self.subject and content(
-            record["value"]
-        ) == content(value)
-
-    def _validate_author(self, value):
-        verify_actor({"value": value, "author_subject": self.subject}, "author")
-
-    @conflict_retry
-    def create_comment(self, identifier, value):
-        text(identifier)
-        self._validate_author(value)
-        existing = self._read([identifier]).get(identifier)
-        if existing:
-            original = self._comment_record(existing, "comment")
-            if not self._same_comment_input(original, value):
-                raise E2eeError("idempotency_conflict")
-            return self.comment_thread(identifier)
-        header = self._load_header(COMMENT_HEADER, "comment", "comment_header")
-        sequence = number(header["value"].get("sequence")) + 1
-        number(sequence, 1)
-        key = anchor_key(value.get("anchor"))
-        head_id, body_id = self.mint_id(), self.mint_id()
-        original = {
-            **value,
-            "format": FORMAT,
-            "recordType": "comment",
-            "id": identifier,
-            "threadHeadId": head_id,
-            "bodyHeadId": body_id,
-            "sequence": sequence,
-        }
-        root, nodes = self._index("comment").mutation(
-            reference(header["value"].get("threads")),
-            {
-                "name": key + "\0" + descending(sequence),
-                "id": identifier,
-                "headID": head_id,
-                "anchorKey": key,
-                "sequence": sequence,
-            },
-        )
-        self._write(
-            [
-                write(identifier, "comment", original, immutable=True),
-                self._initial_text_head(identifier, "comment", body_id),
-                write(
-                    head_id,
-                    "comment",
-                    {
-                        "format": FORMAT,
-                        "recordType": "thread_head",
-                        "commentId": identifier,
-                        "original": {"id": identifier, "revision": 1},
-                        "replies": None,
-                        "replyCount": 0,
-                        "resolution": None,
-                    },
-                ),
-                *nodes,
-                write(
-                    COMMENT_HEADER,
-                    "comment",
-                    {**header["value"], "sequence": sequence, "threads": root},
-                    revision=header["revision"],
-                ),
-            ]
-        )
-        return {
-            **original,
-            "resolved": False,
-            "replies": [],
-            "replyCount": 0,
-            "hasMoreReplies": False,
-            "revision": 1,
-        }
+        ):
+            if field in current.DESCRIPTOR.fields_by_name:
+                current.ClearField(field)
+        expected = type(value)()
+        expected.CopyFrom(value)
+        for field in (
+            "thread_head_id",
+            "body_head_id",
+            "sequence",
+            "created_at",
+            "author",
+        ):
+            if field in expected.DESCRIPTOR.fields_by_name:
+                expected.ClearField(field)
+        return record["author_subject"] == self.subject and current == expected
 
     @conflict_retry
-    def create_reply(self, identifier, *, parent_id, value):
+    def create_comment(
+        self,
+        identifier,
+        *,
+        body,
+        anchor,
+        author,
+        created_at,
+        time_span=None,
+        region=None,
+        tag=None,
+    ):
         text(identifier)
-        self._validate_author(value)
-        existing = self._read([identifier]).get(identifier)
-        if existing:
-            original = self._comment_record(existing, "reply")
-            if original["value"].get(
-                "parentCommentId"
-            ) != parent_id or not self._same_comment_input(original, value):
-                raise E2eeError("idempotency_conflict")
-            self._thread_contexts({parent_id})
-            return self.comment_reply(identifier)
-        context = self._thread_contexts({parent_id})[parent_id]
-        sequence = number(context["head"]["value"]["replyCount"]) + 1
-        number(sequence, 1)
-        body_id = self.mint_id()
-        original = {
-            **value,
-            "format": FORMAT,
-            "recordType": "reply",
-            "parentCommentId": parent_id,
-            "id": identifier,
-            "sequence": sequence,
-            "bodyHeadId": body_id,
-        }
-        root, nodes = self._index("comment").mutation(
-            reference(context["head"]["value"].get("replies")),
-            {"name": ascending(sequence), "id": identifier, "sequence": sequence},
+        if not isinstance(body, str) or not body.strip():
+            raise E2eeError("invalid_request")
+        original = domain.CommentOrigin(
+            body=body, anchor=anchor, author=author, created_at=created_at
         )
-        self._write(
+        for name, value in (("time_span", time_span), ("region", region)):
+            if value is not None:
+                getattr(original, name).CopyFrom(value)
+        if tag is not None:
+            original.tag = tag
+        verify_actor({"value": original, "author_subject": self.subject}, "author")
+        response, records = self._comment_snapshot(ids=[identifier])
+        existing = self._comment_item(response, identifier)
+        if existing is not None:
+            context = self._snapshot_thread(response, records, existing)
+            if not self._same_comment_input(context["comment"], original):
+                raise E2eeError("idempotency_conflict")
+            return self._thread_view(context)
+        original.sequence = number(response.latest_comment_sequence) + 1
+        number(original.sequence, 1)
+        original.thread_head_id, original.body_head_id = self.mint_id(), self.mint_id()
+        incarnation = self.records.operation_id
+        item = app.CommentViewItem(
+            thread_id=identifier,
+            comment_id=identifier,
+            revision=1,
+            origin=comment_target(identifier, 1, incarnation),
+            thread_head=comment_target(original.thread_head_id, 1, incarnation),
+            body_head=comment_target(original.body_head_id, 1, incarnation),
+            anchor_id=self._comment_anchor_id(anchor),
+            sequence=original.sequence,
+        )
+        outcome = self._write(
             [
                 write(identifier, "comment", original, immutable=True),
-                self._initial_text_head(identifier, "reply", body_id),
-                *nodes,
+                self._initial_text_head(identifier, "comment", original.body_head_id),
                 write(
-                    context["head"]["record_id"],
+                    original.thread_head_id,
                     "comment",
-                    {
-                        **context["head"]["value"],
-                        "replyCount": sequence,
-                        "replies": root,
-                    },
-                    revision=context["head"]["revision"],
+                    domain.ThreadHead(
+                        original=domain.RecordReference(
+                            id=identifier, revision=1, incarnation=incarnation
+                        ),
+                        reply_count=0,
+                    ),
                 ),
             ],
-            [{"record_id": parent_id, "expected_revision": 1}],
+            comments=[
+                comment_binding(
+                    item, operation="create", value_id=identifier, value_revision=1
+                )
+            ],
         )
-        return {**original, "revision": 1}
+        if isinstance(outcome, AcceptedCommand):
+            return outcome
+        return domain.CommentView(
+            id=identifier,
+            origin=original,
+            text_head=domain.TextHead(
+                original=domain.RecordReference(
+                    id=identifier, revision=1, incarnation=incarnation
+                ),
+                target_type=domain.TEXT_TARGET_TYPE_COMMENT,
+                text_revision=1,
+            ),
+            thread_head=domain.ThreadHead(
+                original=domain.RecordReference(
+                    id=identifier, revision=1, incarnation=incarnation
+                ),
+                reply_count=0,
+            ),
+            has_more_replies=False,
+        )
+
+    @conflict_retry
+    def create_reply(
+        self, identifier, *, parent_id, body, references, author, created_at
+    ):
+        text(identifier)
+        if not isinstance(body, str) or not (body.strip() or references):
+            raise E2eeError("invalid_request")
+        original = domain.ReplyOrigin(
+            parent_comment_id=parent_id,
+            body=body,
+            references=references,
+            author=author,
+            created_at=created_at,
+        )
+        verify_actor({"value": original, "author_subject": self.subject}, "author")
+        response, records = self._comment_snapshot(
+            identifier=parent_id, ids=[identifier]
+        )
+        root = self._comment_item(response, parent_id)
+        if root is None:
+            raise E2eeError("comment_not_found")
+        context = self._snapshot_thread(response, records, root)
+        existing = self._comment_item(response, identifier)
+        if existing is not None:
+            current = self._snapshot_text(response, records, existing)
+            if existing.parent_comment_id != parent_id or not self._same_comment_input(
+                current["original"], original
+            ):
+                raise E2eeError("idempotency_conflict")
+            return self._reply_view(current)
+        original.sequence = number(context["head"]["value"].reply_count) + 1
+        number(original.sequence, 1)
+        original.body_head_id = self.mint_id()
+        incarnation = self.records.operation_id
+        updated = app.CommentViewItem()
+        updated.CopyFrom(root)
+        updated.revision += 1
+        head = context["head"]
+        updated.thread_head.CopyFrom(
+            comment_target(head["record_id"], head["revision"] + 1, head["incarnation"])
+        )
+        item = app.CommentViewItem(
+            thread_id=parent_id,
+            comment_id=identifier,
+            revision=1,
+            origin=comment_target(identifier, 1, incarnation),
+            thread_head=updated.thread_head,
+            body_head=comment_target(original.body_head_id, 1, incarnation),
+            anchor_id=root.anchor_id,
+            sequence=root.sequence,
+            reply_sequence=original.sequence,
+            parent_comment_id=parent_id,
+        )
+        new_head = domain.ThreadHead()
+        new_head.CopyFrom(head["value"])
+        new_head.reply_count = original.sequence
+        outcome = self._write(
+            [
+                write(identifier, "comment", original, immutable=True),
+                self._initial_text_head(identifier, "reply", original.body_head_id),
+                write(
+                    head["record_id"],
+                    "comment",
+                    new_head,
+                    revision=head["revision"],
+                    incarnation=head["incarnation"],
+                ),
+            ],
+            [
+                app.RecordPrecondition(
+                    id=parent_id,
+                    expected_revision=1,
+                    incarnation=context["comment"]["incarnation"],
+                )
+            ],
+            comments=[
+                comment_binding(
+                    updated,
+                    operation="reply",
+                    value_id=head["record_id"],
+                    value_revision=head["revision"] + 1,
+                ),
+                comment_binding(
+                    item, operation="reply", value_id=identifier, value_revision=1
+                ),
+            ],
+        )
+        return (
+            outcome
+            if isinstance(outcome, AcceptedCommand)
+            else domain.ReplyView(
+                id=identifier,
+                origin=original,
+                text_head=domain.TextHead(
+                    original=domain.RecordReference(
+                        id=identifier, revision=1, incarnation=incarnation
+                    ),
+                    target_type=domain.TEXT_TARGET_TYPE_REPLY,
+                    text_revision=1,
+                ),
+            )
+        )
 
     @conflict_retry
     def set_resolution(self, parent_id, *, resolved, actor, operation_id):
-        text(operation_id)
         if type(resolved) is not bool:
             raise E2eeError("invalid_request")
-        verify_actor(
-            {"value": {"actor": actor}, "author_subject": self.subject}, "actor"
+        text(operation_id)
+        event = domain.ResolutionEvent(
+            original=domain.RecordReference(id=parent_id, revision=1, incarnation=""),
+            resolved=resolved,
+            operation_id=operation_id,
+            actor=actor,
         )
+        verify_actor({"value": event, "author_subject": self.subject}, "actor")
         event_id = "cres_" + operation_id
-        existing = self._read([event_id]).get(event_id)
-        if existing:
-            record = self._resolution_record(existing, parent_id)
+        response, records = self._comment_snapshot(identifier=parent_id, ids=[event_id])
+        root = self._comment_item(response, parent_id)
+        if root is None:
+            raise E2eeError("comment_not_found")
+        context = self._snapshot_thread(response, records, root)
+        event.original.incarnation = context["comment"]["incarnation"]
+        if event_id in records:
+            record = self._resolution_record(
+                records[event_id], parent_id, context["comment"]["incarnation"]
+            )
             if (
                 record["author_subject"] != self.subject
-                or record["value"]["operationID"] != operation_id
-                or record["value"]["resolved"] != resolved
+                or record["value"].resolved != resolved
             ):
                 raise E2eeError("idempotency_conflict")
-            return self.comment_thread(parent_id)
-        context = self._thread_contexts({parent_id})[parent_id]
-        event = {
-            "format": FORMAT,
-            "recordType": "resolution",
-            "parentCommentId": parent_id,
-            "resolved": resolved,
-            "operationID": operation_id,
-            "actor": actor,
-        }
-        self._write(
+            return self._thread_view(context)
+        head = context["head"]
+        updated = app.CommentViewItem()
+        updated.CopyFrom(root)
+        updated.revision += 1
+        updated.thread_head.CopyFrom(
+            comment_target(head["record_id"], head["revision"] + 1, head["incarnation"])
+        )
+        updated.resolution.CopyFrom(
+            comment_target(event_id, 1, self.records.operation_id)
+        )
+        new_head = domain.ThreadHead()
+        new_head.CopyFrom(head["value"])
+        new_head.resolution.CopyFrom(
+            domain.RecordReference(
+                id=event_id, revision=1, incarnation=self.records.operation_id
+            )
+        )
+        outcome = self._write(
             [
                 write(event_id, "comment", event, immutable=True),
                 write(
-                    context["head"]["record_id"],
+                    head["record_id"],
                     "comment",
-                    {
-                        **context["head"]["value"],
-                        "resolution": {"id": event_id, "revision": 1},
-                    },
-                    revision=context["head"]["revision"],
+                    new_head,
+                    revision=head["revision"],
+                    incarnation=head["incarnation"],
                 ),
             ],
-            [{"record_id": parent_id, "expected_revision": 1}],
+            [
+                app.RecordPrecondition(
+                    id=parent_id,
+                    expected_revision=1,
+                    incarnation=context["comment"]["incarnation"],
+                )
+            ],
+            comments=[
+                comment_binding(
+                    updated, operation="resolve", value_id=event_id, value_revision=1
+                )
+            ],
         )
-        return {**self._thread_view(context), "resolved": resolved}
+        if isinstance(outcome, AcceptedCommand):
+            return outcome
+        value = self._thread_view(context)
+        value.thread_head.CopyFrom(new_head)
+        value.resolution.CopyFrom(event)
+        return value
+
+    @conflict_retry
+    def _edit_text(
+        self,
+        identifier,
+        target,
+        operation_id,
+        expected_revision,
+        body,
+        committed_at,
+        parent_id=None,
+    ):
+        number(expected_revision, 1)
+        text(operation_id)
+        event_id = "ctxt_" + operation_id
+        response, records = self._comment_snapshot(
+            identifier=identifier, ids=[event_id]
+        )
+        item = self._comment_item(response, identifier)
+        if item is None:
+            raise E2eeError("comment_not_found")
+        context = self._snapshot_text(response, records, item)
+        original = context["original"]
+        expected_type = (
+            domain.ReplyOrigin if target == "reply" else domain.CommentOrigin
+        )
+        if not isinstance(original["value"], expected_type):
+            raise E2eeError("invalid_request")
+        root = self._comment_item(response, item.thread_id)
+        self._snapshot_thread(response, records, root)
+        if not valid_body(original, body):
+            raise E2eeError("invalid_request")
+        if original["author_subject"] != self.subject:
+            raise E2eeError("not_comment_author")
+        if target == "reply" and original["value"].parent_comment_id != parent_id:
+            raise E2eeError("comment_parent_mismatch")
+        if event_id in records:
+            event = self._text_edit(records[event_id], original)["value"]
+            if (
+                event.operation_id != operation_id
+                or event.text_revision != expected_revision + 1
+                or event.body != body
+            ):
+                raise E2eeError("idempotency_conflict")
+            return
+        head = context["head"]
+        revision = head["value"].text_revision
+        if revision != expected_revision:
+            raise E2eeError("revision_conflict")
+        event = domain.TextRevision(
+            original=domain.RecordReference(
+                id=identifier, revision=1, incarnation=original["incarnation"]
+            ),
+            target_type=target_type(original["value"]),
+            body_head_id=head["record_id"],
+            operation_id=operation_id,
+            text_revision=revision + 1,
+            author_account_subject=self.subject,
+            body=body,
+            committed_at=committed_at,
+        )
+        updated = app.CommentViewItem()
+        updated.CopyFrom(item)
+        updated.revision += 1
+        updated.body_head.CopyFrom(
+            comment_target(head["record_id"], head["revision"] + 1, head["incarnation"])
+        )
+        del updated.text_revisions[:]
+        updated.text_revisions.append(
+            comment_target(event_id, 1, self.records.operation_id)
+        )
+        new_head = domain.TextHead()
+        new_head.CopyFrom(head["value"])
+        new_head.text_revision = revision + 1
+        new_head.last_edit.CopyFrom(
+            domain.RecordReference(
+                id=event_id, revision=1, incarnation=self.records.operation_id
+            )
+        )
+        return self._write(
+            [
+                write(event_id, "comment", event, immutable=True),
+                write(
+                    head["record_id"],
+                    "comment",
+                    new_head,
+                    revision=head["revision"],
+                    incarnation=head["incarnation"],
+                ),
+            ],
+            [
+                app.RecordPrecondition(
+                    id=identifier,
+                    expected_revision=1,
+                    incarnation=original["incarnation"],
+                )
+            ],
+            comments=[
+                comment_binding(
+                    updated, operation="edit", value_id=event_id, value_revision=1
+                )
+            ],
+        )
+
+    def edit_comment(
+        self, identifier, *, operation_id, expected_revision, body, committed_at
+    ):
+        outcome = self._edit_text(
+            identifier, "comment", operation_id, expected_revision, body, committed_at
+        )
+        return (
+            outcome
+            if isinstance(outcome, AcceptedCommand)
+            else self.comment_thread(identifier)
+        )
+
+    def edit_reply(
+        self,
+        identifier,
+        *,
+        parent_id,
+        operation_id,
+        expected_revision,
+        body,
+        committed_at,
+    ):
+        outcome = self._edit_text(
+            identifier,
+            "reply",
+            operation_id,
+            expected_revision,
+            body,
+            committed_at,
+            parent_id,
+        )
+        return (
+            outcome
+            if isinstance(outcome, AcceptedCommand)
+            else self.comment_reply(identifier)
+        )

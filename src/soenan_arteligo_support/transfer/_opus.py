@@ -6,16 +6,18 @@ import math
 import os
 import re
 import shutil
-import subprocess
+import stat
 import struct
+import subprocess
 import tempfile
 import threading
 import time
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
-from typing import BinaryIO, Iterator
+from typing import BinaryIO
 
 from ._http import TransferError, TransferSizeMismatch, TransferTimeoutError
 
@@ -36,12 +38,17 @@ def _remaining(deadline: float) -> float:
 
 
 @dataclass(frozen=True)
+class LoudnessMeasurement:
+    integrated_lufs_x100: int
+    true_peak_dbtp_x100: int
+    loudness_range_lu_x100: int
+
+
+@dataclass(frozen=True)
 class OpusPreview:
     path: Path
     size: int
-    integrated_lufs_x100: int | None
-    true_peak_dbtp_x100: int | None
-    loudness_range_lu_x100: int | None
+    loudness: LoudnessMeasurement | None
     duration_seconds: float
     channels: int
     bitrate: int
@@ -89,18 +96,18 @@ def prepare_opus_preview(
             size = output.stat().st_size
             if not 0 < size <= output_limit:
                 raise TransferError("encoded preview exceeds the local size limit")
-            duration, channels = _verify_encoded_media(output, _remaining(deadline), descriptors)
+            duration, channels = _verify_encoded_media(
+                output, _remaining(deadline), descriptors
+            )
             bitrate = math.floor(size * 8 / duration + 0.5)
             if not 0 < bitrate <= 2_147_483_647:
                 raise TransferError("encoded preview effective bitrate is unsupported")
-            integrated, peak, loudness_range = _analyze(output, _remaining(deadline), descriptors)
+            loudness = _analyze(output, _remaining(deadline), descriptors)
             source.seek(start)
             yield OpusPreview(
                 output,
                 size,
-                integrated,
-                peak,
-                loudness_range,
+                loudness,
                 duration,
                 channels,
                 bitrate,
@@ -111,10 +118,19 @@ def prepare_opus_preview(
 
 
 def _binary(name: str) -> str:
-    executable = shutil.which(name)
+    if os.name != "posix" or name not in {"ffmpeg", "ffprobe"}:
+        raise TransferError("trusted local media tools are unavailable")
+    executable = shutil.which(name, path=_CHILD_ENV["PATH"])
     if executable is None:
-        raise TransferError("local media tools are unavailable")
-    return executable
+        raise TransferError("trusted local media tools are unavailable")
+    resolved = Path(executable).resolve(strict=True)
+    for component in (resolved, *resolved.parents):
+        metadata = component.stat()
+        if metadata.st_uid != 0 or metadata.st_mode & 0o022:
+            raise TransferError("local media tools must be administrator-installed")
+    if not stat.S_ISREG(resolved.stat().st_mode):
+        raise TransferError("trusted local media tools are unavailable")
+    return str(resolved)
 
 
 def _read_header(stream: BinaryIO, length: int) -> bytes:
@@ -241,18 +257,22 @@ def _wav_pan_filter(source: BinaryIO, source_size: int) -> str | None:
                     sum(right.get(bit, 0.0) for bit in speakers),
                 )
 
-                def row(weights: dict[int, float]) -> str:
-                    return "+".join(
-                        f"{weights[bit] * gain:.17g}*c{index}"
-                        for index, bit in enumerate(speakers)
-                        if bit in weights
-                    )
-
-                return f"pan=stereo|c0={row(left)}|c1={row(right)}"
+                return (
+                    f"pan=stereo|c0={_pan_row(left, speakers, gain)}"
+                    f"|c1={_pan_row(right, speakers, gain)}"
+                )
             offset += chunk_size + (chunk_size & 1)
         raise TransferError("WAV format header is missing")
     finally:
         source.seek(start)
+
+
+def _pan_row(weights: dict[int, float], speakers: list[int], gain: float) -> str:
+    return "+".join(
+        f"{weights[bit] * gain:.17g}*c{index}"
+        for index, bit in enumerate(speakers)
+        if bit in weights
+    )
 
 
 def _encode(
@@ -275,6 +295,10 @@ def _encode(
         "2",
         "-filter_threads",
         "2",
+        "-protocol_whitelist",
+        "pipe",
+        "-f",
+        "wav",
         "-i",
         "pipe:0",
         "-map",
@@ -372,6 +396,8 @@ def _verify_encoded_media(
                 _binary("ffprobe"),
                 "-v",
                 "error",
+                "-protocol_whitelist",
+                "file,pipe",
                 "-show_entries",
                 "format=format_name,duration:stream=codec_type,codec_name,sample_rate,channels",
                 "-of",
@@ -413,7 +439,7 @@ def _verify_encoded_media(
 
 def _analyze(
     output: Path, timeout: float, descriptors: tuple[int, ...] = ()
-) -> tuple[int | None, int | None, int | None]:
+) -> LoudnessMeasurement | None:
     command = [
         _binary("ffmpeg"),
         "-hide_banner",
@@ -422,6 +448,8 @@ def _analyze(
         "2",
         "-filter_threads",
         "2",
+        "-protocol_whitelist",
+        "file,pipe",
         "-i",
         str(output),
         "-map",
@@ -459,11 +487,14 @@ def _analyze(
         raise TransferError("encoded preview loudness analysis is invalid")
     try:
         values = json.loads(found.group())
-        return (
-            _hundredths(values["input_i"]),
-            _hundredths(values["input_tp"]),
-            _hundredths(values["input_lra"]),
-        )
+        integrated = _hundredths(values["input_i"])
+        peak = _hundredths(values["input_tp"])
+        loudness_range = _hundredths(values["input_lra"])
+        if integrated is None:
+            return None
+        if peak is None or loudness_range is None:
+            raise ValueError("incomplete loudness measurement")
+        return LoudnessMeasurement(integrated, peak, loudness_range)
     except (KeyError, ValueError, TypeError):
         raise TransferError("encoded preview loudness analysis is invalid") from None
 

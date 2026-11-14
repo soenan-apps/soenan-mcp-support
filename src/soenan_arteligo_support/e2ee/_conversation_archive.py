@@ -1,138 +1,104 @@
 from __future__ import annotations
 
-from ._conversation_context import FORMAT, number, reference, text
+from soenan.arteligo.domain.v1 import domain_pb2 as domain
+
+from ._conversation_chat import ChatOperations
+from ._conversation_comments import CommentOperations
+from ._conversation_context import number, text
 from ._crypto import E2eeError
 
 
-class ArchiveOperations:
-    def archive(self, *, snapshot_cursor=None):
-        """Explicitly reconstruct a frozen archive, rejecting an incomplete proof population.
-
-        Large exports can consume records.immutable_kind pages directly instead.
-        """
+class ArchiveOperations(ChatOperations, CommentOperations):
+    def archive(self, *, snapshot_cursor=None, snapshot_epoch=0):
+        """Read a frozen record snapshot, including live chat messages."""
         records = {}
-        for kind in ("chat", "comment"):
-            after = 0
+        chat_events = []
+        for kind in ("chat_message", "comment"):
+            after = ""
             while True:
                 self.checkpoint()
-                page = self.records.immutable_kind(
-                    self.scope, kind, after=after, snapshot_cursor=snapshot_cursor
+                page = self.records._page(
+                    self.scope,
+                    view="page",
+                    kind=kind,
+                    cursor=after,
+                    snapshot_cursor=snapshot_cursor or 0,
+                    snapshot_epoch=snapshot_epoch,
+                    immutable_only=kind == "comment",
+                    limit=256,
                 )
                 snapshot_cursor = page["snapshot_cursor"]
+                snapshot_epoch = page["snapshot_epoch"]
                 for record in page["records"]:
                     identifier = record["record_id"]
                     if identifier in records:
                         raise E2eeError("invalid_conversation_archive")
                     records[identifier] = record
+                    if kind == "chat_message":
+                        before = 0
+                        while True:
+                            self.checkpoint()
+                            history = self.records.history(
+                                self.scope,
+                                identifier,
+                                before=before,
+                                snapshot_epoch=snapshot_epoch,
+                                snapshot_cursor=snapshot_cursor,
+                            )
+                            chat_events.extend(
+                                self._event_view(item) for item in history["records"]
+                            )
+                            if not history["has_more"]:
+                                break
+                            before = history["cursor"]
                 if not page["has_more"]:
                     break
                 after = page["cursor"]
-        return {**self.archive_snapshot(records), "snapshot_cursor": snapshot_cursor}
+        return {
+            **self.archive_snapshot(records, chat_events=chat_events),
+            "snapshot_cursor": snapshot_cursor,
+            "snapshot_epoch": snapshot_epoch,
+        }
 
-    def archive_snapshot(self, records):
-        events, comments, replies, resolutions, edits, helpers = (
-            [],
-            {},
-            {},
-            {},
-            {},
-            set(),
-        )
+    def archive_snapshot(self, records, *, chat_events=None):
+        events, comments, replies, resolutions, edits = [], {}, {}, {}, {}
         for record in records.values():
             self.checkpoint()
-            self._record(record, record["kind"], immutable=True)
+            if record["kind"] == "chat_message":
+                if chat_events is None:
+                    events.append(self._event_view(record))
+                continue
+            self._record(record, "comment", immutable=True)
             value = record["value"]
-            if value.get("format") != FORMAT:
-                raise E2eeError("content_format_update_required")
-            kind = (record["kind"], value.get("recordType"))
-            if kind == ("chat", "event"):
-                events.append(self._chat_event(record))
-            elif kind in {("chat", "operation"), ("chat", "terminal")}:
-                helpers.add(record["record_id"])
-            elif kind == ("comment", "comment"):
-                comments[record["record_id"]] = self._comment_record(record, "comment")
-            elif kind == ("comment", "reply"):
-                reply = self._comment_record(record, "reply")
-                replies.setdefault(text(value.get("parentCommentId")), []).append(reply)
-            elif kind == ("comment", "resolution"):
-                parent = text(value.get("parentCommentId"))
-                resolution = self._resolution_record(record, parent)
+            if record["kind"] == "comment" and isinstance(value, domain.CommentOrigin):
+                comments[record["record_id"]] = self._comment_record(
+                    record, domain.CommentOrigin
+                )
+            elif record["kind"] == "comment" and isinstance(value, domain.ReplyOrigin):
+                reply = self._comment_record(record, domain.ReplyOrigin)
+                replies.setdefault(text(value.parent_comment_id), []).append(reply)
+            elif record["kind"] == "comment" and isinstance(
+                value, domain.ResolutionEvent
+            ):
+                parent = text(value.original.id)
+                resolution = self._resolution_record(
+                    record,
+                    parent,
+                    records[parent]["incarnation"],
+                )
                 if (
                     parent not in resolutions
                     or resolutions[parent]["cursor"] < record["cursor"]
                 ):
                     resolutions[parent] = resolution
-            elif kind == ("comment", "text_edit"):
-                edits.setdefault(text(value.get("targetID")), []).append(record)
+            elif record["kind"] == "comment" and isinstance(value, domain.TextRevision):
+                edits.setdefault(text(value.original.id), []).append(record)
             else:
                 raise E2eeError("invalid_conversation_archive")
-        events.sort(key=lambda record: number(record["value"]["sequence"], 1))
-        latest, origins = {}, {}
-        for sequence, event in enumerate(events, 1):
-            self.checkpoint()
-            value, identifier = event["value"], event["value"]["messageId"]
-            previous = latest.get(identifier)
-            if value["sequence"] != sequence:
-                raise E2eeError("invalid_conversation_archive")
-            if previous is None:
-                if (
-                    value["type"] != "sent"
-                    or value["revision"] != 1
-                    or event["record_id"] != identifier
-                ):
-                    raise E2eeError("invalid_conversation_archive")
-                origins[identifier] = event
-            else:
-                origin = origins[identifier]
-                if (
-                    previous["value"]["type"] == "deleted"
-                    or value["type"] == "sent"
-                    or value["revision"] != previous["value"]["revision"] + 1
-                    or value["messageHeadId"] != origin["value"]["messageHeadId"]
-                    or event["author_subject"] != origin["author_subject"]
-                    or value["references"]
-                ):
-                    raise E2eeError("invalid_conversation_archive")
-            binding_id = "cop_" + value["clientOperationId"]
-            binding = self._record(
-                records.get(binding_id), "chat", "operation", immutable=True
-            )
-            if (
-                binding["value"].get("eventID") != event["record_id"]
-                or binding["value"].get("messageId") != identifier
-                or binding["value"].get("type") != value["type"]
-                or binding["author_subject"] != event["author_subject"]
-                or binding_id not in helpers
-            ):
-                raise E2eeError("invalid_conversation_archive")
-            helpers.remove(binding_id)
-            latest[identifier] = event
-        for identifier, original in origins.items():
-            terminal_id = text(original["value"].get("terminalRecordId"))
-            terminal, last = records.get(terminal_id), latest[identifier]
-            if terminal is None:
-                if last["value"]["type"] == "deleted":
-                    raise E2eeError("invalid_conversation_archive")
-                continue
-            self._record(terminal, "chat", "terminal", immutable=True)
-            marker = terminal["value"]
-            if (
-                last["value"]["type"] != "deleted"
-                or terminal["author_subject"] != original["author_subject"]
-                or marker.get("messageId") != identifier
-                or marker.get("messageHeadId") != original["value"]["messageHeadId"]
-                or reference(marker.get("deleteEvent"))
-                != {"id": last["record_id"], "revision": 1}
-                or marker.get("messageRevision") != last["value"]["revision"]
-                or terminal_id not in helpers
-            ):
-                raise E2eeError("invalid_conversation_archive")
-            helpers.remove(terminal_id)
-        if (
-            helpers
-            or replies.keys() - comments.keys()
-            or resolutions.keys() - comments.keys()
-        ):
+        if chat_events is not None:
+            events = chat_events
+        events.sort(key=lambda event: event.sequence)
+        if replies.keys() - comments.keys() or resolutions.keys() - comments.keys():
             raise E2eeError("invalid_conversation_archive")
         text_origins = {
             **comments,
@@ -144,56 +110,91 @@ class ArchiveOperations:
         }
         if edits.keys() - text_origins.keys():
             raise E2eeError("invalid_conversation_archive")
-        views = {}
+        comment_views: dict[str, domain.CommentView] = {}
+        reply_views: dict[str, domain.ReplyView] = {}
         for identifier, original in text_origins.items():
             self.checkpoint()
-            text(original["value"].get("bodyHeadId"))
+            text(original["value"].body_head_id)
             revision, cursor, last = 1, original["cursor"], None
             for record in sorted(
                 edits.get(identifier, []),
-                key=lambda record: number(record["value"].get("revision"), 2),
+                key=lambda record: number(record["value"].text_revision, 2),
             ):
                 edit = self._text_edit(record, original)
                 revision += 1
-                if edit["value"]["revision"] != revision or edit["cursor"] <= cursor:
+                if edit["value"].text_revision != revision or edit["cursor"] <= cursor:
                     raise E2eeError("invalid_conversation_archive")
                 cursor, last = edit["cursor"], edit
-            views[identifier] = {
-                **original["value"],
-                "body": last["value"]["body"] if last else original["value"]["body"],
-                "revision": revision,
-                **({"editedAt": last["value"]["committedAt"]} if last else {}),
-            }
+            head = domain.TextHead(
+                original=domain.RecordReference(
+                    id=identifier,
+                    revision=1,
+                    incarnation=original["incarnation"],
+                ),
+                target_type=domain.TEXT_TARGET_TYPE_REPLY
+                if isinstance(original["value"], domain.ReplyOrigin)
+                else domain.TEXT_TARGET_TYPE_COMMENT,
+                text_revision=revision,
+            )
+            if last:
+                head.last_edit.CopyFrom(
+                    domain.RecordReference(
+                        id=last["record_id"],
+                        revision=1,
+                        incarnation=last["incarnation"],
+                    )
+                )
+            context = {"original": original, "head": {"value": head}, "edit": last}
+            if isinstance(original["value"], domain.ReplyOrigin):
+                reply_views[identifier] = self._reply_view(context)
+            else:
+                comment_views[identifier] = self._comment_view(context)
         threads = []
         for sequence, original in enumerate(
             sorted(
                 comments.values(),
-                key=lambda record: number(record["value"].get("sequence"), 1),
+                key=lambda record: number(record["value"].sequence, 1),
             ),
             1,
         ):
             self.checkpoint()
-            if original["value"]["sequence"] != sequence:
+            if original["value"].sequence != sequence:
                 raise E2eeError("invalid_conversation_archive")
             identifier = original["record_id"]
             children = sorted(
                 replies.get(identifier, []),
-                key=lambda record: number(record["value"].get("sequence"), 1),
+                key=lambda record: number(record["value"].sequence, 1),
             )
             if any(
-                child["value"]["sequence"] != index
+                child["value"].sequence != index
                 for index, child in enumerate(children, 1)
             ):
                 raise E2eeError("invalid_conversation_archive")
-            threads.append(
-                {
-                    **views[identifier],
-                    "resolved": resolutions[identifier]["value"]["resolved"]
-                    if identifier in resolutions
-                    else False,
-                    "replies": [views[child["record_id"]] for child in children],
-                    "replyCount": len(children),
-                    "hasMoreReplies": False,
-                }
+            value = comment_views[identifier]
+            value.thread_head.CopyFrom(
+                domain.ThreadHead(
+                    original=domain.RecordReference(
+                        id=identifier,
+                        revision=1,
+                        incarnation=original["incarnation"],
+                    ),
+                    reply_count=len(children),
+                )
             )
-        return {"events": [event["value"] for event in events], "comments": threads}
+            if identifier in resolutions:
+                resolution = resolutions[identifier]
+                value.resolution.CopyFrom(resolution["value"])
+                value.thread_head.resolution.CopyFrom(
+                    domain.RecordReference(
+                        id=resolution["record_id"],
+                        revision=1,
+                        incarnation=resolution["incarnation"],
+                    )
+                )
+            value.replies.extend(reply_views[child["record_id"]] for child in children)
+            value.has_more_replies = False
+            threads.append(value)
+        return {
+            "events": events,
+            "comments": threads,
+        }

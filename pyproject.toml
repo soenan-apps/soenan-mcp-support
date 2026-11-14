@@ -12,13 +12,16 @@ authors = [{ name = "Soenan" }]
 dependencies = [
   "attrs>=22.2.0",
   "arteligo-e2ee-native==0.2.0",
-  "keyring>=25.5.0,<26",
+  "soenan-account-identity-client==0.1.0",
+  "protobuf>=6.33.5,<7",
   "mcp>=1.26,<2",
   "pydantic>=2.8,<3",
   "anyio>=4.5,<5",
   "httpx>=0.23.1,<0.29.0",
   "typing-extensions>=4.7.1",
+  "PyYAML>=6,<7",
   "python-dateutil>=2.8.2,<3",
+  "platformdirs>=4.3,<5",
 ]
 classifiers = [
   "Development Status :: 3 - Alpha",
@@ -35,6 +38,9 @@ classifiers = [
 [project.urls]
 Repository = "https://github.com/soenan-apps/soenan-mcp-support"
 
+[project.optional-dependencies]
+dev = ["types-protobuf>=6.32,<7"]
+
 [project.scripts]
 arteligo = "soenan_arteligo_support.e2ee._cli:main"
 
@@ -42,4 +48,22 @@ arteligo = "soenan_arteligo_support.e2ee._cli:main"
 where = ["src", "generated"]
 
 [tool.setuptools.package-data]
-soenan_arteligo_support = ["py.typed"]
+"*" = ["*.pyi", "py.typed"]
+
+[tool.ruff]
+target-version = "py310"
+extend-exclude = ["generated", "**/*_generated.py"]
+
+[tool.ruff.per-file-target-version]
+"**/tests/*.py" = "py314"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP", "B", "ASYNC", "RUF"]
+
+[tool.ty.environment]
+python = ".venv"
+python-platform = "all"
+extra-paths = ["generated"]
+
+[tool.ty.src]
+include = ["src", "tool"]
