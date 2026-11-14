@@ -27,7 +27,11 @@ class TextOperations(ConversationContext):
             head_id,
             "comment",
             domain.TextHead(
-                original=domain.RecordReference(id=identifier, revision=1),
+                original=domain.RecordReference(
+                    id=identifier,
+                    revision=1,
+                    incarnation=self.records.operation_id,
+                ),
                 target_type=domain.TEXT_TARGET_TYPE_REPLY
                 if target == "reply"
                 else domain.TEXT_TARGET_TYPE_COMMENT,
@@ -43,7 +47,11 @@ class TextOperations(ConversationContext):
             or result["author_subject"] != original["author_subject"]
             or value.author_account_subject != original["author_subject"]
             or value.original
-            != domain.RecordReference(id=original["record_id"], revision=1)
+            != domain.RecordReference(
+                id=original["record_id"],
+                revision=1,
+                incarnation=original["incarnation"],
+            )
             or value.target_type != target_type(original["value"])
             or value.body_head_id != original["value"].body_head_id
             or not valid_body(original, value.body)
@@ -62,15 +70,24 @@ class TextOperations(ConversationContext):
             or head["record_id"] != original["value"].body_head_id
             or value.target_type != target_type(original["value"])
             or value.original
-            != domain.RecordReference(id=original["record_id"], revision=1)
+            != domain.RecordReference(
+                id=original["record_id"],
+                revision=1,
+                incarnation=original["incarnation"],
+            )
             or head["revision"] != revision
             or ((ref is not None) if revision == 1 else (ref is None))
             or (ref is not None and ref.revision != 1)
         ):
             raise E2eeError("invalid_conversation_text")
-        edit = self._text_edit(edits.get(ref.id), original) if ref else None
-        if edit and edit["value"].text_revision != revision:
-            raise E2eeError("invalid_conversation_text")
+        edit = None
+        if ref is not None:
+            edit = self._text_edit(edits.get(ref.id), original)
+            if (
+                edit["value"].text_revision != revision
+                or ref.incarnation != edit["incarnation"]
+            ):
+                raise E2eeError("invalid_conversation_text")
         return {"original": original, "head": head, "edit": edit}
 
     def _comment_view(self, context) -> domain.CommentView:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 import anyio
 from google.protobuf.json_format import ParseDict, ParseError
@@ -82,12 +82,17 @@ def register_conversation_tools(server, run):
 
     @server.tool()
     def arteligo_chat_events(
-        project_id: Identifier, after: Position = 0, limit: EventLimit = 200
+        project_id: Identifier,
+        after: Position = 0,
+        limit: EventLimit = 200,
+        snapshot_epoch: Position = 0,
     ) -> dict[str, Any]:
-        """Read a bounded contiguous event page after the saved sequence."""
+        """Read verified record changes after the saved cursor and snapshot epoch."""
         return run(
             lambda session: conversations(session, project_id).chat_events(
-                after=after, limit=limit
+                after=after,
+                limit=limit,
+                snapshot_epoch=snapshot_epoch,
             )
         )
 
@@ -95,7 +100,7 @@ def register_conversation_tools(server, run):
     def arteligo_chat_message(
         project_id: Identifier, message_id: MessageID
     ) -> dict[str, Any]:
-        """Read one signed current message, including a terminal deletion proof."""
+        """Read one current message or its signed body-free deletion proof."""
         return run(
             lambda session: {
                 "message": conversations(session, project_id).chat_message(message_id)
@@ -115,12 +120,23 @@ def register_conversation_tools(server, run):
 
     @server.tool()
     def arteligo_chat_operation(
-        project_id: Identifier, operation_id: ChatOperationID
+        project_id: Identifier,
+        operation_id: ChatOperationID,
+        message_id: MessageID,
+        type: Literal["sent", "edited", "deleted"],
+        revision: Revision,
+        incarnation: Identifier,
     ) -> dict[str, Any]:
-        """Confirm an immutable operation after a lost response, reusing its operation ID."""
+        """Confirm an accepted command through its common record receipt."""
         return run(
             lambda session: {
-                "event": conversations(session, project_id).chat_operation(operation_id)
+                "event": conversations(session, project_id).chat_operation(
+                    operation_id,
+                    message_id=message_id,
+                    type=type,
+                    revision=revision,
+                    incarnation=incarnation,
+                )
             }
         )
 
@@ -154,6 +170,7 @@ def register_conversation_tools(server, run):
         message_id: MessageID,
         operation_id: ChatOperationID,
         expected_revision: Revision,
+        expected_incarnation: Identifier,
         body: ChatBody,
         committed_at: Timestamp,
     ) -> dict[str, Any]:
@@ -164,6 +181,7 @@ def register_conversation_tools(server, run):
                 message_id=message_id,
                 operation_id=operation_id,
                 expected_revision=expected_revision,
+                expected_incarnation=expected_incarnation,
                 body=body,
                 committed_at=_parse_message(committed_at, TimestampMessage()),
             )
@@ -175,15 +193,17 @@ def register_conversation_tools(server, run):
         message_id: MessageID,
         operation_id: ChatOperationID,
         expected_revision: Revision,
+        expected_incarnation: Identifier,
         committed_at: Timestamp,
     ) -> dict[str, Any]:
-        """Append an immutable deletion event and terminal proof in the same batch."""
+        """Delete all message revisions with a signed body-free record deletion."""
         return run(
             lambda session: conversations(session, project_id).write_chat(
                 type="deleted",
                 message_id=message_id,
                 operation_id=operation_id,
                 expected_revision=expected_revision,
+                expected_incarnation=expected_incarnation,
                 committed_at=_parse_message(committed_at, TimestampMessage()),
             )
         )

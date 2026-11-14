@@ -50,6 +50,7 @@ class ErrorCode(str, Enum):
     SERVICE_UNAVAILABLE = "service_unavailable"
     SESSION_INVALID = "session_invalid"
     SESSION_REFRESH_REQUIRED = "session_refresh_required"
+    SNAPSHOT_EXPIRED = "snapshot_expired"
     STORAGE_QUOTA_EXCEEDED = "storage_quota_exceeded"
     UNAUTHENTICATED = "unauthenticated"
 

@@ -21,11 +21,12 @@ from ._signed_commands import AcceptedCommand
 
 
 def comment_target(
-    identifier: str, revision: int, *, expected: int | None = None
+    identifier: str, revision: int, incarnation: str, *, expected: int | None = None
 ) -> crypto.TargetHead:
     return crypto.TargetHead(
         id=identifier,
         revision=revision,
+        incarnation=incarnation,
         expected_revision=revision - 1 if expected is None else expected,
     )
 
@@ -127,7 +128,11 @@ class CommentOperations(TextOperations):
 
     def _comment_reference(self, records, target):
         record = records.get(target.id)
-        if record is None or record["revision"] != target.revision:
+        if (
+            record is None
+            or record["revision"] != target.revision
+            or record["incarnation"] != target.incarnation
+        ):
             raise E2eeError("invalid_conversation_comment")
         return record
 
@@ -136,12 +141,12 @@ class CommentOperations(TextOperations):
         verify_actor(result, "author")
         return result
 
-    def _resolution_record(self, record, parent_id):
+    def _resolution_record(self, record, parent_id, incarnation):
         result = self._record(record, "comment", domain.ResolutionEvent, immutable=True)
         value = result["value"]
-        if value.original != domain.RecordReference(id=parent_id, revision=1) or result[
-            "record_id"
-        ] != "cres_" + text(value.operation_id):
+        if value.original != domain.RecordReference(
+            id=parent_id, revision=1, incarnation=incarnation
+        ) or result["record_id"] != "cres_" + text(value.operation_id):
             raise E2eeError("invalid_conversation_resolution")
         verify_actor(result, "actor")
         return result
@@ -175,7 +180,11 @@ class CommentOperations(TextOperations):
         if (edit is None) != (latest is None) or (
             edit is not None
             and latest is not None
-            and (latest.id != edit["record_id"] or latest.revision != edit["revision"])
+            and (
+                latest.id != edit["record_id"]
+                or latest.revision != edit["revision"]
+                or latest.incarnation != edit["incarnation"]
+            )
         ):
             raise E2eeError("invalid_conversation_text")
         return context
@@ -192,7 +201,9 @@ class CommentOperations(TextOperations):
         )
         if head["record_id"] != original["value"].thread_head_id or head[
             "value"
-        ].original != domain.RecordReference(id=item.comment_id, revision=1):
+        ].original != domain.RecordReference(
+            id=item.comment_id, revision=1, incarnation=original["incarnation"]
+        ):
             raise E2eeError("invalid_conversation_comment")
         number(head["value"].reply_count)
         ref = (
@@ -206,12 +217,15 @@ class CommentOperations(TextOperations):
                 ref.revision != 1
                 or ref.id != item.resolution.id
                 or ref.revision != item.resolution.revision
+                or ref.incarnation != item.resolution.incarnation
             )
         ):
             raise E2eeError("invalid_conversation_resolution")
         resolution = (
             self._resolution_record(
-                self._comment_reference(records, item.resolution), item.comment_id
+                self._comment_reference(records, item.resolution),
+                item.comment_id,
+                original["incarnation"],
             )
             if ref
             else None
@@ -397,13 +411,14 @@ class CommentOperations(TextOperations):
         original.sequence = number(response.latest_comment_sequence) + 1
         number(original.sequence, 1)
         original.thread_head_id, original.body_head_id = self.mint_id(), self.mint_id()
+        incarnation = self.records.operation_id
         item = app.CommentViewItem(
             thread_id=identifier,
             comment_id=identifier,
             revision=1,
-            origin=comment_target(identifier, 1),
-            thread_head=comment_target(original.thread_head_id, 1),
-            body_head=comment_target(original.body_head_id, 1),
+            origin=comment_target(identifier, 1, incarnation),
+            thread_head=comment_target(original.thread_head_id, 1, incarnation),
+            body_head=comment_target(original.body_head_id, 1, incarnation),
             anchor_id=self._comment_anchor_id(anchor),
             sequence=original.sequence,
         )
@@ -415,7 +430,9 @@ class CommentOperations(TextOperations):
                     original.thread_head_id,
                     "comment",
                     domain.ThreadHead(
-                        original=domain.RecordReference(id=identifier, revision=1),
+                        original=domain.RecordReference(
+                            id=identifier, revision=1, incarnation=incarnation
+                        ),
                         reply_count=0,
                     ),
                 ),
@@ -432,12 +449,16 @@ class CommentOperations(TextOperations):
             id=identifier,
             origin=original,
             text_head=domain.TextHead(
-                original=domain.RecordReference(id=identifier, revision=1),
+                original=domain.RecordReference(
+                    id=identifier, revision=1, incarnation=incarnation
+                ),
                 target_type=domain.TEXT_TARGET_TYPE_COMMENT,
                 text_revision=1,
             ),
             thread_head=domain.ThreadHead(
-                original=domain.RecordReference(id=identifier, revision=1),
+                original=domain.RecordReference(
+                    id=identifier, revision=1, incarnation=incarnation
+                ),
                 reply_count=0,
             ),
             has_more_replies=False,
@@ -476,20 +497,21 @@ class CommentOperations(TextOperations):
         original.sequence = number(context["head"]["value"].reply_count) + 1
         number(original.sequence, 1)
         original.body_head_id = self.mint_id()
+        incarnation = self.records.operation_id
         updated = app.CommentViewItem()
         updated.CopyFrom(root)
         updated.revision += 1
         head = context["head"]
         updated.thread_head.CopyFrom(
-            comment_target(head["record_id"], head["revision"] + 1)
+            comment_target(head["record_id"], head["revision"] + 1, head["incarnation"])
         )
         item = app.CommentViewItem(
             thread_id=parent_id,
             comment_id=identifier,
             revision=1,
-            origin=comment_target(identifier, 1),
+            origin=comment_target(identifier, 1, incarnation),
             thread_head=updated.thread_head,
-            body_head=comment_target(original.body_head_id, 1),
+            body_head=comment_target(original.body_head_id, 1, incarnation),
             anchor_id=root.anchor_id,
             sequence=root.sequence,
             reply_sequence=original.sequence,
@@ -503,10 +525,20 @@ class CommentOperations(TextOperations):
                 write(identifier, "comment", original, immutable=True),
                 self._initial_text_head(identifier, "reply", original.body_head_id),
                 write(
-                    head["record_id"], "comment", new_head, revision=head["revision"]
+                    head["record_id"],
+                    "comment",
+                    new_head,
+                    revision=head["revision"],
+                    incarnation=head["incarnation"],
                 ),
             ],
-            [app.RecordPrecondition(id=parent_id, expected_revision=1)],
+            [
+                app.RecordPrecondition(
+                    id=parent_id,
+                    expected_revision=1,
+                    incarnation=context["comment"]["incarnation"],
+                )
+            ],
             comments=[
                 comment_binding(
                     updated,
@@ -526,7 +558,9 @@ class CommentOperations(TextOperations):
                 id=identifier,
                 origin=original,
                 text_head=domain.TextHead(
-                    original=domain.RecordReference(id=identifier, revision=1),
+                    original=domain.RecordReference(
+                        id=identifier, revision=1, incarnation=incarnation
+                    ),
                     target_type=domain.TEXT_TARGET_TYPE_REPLY,
                     text_revision=1,
                 ),
@@ -539,7 +573,7 @@ class CommentOperations(TextOperations):
             raise E2eeError("invalid_request")
         text(operation_id)
         event = domain.ResolutionEvent(
-            original=domain.RecordReference(id=parent_id, revision=1),
+            original=domain.RecordReference(id=parent_id, revision=1, incarnation=""),
             resolved=resolved,
             operation_id=operation_id,
             actor=actor,
@@ -551,8 +585,11 @@ class CommentOperations(TextOperations):
         if root is None:
             raise E2eeError("comment_not_found")
         context = self._snapshot_thread(response, records, root)
+        event.original.incarnation = context["comment"]["incarnation"]
         if event_id in records:
-            record = self._resolution_record(records[event_id], parent_id)
+            record = self._resolution_record(
+                records[event_id], parent_id, context["comment"]["incarnation"]
+            )
             if (
                 record["author_subject"] != self.subject
                 or record["value"].resolved != resolved
@@ -564,20 +601,36 @@ class CommentOperations(TextOperations):
         updated.CopyFrom(root)
         updated.revision += 1
         updated.thread_head.CopyFrom(
-            comment_target(head["record_id"], head["revision"] + 1)
+            comment_target(head["record_id"], head["revision"] + 1, head["incarnation"])
         )
-        updated.resolution.CopyFrom(comment_target(event_id, 1))
+        updated.resolution.CopyFrom(
+            comment_target(event_id, 1, self.records.operation_id)
+        )
         new_head = domain.ThreadHead()
         new_head.CopyFrom(head["value"])
-        new_head.resolution.CopyFrom(domain.RecordReference(id=event_id, revision=1))
+        new_head.resolution.CopyFrom(
+            domain.RecordReference(
+                id=event_id, revision=1, incarnation=self.records.operation_id
+            )
+        )
         outcome = self._write(
             [
                 write(event_id, "comment", event, immutable=True),
                 write(
-                    head["record_id"], "comment", new_head, revision=head["revision"]
+                    head["record_id"],
+                    "comment",
+                    new_head,
+                    revision=head["revision"],
+                    incarnation=head["incarnation"],
                 ),
             ],
-            [app.RecordPrecondition(id=parent_id, expected_revision=1)],
+            [
+                app.RecordPrecondition(
+                    id=parent_id,
+                    expected_revision=1,
+                    incarnation=context["comment"]["incarnation"],
+                )
+            ],
             comments=[
                 comment_binding(
                     updated, operation="resolve", value_id=event_id, value_revision=1
@@ -640,7 +693,9 @@ class CommentOperations(TextOperations):
         if revision != expected_revision:
             raise E2eeError("revision_conflict")
         event = domain.TextRevision(
-            original=domain.RecordReference(id=identifier, revision=1),
+            original=domain.RecordReference(
+                id=identifier, revision=1, incarnation=original["incarnation"]
+            ),
             target_type=target_type(original["value"]),
             body_head_id=head["record_id"],
             operation_id=operation_id,
@@ -653,22 +708,38 @@ class CommentOperations(TextOperations):
         updated.CopyFrom(item)
         updated.revision += 1
         updated.body_head.CopyFrom(
-            comment_target(head["record_id"], head["revision"] + 1)
+            comment_target(head["record_id"], head["revision"] + 1, head["incarnation"])
         )
         del updated.text_revisions[:]
-        updated.text_revisions.append(comment_target(event_id, 1))
+        updated.text_revisions.append(
+            comment_target(event_id, 1, self.records.operation_id)
+        )
         new_head = domain.TextHead()
         new_head.CopyFrom(head["value"])
         new_head.text_revision = revision + 1
-        new_head.last_edit.CopyFrom(domain.RecordReference(id=event_id, revision=1))
+        new_head.last_edit.CopyFrom(
+            domain.RecordReference(
+                id=event_id, revision=1, incarnation=self.records.operation_id
+            )
+        )
         return self._write(
             [
                 write(event_id, "comment", event, immutable=True),
                 write(
-                    head["record_id"], "comment", new_head, revision=head["revision"]
+                    head["record_id"],
+                    "comment",
+                    new_head,
+                    revision=head["revision"],
+                    incarnation=head["incarnation"],
                 ),
             ],
-            [app.RecordPrecondition(id=identifier, expected_revision=1)],
+            [
+                app.RecordPrecondition(
+                    id=identifier,
+                    expected_revision=1,
+                    incarnation=original["incarnation"],
+                )
+            ],
             comments=[
                 comment_binding(
                     updated, operation="edit", value_id=event_id, value_revision=1

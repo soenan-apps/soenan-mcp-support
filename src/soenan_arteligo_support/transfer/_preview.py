@@ -67,17 +67,26 @@ def upload_wav_preview(
                 "state": "ready",
             }
     record = records.read(project_id, [file_id]).get(file_id)
-    if record is None or record["deleted"] or record["kind"] != "file_metadata":
+    if (
+        record is None
+        or record["payload_type"] != "content"
+        or record["kind"] != "file_metadata"
+    ):
         raise E2eeError("not_found")
     metadata = cast(domain.FileMetadata, record["value"])
     pending = None
     cursor = None
+    snapshot_epoch = 0
     while True:
         page = records.current(
-            project_id, kind="file_preview_upload", after_record_id=cursor
+            project_id,
+            kind="file_preview_upload",
+            after_record_id=cursor,
+            snapshot_epoch=snapshot_epoch,
         )
+        snapshot_epoch = page["snapshot_epoch"]
         for item in page["records"]:
-            if item["deleted"]:
+            if item["payload_type"] != "content":
                 continue
             candidate = item["value"]
             if candidate.file_id == file_id:
@@ -133,6 +142,7 @@ def upload_wav_preview(
                         original_object_id=metadata.original.descriptor.object_id,
                         preview_object_id=identifier,
                         metadata_revision=record["revision"] + 1,
+                        metadata_incarnation=record["incarnation"],
                     ).SerializeToString()
                     plan = build_encryption_plan(
                         preview_stream,
@@ -171,6 +181,7 @@ def upload_wav_preview(
                         file_id=file_id,
                         metadata=next_metadata,
                         expected_file_revision=record["revision"],
+                        expected_file_incarnation=record["incarnation"],
                         expected_preview_id=previous,
                         source_object_id=metadata.original.descriptor.object_id,
                     )
@@ -189,6 +200,7 @@ def upload_wav_preview(
                                 id=file_id,
                                 expected_revision=record["revision"],
                                 require_live=True,
+                                incarnation=record["incarnation"],
                             )
                         ],
                         object_effects=[
@@ -200,6 +212,8 @@ def upload_wav_preview(
                                 locator=plan.locator.descriptor,
                                 draft_id=pending_id,
                                 expected_draft_revision=1,
+                                draft_incarnation=records.operation_id,
+                                expected_file_incarnation=record["incarnation"],
                                 expected_file_revision=record["revision"],
                                 expected_preview_id=previous,
                                 source_object_id=metadata.original.descriptor.object_id,
@@ -268,14 +282,17 @@ def _publish_preview(records, project_id, pending, draft):
                 "record_id": draft.file_id,
                 "kind": "file_metadata",
                 "expected_revision": draft.expected_file_revision,
+                "incarnation": draft.expected_file_incarnation,
                 "value": draft.metadata,
             },
+        ],
+        deletions=[
             {
                 "record_id": pending_id,
                 "kind": "file_preview_upload",
                 "expected_revision": pending["revision"],
-                "deleted": True,
-            },
+                "incarnation": pending["incarnation"],
+            }
         ],
         deleted_objects=[draft.expected_preview_id]
         if draft.expected_preview_id
@@ -286,6 +303,7 @@ def _publish_preview(records, project_id, pending, draft):
                 revision=draft.expected_file_revision + 1,
                 metadata_value_id=draft.file_id,
                 metadata_revision=draft.expected_file_revision + 1,
+                metadata_incarnation=draft.expected_file_incarnation,
                 original_object_id=draft.source_object_id,
                 preview_object_id=preview.preview_id,
             )
@@ -299,6 +317,8 @@ def _publish_preview(records, project_id, pending, draft):
                 locator=preview.object.descriptor,
                 draft_id=pending_id,
                 expected_draft_revision=pending["revision"],
+                draft_incarnation=pending["incarnation"],
+                expected_file_incarnation=draft.expected_file_incarnation,
                 expected_file_revision=draft.expected_file_revision,
                 expected_preview_id=draft.expected_preview_id,
                 source_object_id=draft.source_object_id,

@@ -17,15 +17,11 @@ _BODY_KINDS: dict[str, frozenset[str]] = {
     'directory_deletion': frozenset(('directory',)),
     'directory_deletion_stack': frozenset(('directory',)),
     'chat_header': frozenset(('chat',)),
-    'chat_origin': frozenset(('chat',)),
-    'chat_event': frozenset(('chat',)),
-    'chat_message_head': frozenset(('chat',)),
-    'chat_operation': frozenset(('chat',)),
-    'chat_terminal': frozenset(('chat',)),
     'schedule': frozenset(('schedule',)),
     'file_metadata': frozenset(('file_metadata',)),
     'file_upload': frozenset(('file_upload',)),
     'preview_upload': frozenset(('file_preview_upload',)),
+    'chat_message': frozenset(('chat_message',)),
 }
 RECORD_KINDS = frozenset(kind for kinds in _BODY_KINDS.values() for kind in kinds)
 

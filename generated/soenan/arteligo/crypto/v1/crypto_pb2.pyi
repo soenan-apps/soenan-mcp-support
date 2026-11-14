@@ -9,24 +9,24 @@ from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 DESCRIPTOR: _descriptor.FileDescriptor
 
 class CipherValueBody(_message.Message):
-    __slots__ = ("id", "revision", "protection_key", "sealed_dek", "value", "kind", "deleted", "immutable")
+    __slots__ = ("id", "revision", "protection_key", "sealed_dek", "value", "kind", "immutable", "incarnation")
     ID_FIELD_NUMBER: _ClassVar[int]
     REVISION_FIELD_NUMBER: _ClassVar[int]
     PROTECTION_KEY_FIELD_NUMBER: _ClassVar[int]
     SEALED_DEK_FIELD_NUMBER: _ClassVar[int]
     VALUE_FIELD_NUMBER: _ClassVar[int]
     KIND_FIELD_NUMBER: _ClassVar[int]
-    DELETED_FIELD_NUMBER: _ClassVar[int]
     IMMUTABLE_FIELD_NUMBER: _ClassVar[int]
+    INCARNATION_FIELD_NUMBER: _ClassVar[int]
     id: str
     revision: int
     protection_key: _crypto_pb2.KeyRef
     sealed_dek: _crypto_pb2.HpkeEnvelope
     value: _crypto_pb2.AeadValue
     kind: str
-    deleted: bool
     immutable: bool
-    def __init__(self, id: _Optional[str] = ..., revision: _Optional[int] = ..., protection_key: _Optional[_Union[_crypto_pb2.KeyRef, _Mapping]] = ..., sealed_dek: _Optional[_Union[_crypto_pb2.HpkeEnvelope, _Mapping]] = ..., value: _Optional[_Union[_crypto_pb2.AeadValue, _Mapping]] = ..., kind: _Optional[str] = ..., deleted: bool = ..., immutable: bool = ...) -> None: ...
+    incarnation: str
+    def __init__(self, id: _Optional[str] = ..., revision: _Optional[int] = ..., protection_key: _Optional[_Union[_crypto_pb2.KeyRef, _Mapping]] = ..., sealed_dek: _Optional[_Union[_crypto_pb2.HpkeEnvelope, _Mapping]] = ..., value: _Optional[_Union[_crypto_pb2.AeadValue, _Mapping]] = ..., kind: _Optional[str] = ..., immutable: bool = ..., incarnation: _Optional[str] = ...) -> None: ...
 
 class CommitReceiptBody(_message.Message):
     __slots__ = ("operation_id", "mutation_digest", "identity_revision", "distribution_revision", "heads", "accepted_document_digests")
@@ -45,17 +45,75 @@ class CommitReceiptBody(_message.Message):
     def __init__(self, operation_id: _Optional[str] = ..., mutation_digest: _Optional[bytes] = ..., identity_revision: _Optional[int] = ..., distribution_revision: _Optional[int] = ..., heads: _Optional[_Iterable[_Union[TargetHead, _Mapping]]] = ..., accepted_document_digests: _Optional[_Iterable[bytes]] = ...) -> None: ...
 
 class TargetHead(_message.Message):
-    __slots__ = ("id", "expected_revision", "revision")
+    __slots__ = ("id", "expected_revision", "revision", "incarnation")
     ID_FIELD_NUMBER: _ClassVar[int]
     EXPECTED_REVISION_FIELD_NUMBER: _ClassVar[int]
     REVISION_FIELD_NUMBER: _ClassVar[int]
+    INCARNATION_FIELD_NUMBER: _ClassVar[int]
     id: str
     expected_revision: int
     revision: int
-    def __init__(self, id: _Optional[str] = ..., expected_revision: _Optional[int] = ..., revision: _Optional[int] = ...) -> None: ...
+    incarnation: str
+    def __init__(self, id: _Optional[str] = ..., expected_revision: _Optional[int] = ..., revision: _Optional[int] = ..., incarnation: _Optional[str] = ...) -> None: ...
+
+class RecordDeletionBody(_message.Message):
+    __slots__ = ("id", "expected_revision", "revision", "kind", "incarnation", "operation_id", "committed_at")
+    ID_FIELD_NUMBER: _ClassVar[int]
+    EXPECTED_REVISION_FIELD_NUMBER: _ClassVar[int]
+    REVISION_FIELD_NUMBER: _ClassVar[int]
+    KIND_FIELD_NUMBER: _ClassVar[int]
+    INCARNATION_FIELD_NUMBER: _ClassVar[int]
+    OPERATION_ID_FIELD_NUMBER: _ClassVar[int]
+    COMMITTED_AT_FIELD_NUMBER: _ClassVar[int]
+    id: str
+    expected_revision: int
+    revision: int
+    kind: str
+    incarnation: str
+    operation_id: str
+    committed_at: int
+    def __init__(self, id: _Optional[str] = ..., expected_revision: _Optional[int] = ..., revision: _Optional[int] = ..., kind: _Optional[str] = ..., incarnation: _Optional[str] = ..., operation_id: _Optional[str] = ..., committed_at: _Optional[int] = ...) -> None: ...
+
+class RecordDeletion(_message.Message):
+    __slots__ = ("id", "expected_revision", "kind", "incarnation", "committed_at")
+    ID_FIELD_NUMBER: _ClassVar[int]
+    EXPECTED_REVISION_FIELD_NUMBER: _ClassVar[int]
+    KIND_FIELD_NUMBER: _ClassVar[int]
+    INCARNATION_FIELD_NUMBER: _ClassVar[int]
+    COMMITTED_AT_FIELD_NUMBER: _ClassVar[int]
+    id: str
+    expected_revision: int
+    kind: str
+    incarnation: str
+    committed_at: int
+    def __init__(self, id: _Optional[str] = ..., expected_revision: _Optional[int] = ..., kind: _Optional[str] = ..., incarnation: _Optional[str] = ..., committed_at: _Optional[int] = ...) -> None: ...
+
+class OpenedDeletion(_message.Message):
+    __slots__ = ("id", "expected_revision", "revision", "kind", "incarnation", "author_device_id", "author_subject", "operation_id", "committed_at", "cursor")
+    ID_FIELD_NUMBER: _ClassVar[int]
+    EXPECTED_REVISION_FIELD_NUMBER: _ClassVar[int]
+    REVISION_FIELD_NUMBER: _ClassVar[int]
+    KIND_FIELD_NUMBER: _ClassVar[int]
+    INCARNATION_FIELD_NUMBER: _ClassVar[int]
+    AUTHOR_DEVICE_ID_FIELD_NUMBER: _ClassVar[int]
+    AUTHOR_SUBJECT_FIELD_NUMBER: _ClassVar[int]
+    OPERATION_ID_FIELD_NUMBER: _ClassVar[int]
+    COMMITTED_AT_FIELD_NUMBER: _ClassVar[int]
+    CURSOR_FIELD_NUMBER: _ClassVar[int]
+    id: str
+    expected_revision: int
+    revision: int
+    kind: str
+    incarnation: str
+    author_device_id: str
+    author_subject: str
+    operation_id: str
+    committed_at: int
+    cursor: int
+    def __init__(self, id: _Optional[str] = ..., expected_revision: _Optional[int] = ..., revision: _Optional[int] = ..., kind: _Optional[str] = ..., incarnation: _Optional[str] = ..., author_device_id: _Optional[str] = ..., author_subject: _Optional[str] = ..., operation_id: _Optional[str] = ..., committed_at: _Optional[int] = ..., cursor: _Optional[int] = ...) -> None: ...
 
 class CryptoReadBundle(_message.Message):
-    __slots__ = ("values", "key_deliveries", "key_certificates", "identity_statements", "commit_receipts", "identity_revision", "documents", "commitments", "proofs", "distribution_revision")
+    __slots__ = ("values", "key_deliveries", "key_certificates", "identity_statements", "commit_receipts", "identity_revision", "documents", "commitments", "proofs", "distribution_revision", "deletions")
     VALUES_FIELD_NUMBER: _ClassVar[int]
     KEY_DELIVERIES_FIELD_NUMBER: _ClassVar[int]
     KEY_CERTIFICATES_FIELD_NUMBER: _ClassVar[int]
@@ -66,6 +124,7 @@ class CryptoReadBundle(_message.Message):
     COMMITMENTS_FIELD_NUMBER: _ClassVar[int]
     PROOFS_FIELD_NUMBER: _ClassVar[int]
     DISTRIBUTION_REVISION_FIELD_NUMBER: _ClassVar[int]
+    DELETIONS_FIELD_NUMBER: _ClassVar[int]
     values: _containers.RepeatedCompositeFieldContainer[_crypto_pb2.SignedBytes]
     key_deliveries: _containers.RepeatedCompositeFieldContainer[_crypto_pb2.SignedBytes]
     key_certificates: _containers.RepeatedCompositeFieldContainer[_crypto_pb2.SignedBytes]
@@ -76,7 +135,8 @@ class CryptoReadBundle(_message.Message):
     commitments: _containers.RepeatedCompositeFieldContainer[_crypto_pb2.HashCommitment]
     proofs: _containers.RepeatedCompositeFieldContainer[_crypto_pb2.PossessionProof]
     distribution_revision: int
-    def __init__(self, values: _Optional[_Iterable[_Union[_crypto_pb2.SignedBytes, _Mapping]]] = ..., key_deliveries: _Optional[_Iterable[_Union[_crypto_pb2.SignedBytes, _Mapping]]] = ..., key_certificates: _Optional[_Iterable[_Union[_crypto_pb2.SignedBytes, _Mapping]]] = ..., identity_statements: _Optional[_Iterable[_Union[_identity_pb2.IdentityRecord, _Mapping]]] = ..., commit_receipts: _Optional[_Iterable[_Union[CommitReceiptBody, _Mapping]]] = ..., identity_revision: _Optional[int] = ..., documents: _Optional[_Iterable[_Union[_crypto_pb2.SignedDocument, _Mapping]]] = ..., commitments: _Optional[_Iterable[_Union[_crypto_pb2.HashCommitment, _Mapping]]] = ..., proofs: _Optional[_Iterable[_Union[_crypto_pb2.PossessionProof, _Mapping]]] = ..., distribution_revision: _Optional[int] = ...) -> None: ...
+    deletions: _containers.RepeatedCompositeFieldContainer[_crypto_pb2.SignedBytes]
+    def __init__(self, values: _Optional[_Iterable[_Union[_crypto_pb2.SignedBytes, _Mapping]]] = ..., key_deliveries: _Optional[_Iterable[_Union[_crypto_pb2.SignedBytes, _Mapping]]] = ..., key_certificates: _Optional[_Iterable[_Union[_crypto_pb2.SignedBytes, _Mapping]]] = ..., identity_statements: _Optional[_Iterable[_Union[_identity_pb2.IdentityRecord, _Mapping]]] = ..., commit_receipts: _Optional[_Iterable[_Union[CommitReceiptBody, _Mapping]]] = ..., identity_revision: _Optional[int] = ..., documents: _Optional[_Iterable[_Union[_crypto_pb2.SignedDocument, _Mapping]]] = ..., commitments: _Optional[_Iterable[_Union[_crypto_pb2.HashCommitment, _Mapping]]] = ..., proofs: _Optional[_Iterable[_Union[_crypto_pb2.PossessionProof, _Mapping]]] = ..., distribution_revision: _Optional[int] = ..., deletions: _Optional[_Iterable[_Union[_crypto_pb2.SignedBytes, _Mapping]]] = ...) -> None: ...
 
 class OpenInput(_message.Message):
     __slots__ = ("state", "bundle", "release_operation_ids")
@@ -89,38 +149,40 @@ class OpenInput(_message.Message):
     def __init__(self, state: _Optional[_Union[CoreState, _Mapping]] = ..., bundle: _Optional[_Union[CryptoReadBundle, _Mapping]] = ..., release_operation_ids: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class OpenedValue(_message.Message):
-    __slots__ = ("id", "revision", "protection_key", "plaintext", "kind", "deleted", "immutable", "author_device_id", "cursor", "author_subject")
+    __slots__ = ("id", "revision", "protection_key", "plaintext", "kind", "immutable", "author_device_id", "cursor", "author_subject", "incarnation")
     ID_FIELD_NUMBER: _ClassVar[int]
     REVISION_FIELD_NUMBER: _ClassVar[int]
     PROTECTION_KEY_FIELD_NUMBER: _ClassVar[int]
     PLAINTEXT_FIELD_NUMBER: _ClassVar[int]
     KIND_FIELD_NUMBER: _ClassVar[int]
-    DELETED_FIELD_NUMBER: _ClassVar[int]
     IMMUTABLE_FIELD_NUMBER: _ClassVar[int]
     AUTHOR_DEVICE_ID_FIELD_NUMBER: _ClassVar[int]
     CURSOR_FIELD_NUMBER: _ClassVar[int]
     AUTHOR_SUBJECT_FIELD_NUMBER: _ClassVar[int]
+    INCARNATION_FIELD_NUMBER: _ClassVar[int]
     id: str
     revision: int
     protection_key: _crypto_pb2.KeyRef
     plaintext: bytes
     kind: str
-    deleted: bool
     immutable: bool
     author_device_id: str
     cursor: int
     author_subject: str
-    def __init__(self, id: _Optional[str] = ..., revision: _Optional[int] = ..., protection_key: _Optional[_Union[_crypto_pb2.KeyRef, _Mapping]] = ..., plaintext: _Optional[bytes] = ..., kind: _Optional[str] = ..., deleted: bool = ..., immutable: bool = ..., author_device_id: _Optional[str] = ..., cursor: _Optional[int] = ..., author_subject: _Optional[str] = ...) -> None: ...
+    incarnation: str
+    def __init__(self, id: _Optional[str] = ..., revision: _Optional[int] = ..., protection_key: _Optional[_Union[_crypto_pb2.KeyRef, _Mapping]] = ..., plaintext: _Optional[bytes] = ..., kind: _Optional[str] = ..., immutable: bool = ..., author_device_id: _Optional[str] = ..., cursor: _Optional[int] = ..., author_subject: _Optional[str] = ..., incarnation: _Optional[str] = ...) -> None: ...
 
 class OpenedValues(_message.Message):
-    __slots__ = ("values", "state", "verified_documents")
+    __slots__ = ("values", "state", "verified_documents", "deletions")
     VALUES_FIELD_NUMBER: _ClassVar[int]
     STATE_FIELD_NUMBER: _ClassVar[int]
     VERIFIED_DOCUMENTS_FIELD_NUMBER: _ClassVar[int]
+    DELETIONS_FIELD_NUMBER: _ClassVar[int]
     values: _containers.RepeatedCompositeFieldContainer[OpenedValue]
     state: CoreState
     verified_documents: _containers.RepeatedCompositeFieldContainer[_crypto_pb2.SignedBytes]
-    def __init__(self, values: _Optional[_Iterable[_Union[OpenedValue, _Mapping]]] = ..., state: _Optional[_Union[CoreState, _Mapping]] = ..., verified_documents: _Optional[_Iterable[_Union[_crypto_pb2.SignedBytes, _Mapping]]] = ...) -> None: ...
+    deletions: _containers.RepeatedCompositeFieldContainer[OpenedDeletion]
+    def __init__(self, values: _Optional[_Iterable[_Union[OpenedValue, _Mapping]]] = ..., state: _Optional[_Union[CoreState, _Mapping]] = ..., verified_documents: _Optional[_Iterable[_Union[_crypto_pb2.SignedBytes, _Mapping]]] = ..., deletions: _Optional[_Iterable[_Union[OpenedDeletion, _Mapping]]] = ...) -> None: ...
 
 class SignDocumentsInput(_message.Message):
     __slots__ = ("state", "bundle", "documents")
@@ -141,22 +203,22 @@ class SignedDocumentsResult(_message.Message):
     def __init__(self, state: _Optional[_Union[CoreState, _Mapping]] = ..., documents: _Optional[_Iterable[_Union[_crypto_pb2.SignedBytes, _Mapping]]] = ...) -> None: ...
 
 class ValueMutation(_message.Message):
-    __slots__ = ("id", "expected_revision", "protection_key", "plaintext", "kind", "deleted", "immutable")
+    __slots__ = ("id", "expected_revision", "protection_key", "plaintext", "kind", "immutable", "incarnation")
     ID_FIELD_NUMBER: _ClassVar[int]
     EXPECTED_REVISION_FIELD_NUMBER: _ClassVar[int]
     PROTECTION_KEY_FIELD_NUMBER: _ClassVar[int]
     PLAINTEXT_FIELD_NUMBER: _ClassVar[int]
     KIND_FIELD_NUMBER: _ClassVar[int]
-    DELETED_FIELD_NUMBER: _ClassVar[int]
     IMMUTABLE_FIELD_NUMBER: _ClassVar[int]
+    INCARNATION_FIELD_NUMBER: _ClassVar[int]
     id: str
     expected_revision: int
     protection_key: _crypto_pb2.KeyRef
     plaintext: bytes
     kind: str
-    deleted: bool
     immutable: bool
-    def __init__(self, id: _Optional[str] = ..., expected_revision: _Optional[int] = ..., protection_key: _Optional[_Union[_crypto_pb2.KeyRef, _Mapping]] = ..., plaintext: _Optional[bytes] = ..., kind: _Optional[str] = ..., deleted: bool = ..., immutable: bool = ...) -> None: ...
+    incarnation: str
+    def __init__(self, id: _Optional[str] = ..., expected_revision: _Optional[int] = ..., protection_key: _Optional[_Union[_crypto_pb2.KeyRef, _Mapping]] = ..., plaintext: _Optional[bytes] = ..., kind: _Optional[str] = ..., immutable: bool = ..., incarnation: _Optional[str] = ...) -> None: ...
 
 class DeliveryMutation(_message.Message):
     __slots__ = ("target", "recipient", "include_history")
@@ -169,7 +231,7 @@ class DeliveryMutation(_message.Message):
     def __init__(self, target: _Optional[_Union[_crypto_pb2.KeyRef, _Mapping]] = ..., recipient: _Optional[_Union[_crypto_pb2.PublicKey, _Mapping]] = ..., include_history: bool = ...) -> None: ...
 
 class CryptoMutationInput(_message.Message):
-    __slots__ = ("state", "bundle", "operation_id", "values", "deliveries", "create_protection_keys", "namespace_id", "application_binding")
+    __slots__ = ("state", "bundle", "operation_id", "values", "deliveries", "create_protection_keys", "namespace_id", "application_binding", "deletions", "accept_until")
     STATE_FIELD_NUMBER: _ClassVar[int]
     BUNDLE_FIELD_NUMBER: _ClassVar[int]
     OPERATION_ID_FIELD_NUMBER: _ClassVar[int]
@@ -178,6 +240,8 @@ class CryptoMutationInput(_message.Message):
     CREATE_PROTECTION_KEYS_FIELD_NUMBER: _ClassVar[int]
     NAMESPACE_ID_FIELD_NUMBER: _ClassVar[int]
     APPLICATION_BINDING_FIELD_NUMBER: _ClassVar[int]
+    DELETIONS_FIELD_NUMBER: _ClassVar[int]
+    ACCEPT_UNTIL_FIELD_NUMBER: _ClassVar[int]
     state: CoreState
     bundle: CryptoReadBundle
     operation_id: str
@@ -186,10 +250,12 @@ class CryptoMutationInput(_message.Message):
     create_protection_keys: _containers.RepeatedCompositeFieldContainer[_crypto_pb2.KeyRef]
     namespace_id: str
     application_binding: bytes
-    def __init__(self, state: _Optional[_Union[CoreState, _Mapping]] = ..., bundle: _Optional[_Union[CryptoReadBundle, _Mapping]] = ..., operation_id: _Optional[str] = ..., values: _Optional[_Iterable[_Union[ValueMutation, _Mapping]]] = ..., deliveries: _Optional[_Iterable[_Union[DeliveryMutation, _Mapping]]] = ..., create_protection_keys: _Optional[_Iterable[_Union[_crypto_pb2.KeyRef, _Mapping]]] = ..., namespace_id: _Optional[str] = ..., application_binding: _Optional[bytes] = ...) -> None: ...
+    deletions: _containers.RepeatedCompositeFieldContainer[RecordDeletion]
+    accept_until: int
+    def __init__(self, state: _Optional[_Union[CoreState, _Mapping]] = ..., bundle: _Optional[_Union[CryptoReadBundle, _Mapping]] = ..., operation_id: _Optional[str] = ..., values: _Optional[_Iterable[_Union[ValueMutation, _Mapping]]] = ..., deliveries: _Optional[_Iterable[_Union[DeliveryMutation, _Mapping]]] = ..., create_protection_keys: _Optional[_Iterable[_Union[_crypto_pb2.KeyRef, _Mapping]]] = ..., namespace_id: _Optional[str] = ..., application_binding: _Optional[bytes] = ..., deletions: _Optional[_Iterable[_Union[RecordDeletion, _Mapping]]] = ..., accept_until: _Optional[int] = ...) -> None: ...
 
 class MutationBody(_message.Message):
-    __slots__ = ("operation_id", "expected_identity_revision", "expected_distribution_revision", "target_heads", "values", "key_deliveries", "key_certificates", "namespace_id", "application_binding")
+    __slots__ = ("operation_id", "expected_identity_revision", "expected_distribution_revision", "target_heads", "values", "key_deliveries", "key_certificates", "namespace_id", "application_binding", "deletions", "accept_until")
     OPERATION_ID_FIELD_NUMBER: _ClassVar[int]
     EXPECTED_IDENTITY_REVISION_FIELD_NUMBER: _ClassVar[int]
     EXPECTED_DISTRIBUTION_REVISION_FIELD_NUMBER: _ClassVar[int]
@@ -199,6 +265,8 @@ class MutationBody(_message.Message):
     KEY_CERTIFICATES_FIELD_NUMBER: _ClassVar[int]
     NAMESPACE_ID_FIELD_NUMBER: _ClassVar[int]
     APPLICATION_BINDING_FIELD_NUMBER: _ClassVar[int]
+    DELETIONS_FIELD_NUMBER: _ClassVar[int]
+    ACCEPT_UNTIL_FIELD_NUMBER: _ClassVar[int]
     operation_id: str
     expected_identity_revision: int
     expected_distribution_revision: int
@@ -208,7 +276,9 @@ class MutationBody(_message.Message):
     key_certificates: _containers.RepeatedCompositeFieldContainer[_crypto_pb2.SignedBytes]
     namespace_id: str
     application_binding: bytes
-    def __init__(self, operation_id: _Optional[str] = ..., expected_identity_revision: _Optional[int] = ..., expected_distribution_revision: _Optional[int] = ..., target_heads: _Optional[_Iterable[_Union[TargetHead, _Mapping]]] = ..., values: _Optional[_Iterable[_Union[_crypto_pb2.SignedBytes, _Mapping]]] = ..., key_deliveries: _Optional[_Iterable[_Union[_crypto_pb2.SignedBytes, _Mapping]]] = ..., key_certificates: _Optional[_Iterable[_Union[_crypto_pb2.SignedBytes, _Mapping]]] = ..., namespace_id: _Optional[str] = ..., application_binding: _Optional[bytes] = ...) -> None: ...
+    deletions: _containers.RepeatedCompositeFieldContainer[_crypto_pb2.SignedBytes]
+    accept_until: int
+    def __init__(self, operation_id: _Optional[str] = ..., expected_identity_revision: _Optional[int] = ..., expected_distribution_revision: _Optional[int] = ..., target_heads: _Optional[_Iterable[_Union[TargetHead, _Mapping]]] = ..., values: _Optional[_Iterable[_Union[_crypto_pb2.SignedBytes, _Mapping]]] = ..., key_deliveries: _Optional[_Iterable[_Union[_crypto_pb2.SignedBytes, _Mapping]]] = ..., key_certificates: _Optional[_Iterable[_Union[_crypto_pb2.SignedBytes, _Mapping]]] = ..., namespace_id: _Optional[str] = ..., application_binding: _Optional[bytes] = ..., deletions: _Optional[_Iterable[_Union[_crypto_pb2.SignedBytes, _Mapping]]] = ..., accept_until: _Optional[int] = ...) -> None: ...
 
 class PreparedMutation(_message.Message):
     __slots__ = ("command", "state")

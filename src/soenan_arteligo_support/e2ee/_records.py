@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import secrets
+import time
+import uuid
 from typing import Generic, Literal, TypeVar
 
 from google.protobuf.message import DecodeError, EncodeError, Message
@@ -21,16 +23,19 @@ RecordMessage = TypeVar("RecordMessage", bound=Message)
 class ReadRecord(TypedDict, Generic[RecordMessage]):
     record_id: str
     revision: int
-    key_epoch: int
-    protection_key: shared.KeyRef
+    incarnation: str
+    key_epoch: NotRequired[int]
+    protection_key: NotRequired[shared.KeyRef]
     kind: str
-    deleted: bool
-    immutable: bool
+    immutable: NotRequired[bool]
     author_device_id: str
     author_subject: str
     cursor: int
-    payload_type: Literal["deletion_marker", "historical_encrypted_deletion", "content"]
+    payload_type: Literal["deletion", "content"]
     value: NotRequired[RecordMessage]
+    expected_revision: NotRequired[int]
+    operation_id: NotRequired[str]
+    committed_at: NotRequired[int]
 
 
 _BODY_FIELDS = {
@@ -64,6 +69,7 @@ class EncryptedRecords:
     def __init__(self, session: DeviceSession):
         self.session = session
         self.last_receipt = None
+        self.operation_id = str(uuid.uuid4())
 
     @staticmethod
     def _payload(value, kind=None):
@@ -93,48 +99,66 @@ class EncryptedRecords:
     def _record(value: crypto.OpenedValue) -> ReadRecord[Message]:
         if value.kind not in RECORD_KINDS:
             raise E2eeError("invalid_record")
-        deletion_marker = value.deleted and not value.plaintext
+        try:
+            envelope = domain.RecordContent.FromString(value.plaintext)
+            case = envelope.WhichOneof("body")
+            if case is None or not record_body_allows_kind(case, value.kind):
+                raise E2eeError("invalid_record")
+            body: Message = getattr(envelope, case)
+            _validate_body(body)
+        except DecodeError:
+            raise E2eeError("invalid_record") from None
         result: ReadRecord[Message] = {
             "record_id": value.id,
             "revision": value.revision,
+            "incarnation": value.incarnation,
             "key_epoch": value.protection_key.generation,
             "protection_key": value.protection_key,
             "kind": value.kind,
-            "deleted": value.deleted,
             "immutable": value.immutable,
             "author_device_id": value.author_device_id,
             "author_subject": value.author_subject,
             "cursor": value.cursor,
-            "payload_type": "deletion_marker"
-            if deletion_marker
-            else "historical_encrypted_deletion"
-            if value.deleted
-            else "content",
+            "payload_type": "content",
+            "value": body,
         }
-        if not deletion_marker:
-            try:
-                envelope = domain.RecordContent.FromString(value.plaintext)
-                case = envelope.WhichOneof("body")
-                if case is None or not record_body_allows_kind(case, value.kind):
-                    raise E2eeError("invalid_record")
-                body: Message = getattr(envelope, case)
-                _validate_body(body)
-                result["value"] = body
-            except DecodeError:
-                raise E2eeError("invalid_record") from None
         return result
+
+    @staticmethod
+    def _deletion(value: crypto.OpenedDeletion) -> ReadRecord[Message]:
+        if value.kind not in RECORD_KINDS:
+            raise E2eeError("invalid_record")
+        return {
+            "record_id": value.id,
+            "revision": value.revision,
+            "expected_revision": value.expected_revision,
+            "incarnation": value.incarnation,
+            "kind": value.kind,
+            "author_device_id": value.author_device_id,
+            "author_subject": value.author_subject,
+            "payload_type": "deletion",
+            "operation_id": value.operation_id,
+            "committed_at": value.committed_at,
+            "cursor": value.cursor,
+        }
 
     def _open_page(
         self, scope: str, page: app.ReadCryptoResponse
     ) -> list[ReadRecord[Message]]:
-        heads = {(head.id, head.revision): head for head in page.heads}
-        result = []
-        for value in self.session.open_bundle(page.bundle):
-            record = self._record(value)
-            head = heads.get((value.id, value.revision))
+        heads = {
+            (head.id, head.revision, head.incarnation): head for head in page.heads
+        }
+        opened = self.session.open_result(page.bundle)
+        result = [
+            *(self._record(value) for value in opened.values),
+            *(self._deletion(value) for value in opened.deletions),
+        ]
+        for record in result:
+            head = heads.get(
+                (record["record_id"], record["revision"], record["incarnation"])
+            )
             if head is not None:
                 record["cursor"] = int(head.cursor or 0)
-            result.append(record)
         return result
 
     def read(self, scope: str, record_ids: list[str]) -> dict[str, ReadRecord[Message]]:
@@ -156,19 +180,38 @@ class EncryptedRecords:
             "has_more": page.has_more,
             "next_record_id": page.cursor,
             "snapshot_cursor": page.snapshot_cursor,
+            "snapshot_epoch": page.snapshot_epoch,
+            "receipts": list(page.bundle.commit_receipts),
+            "retention_floor": page.retention_floor,
         }
 
-    def current(self, scope, *, kind=None, after_record_id=None, limit=256):
+    def current(
+        self,
+        scope,
+        *,
+        kind=None,
+        after_record_id=None,
+        snapshot_epoch=0,
+        limit=256,
+    ):
         return self._page(
             scope,
             view="current",
             kind=kind or "",
             cursor=after_record_id or "",
             limit=limit,
+            snapshot_epoch=snapshot_epoch,
         )
 
     def immutable_kind(
-        self, scope, kind, *, after: str = "", snapshot_cursor=None, limit=256
+        self,
+        scope,
+        kind,
+        *,
+        after: str = "",
+        snapshot_cursor=None,
+        snapshot_epoch=0,
+        limit=256,
     ):
         return self._page(
             scope,
@@ -178,21 +221,41 @@ class EncryptedRecords:
             limit=limit,
             immutable_only=True,
             snapshot_cursor=snapshot_cursor or 0,
+            snapshot_epoch=snapshot_epoch,
         )
 
-    def changes(self, scope, *, after=0, limit=256):
-        return self._page(scope, view="changes", cursor=str(after), limit=limit)
+    def changes(self, scope, *, after=0, snapshot_epoch=0, limit=256):
+        return self._page(
+            scope,
+            view="changes",
+            cursor=str(after),
+            snapshot_epoch=snapshot_epoch,
+            limit=limit,
+        )
 
-    def page(self, scope, *, after=0, limit=128):
-        return self._page(scope, view="changes", cursor=str(after), limit=limit)
+    def page(self, scope, *, after=0, snapshot_epoch=0, limit=128):
+        return self.changes(
+            scope, after=after, snapshot_epoch=snapshot_epoch, limit=limit
+        )
 
-    def history(self, scope, record_id, *, before=0, limit=128):
+    def history(
+        self,
+        scope,
+        record_id,
+        *,
+        before=0,
+        snapshot_epoch=0,
+        snapshot_cursor=0,
+        limit=128,
+    ):
         return self._page(
             scope,
             view="history",
             value_id=record_id,
             cursor=str(before) if before else "",
             limit=limit,
+            snapshot_epoch=snapshot_epoch,
+            snapshot_cursor=snapshot_cursor,
         )
 
     def write(
@@ -200,18 +263,26 @@ class EncryptedRecords:
         scope,
         *,
         records,
+        deletions=(),
+        operation_id=None,
         preconditions: list[app.RecordPrecondition] | None = None,
         object_effects=None,
         deleted_objects=None,
         files=None,
         comments=None,
     ):
+        for draft in (*records, *deletions):
+            if draft["expected_revision"] and not draft.get("incarnation"):
+                raise E2eeError("invalid_record")
+        for condition in preconditions or ():
+            if condition.expected_revision and not condition.incarnation:
+                raise E2eeError("invalid_record")
         snapshot = self.session.read_bundle(
             scope,
             view="by_ids",
             value_ids=list(
                 dict.fromkeys(
-                    [draft["record_id"] for draft in records]
+                    [draft["record_id"] for draft in (*records, *deletions)]
                     + [condition.id for condition in preconditions or []]
                 )
             ),
@@ -220,6 +291,17 @@ class EncryptedRecords:
         if project.project_id != scope:
             raise E2eeError("invalid_response")
         key = project.protection_key
+        current = {item["record_id"]: item for item in self._open_page(scope, snapshot)}
+        for draft in (*records, *deletions):
+            if draft["expected_revision"]:
+                selected = current.get(draft["record_id"])
+                if (
+                    selected is None
+                    or selected["payload_type"] != "content"
+                    or selected["revision"] != draft["expected_revision"]
+                    or draft["incarnation"] != selected["incarnation"]
+                ):
+                    raise E2eeError("revision_conflict")
         create_keys, deliveries = [], []
         policy = None
         if project.key_distribution_revision != project.distribution_revision:
@@ -257,11 +339,11 @@ class EncryptedRecords:
                     id=draft["record_id"],
                     expected_revision=draft["expected_revision"],
                     protection_key=key,
-                    plaintext=b""
-                    if draft.get("deleted", False) and "value" not in draft
-                    else self._payload(draft["value"], draft["kind"]),
+                    plaintext=self._payload(draft["value"], draft["kind"]),
                     kind=draft["kind"],
-                    deleted=draft.get("deleted", False),
+                    incarnation=draft.get("incarnation")
+                    or operation_id
+                    or self.operation_id,
                     immutable=draft.get("immutable", False),
                 )
             )
@@ -270,8 +352,32 @@ class EncryptedRecords:
                     id=draft["record_id"],
                     revision=draft["expected_revision"] + 1,
                     kind=draft["kind"],
-                    deleted=draft.get("deleted", False),
+                    content=app.RecordContentHead(),
+                    incarnation=draft.get("incarnation")
+                    or operation_id
+                    or self.operation_id,
                     immutable=draft.get("immutable", False),
+                    author_device_id=author_device_id,
+                )
+            )
+        removed = []
+        for draft in deletions:
+            removed.append(
+                crypto.RecordDeletion(
+                    id=draft["record_id"],
+                    expected_revision=draft["expected_revision"],
+                    kind=draft["kind"],
+                    incarnation=draft["incarnation"],
+                    committed_at=draft.get("committed_at", int(time.time())),
+                )
+            )
+            heads.append(
+                app.RecordHead(
+                    id=draft["record_id"],
+                    revision=draft["expected_revision"] + 1,
+                    kind=draft["kind"],
+                    incarnation=draft["incarnation"],
+                    deletion=app.RecordDeletionHead(),
                     author_device_id=author_device_id,
                 )
             )
@@ -288,11 +394,14 @@ class EncryptedRecords:
         self.session.prepare(
             scope,
             values=values,
+            deletions=removed,
+            operation_id=operation_id or self.operation_id,
             create_keys=create_keys,
             deliveries=deliveries,
             binding=binding.SerializeToString(),
             bundle=bundle,
         )
+        self.operation_id = str(uuid.uuid4())
         return self.resume_write(scope)
 
     def resume_write_for(self, scope, record_ids):
@@ -314,7 +423,10 @@ class EncryptedRecords:
         )
         self.last_receipt = response.receipt
         try:
-            return [self._record(value) for value in opened.values]
+            return [
+                *(self._record(value) for value in opened.values),
+                *(self._deletion(value) for value in opened.deletions),
+            ]
         except Exception as error:
             return AcceptedCommand(command, {"kind": "committed"}, error)
 
@@ -334,7 +446,7 @@ class EncryptedRecords:
         self.session.initialize_organization(owner_org)
         identifier = project_id or "prj_" + secrets.token_hex(16)
         key = shared.KeyRef(id=identifier, generation=1)
-        directory_id, drafts = initial_directory()
+        directory_id, drafts = initial_directory(self.operation_id)
         drafts.extend(initial_records(identifier))
         project = domain.ProjectInfo()
         project.CopyFrom(value)
@@ -361,6 +473,7 @@ class EncryptedRecords:
                 expected_revision=0,
                 protection_key=key,
                 plaintext=self._payload(d["value"], d["kind"]),
+                incarnation=self.operation_id,
                 kind=d["kind"],
             )
             for d in drafts
@@ -380,6 +493,8 @@ class EncryptedRecords:
                     revision=1,
                     kind=d["kind"],
                     author_device_id=author_device_id,
+                    content=app.RecordContentHead(),
+                    incarnation=self.operation_id,
                 )
                 for d in drafts
             ],
@@ -395,6 +510,7 @@ class EncryptedRecords:
         command = self.session.prepare(
             identifier,
             values=values,
+            operation_id=self.operation_id,
             deliveries=deliveries,
             create_keys=[key],
             binding=binding.SerializeToString(),
@@ -413,4 +529,5 @@ class EncryptedRecords:
             send=lambda: self.session.service.create_crypto_project(request),
             initialize=False,
         )
+        self.operation_id = str(uuid.uuid4())
         return identifier

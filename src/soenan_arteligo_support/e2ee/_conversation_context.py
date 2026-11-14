@@ -69,11 +69,12 @@ def verify_actor(record, field):
         raise E2eeError("invalid_conversation_author")
 
 
-def write(identifier, kind, value, revision=0, immutable=False):
+def write(identifier, kind, value, revision=0, immutable=False, incarnation=""):
     return {
         "record_id": identifier,
         "kind": kind,
         "expected_revision": revision,
+        "incarnation": incarnation,
         "value": value,
         **({"immutable": True} if immutable else {}),
     }
@@ -167,7 +168,7 @@ class ConversationContext:
     ) -> ReadRecord[M] | ReadRecord[Message]:
         if (
             record is None
-            or record["deleted"]
+            or record["payload_type"] != "content"
             or record["kind"] != kind
             or (
                 immutable
@@ -208,13 +209,14 @@ class ConversationContext:
                 if identifier in values
             }
 
-        return OrderedIndex(read, self.mint_id, kind)
+        return OrderedIndex(read, self.mint_id, kind, self.records.operation_id)
 
     def _same_records(self, before):
         current = self._read(record["record_id"] for record in before)
         if any(
             record["record_id"] not in current
             or current[record["record_id"]]["revision"] != record["revision"]
+            or current[record["record_id"]]["incarnation"] != record["incarnation"]
             or current[record["record_id"]]["value"] != record["value"]
             for record in before
         ):

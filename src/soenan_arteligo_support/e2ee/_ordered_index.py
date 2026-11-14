@@ -18,16 +18,22 @@ class OrderedIndex:
         read: Callable,
         mint_id: Callable[[], str],
         kind: str,
+        incarnation: str,
     ):
         self.read, self.mint_id, self.kind = read, mint_id, kind
         self.loaded: dict[str, dict[str, Any]] = {}
         self.writes: dict[str, dict[str, Any]] = {}
+        self.incarnation = incarnation
 
     def node(self, reference: domain.RecordReference) -> dict[str, Any]:
         identifier = reference.id
         staged = self.writes.get(identifier)
         record = (
-            {**staged, "revision": staged["expected_revision"] + 1, "deleted": False}
+            {
+                **staged,
+                "revision": staged["expected_revision"] + 1,
+                "payload_type": "content",
+            }
             if staged
             else self.loaded.get(identifier)
         )
@@ -37,9 +43,10 @@ class OrderedIndex:
                 self.loaded[identifier] = record
         if (
             record is None
-            or record["deleted"]
+            or record["payload_type"] != "content"
             or record["kind"] != self.kind
             or record["revision"] != reference.revision
+            or record["incarnation"] != reference.incarnation
         ):
             raise E2eeError("revision_conflict")
         value = record["value"]
@@ -142,10 +149,13 @@ class OrderedIndex:
             "record_id": identifier,
             "kind": self.kind,
             "expected_revision": previous["revision"] if previous else 0,
+            "incarnation": previous["incarnation"] if previous else self.incarnation,
             "value": value,
         }
         return domain.RecordReference(
-            id=identifier, revision=self.writes[identifier]["expected_revision"] + 1
+            id=identifier,
+            revision=self.writes[identifier]["expected_revision"] + 1,
+            incarnation=self.writes[identifier]["incarnation"],
         )
 
     def store_node(

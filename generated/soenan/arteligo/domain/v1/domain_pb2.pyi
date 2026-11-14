@@ -96,12 +96,14 @@ RECORD_KIND_FIELD_NUMBER: _ClassVar[int]
 record_kind: _descriptor.FieldDescriptor
 
 class RecordReference(_message.Message):
-    __slots__ = ("id", "revision")
+    __slots__ = ("id", "revision", "incarnation")
     ID_FIELD_NUMBER: _ClassVar[int]
     REVISION_FIELD_NUMBER: _ClassVar[int]
+    INCARNATION_FIELD_NUMBER: _ClassVar[int]
     id: str
     revision: int
-    def __init__(self, id: _Optional[str] = ..., revision: _Optional[int] = ...) -> None: ...
+    incarnation: str
+    def __init__(self, id: _Optional[str] = ..., revision: _Optional[int] = ..., incarnation: _Optional[str] = ...) -> None: ...
 
 class MemberActor(_message.Message):
     __slots__ = ("membership_id", "user_id", "display_name")
@@ -546,14 +548,14 @@ class DirectoryOperations(_message.Message):
     def __init__(self, pending: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class DirectoryDeletionWork(_message.Message):
-    __slots__ = ("node", "folder_id", "file_id")
+    __slots__ = ("node", "folder", "file")
     NODE_FIELD_NUMBER: _ClassVar[int]
-    FOLDER_ID_FIELD_NUMBER: _ClassVar[int]
-    FILE_ID_FIELD_NUMBER: _ClassVar[int]
+    FOLDER_FIELD_NUMBER: _ClassVar[int]
+    FILE_FIELD_NUMBER: _ClassVar[int]
     node: RecordReference
-    folder_id: str
-    file_id: str
-    def __init__(self, node: _Optional[_Union[RecordReference, _Mapping]] = ..., folder_id: _Optional[str] = ..., file_id: _Optional[str] = ...) -> None: ...
+    folder: RecordReference
+    file: RecordReference
+    def __init__(self, node: _Optional[_Union[RecordReference, _Mapping]] = ..., folder: _Optional[_Union[RecordReference, _Mapping]] = ..., file: _Optional[_Union[RecordReference, _Mapping]] = ...) -> None: ...
 
 class DirectoryDeletion(_message.Message):
     __slots__ = ("entry_id", "stack", "overflow", "processed")
@@ -576,19 +578,15 @@ class DirectoryDeletionStack(_message.Message):
     def __init__(self, items: _Optional[_Iterable[_Union[DirectoryDeletionWork, _Mapping]]] = ..., next: _Optional[_Union[RecordReference, _Mapping]] = ...) -> None: ...
 
 class ChatHeader(_message.Message):
-    __slots__ = ("sequence", "events", "messages")
+    __slots__ = ("sequence", "messages")
     SEQUENCE_FIELD_NUMBER: _ClassVar[int]
-    EVENTS_FIELD_NUMBER: _ClassVar[int]
     MESSAGES_FIELD_NUMBER: _ClassVar[int]
     sequence: int
-    events: RecordReference
     messages: RecordReference
-    def __init__(self, sequence: _Optional[int] = ..., events: _Optional[_Union[RecordReference, _Mapping]] = ..., messages: _Optional[_Union[RecordReference, _Mapping]] = ...) -> None: ...
+    def __init__(self, sequence: _Optional[int] = ..., messages: _Optional[_Union[RecordReference, _Mapping]] = ...) -> None: ...
 
-class ChatOrigin(_message.Message):
-    __slots__ = ("message_head_id", "terminal_record_id", "author_membership_id", "actor_membership_id", "client_operation_id", "sequence", "references", "body", "committed_at")
-    MESSAGE_HEAD_ID_FIELD_NUMBER: _ClassVar[int]
-    TERMINAL_RECORD_ID_FIELD_NUMBER: _ClassVar[int]
+class ChatMessage(_message.Message):
+    __slots__ = ("author_membership_id", "actor_membership_id", "client_operation_id", "sequence", "references", "body", "committed_at", "sent_sequence", "created_at")
     AUTHOR_MEMBERSHIP_ID_FIELD_NUMBER: _ClassVar[int]
     ACTOR_MEMBERSHIP_ID_FIELD_NUMBER: _ClassVar[int]
     CLIENT_OPERATION_ID_FIELD_NUMBER: _ClassVar[int]
@@ -596,8 +594,8 @@ class ChatOrigin(_message.Message):
     REFERENCES_FIELD_NUMBER: _ClassVar[int]
     BODY_FIELD_NUMBER: _ClassVar[int]
     COMMITTED_AT_FIELD_NUMBER: _ClassVar[int]
-    message_head_id: str
-    terminal_record_id: str
+    SENT_SEQUENCE_FIELD_NUMBER: _ClassVar[int]
+    CREATED_AT_FIELD_NUMBER: _ClassVar[int]
     author_membership_id: str
     actor_membership_id: str
     client_operation_id: str
@@ -605,89 +603,49 @@ class ChatOrigin(_message.Message):
     references: _containers.RepeatedCompositeFieldContainer[ProjectReference]
     body: str
     committed_at: _timestamp_pb2.Timestamp
-    def __init__(self, message_head_id: _Optional[str] = ..., terminal_record_id: _Optional[str] = ..., author_membership_id: _Optional[str] = ..., actor_membership_id: _Optional[str] = ..., client_operation_id: _Optional[str] = ..., sequence: _Optional[int] = ..., references: _Optional[_Iterable[_Union[ProjectReference, _Mapping]]] = ..., body: _Optional[str] = ..., committed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
-
-class ChatEdit(_message.Message):
-    __slots__ = ("body",)
-    BODY_FIELD_NUMBER: _ClassVar[int]
-    body: str
-    def __init__(self, body: _Optional[str] = ...) -> None: ...
+    sent_sequence: int
+    created_at: _timestamp_pb2.Timestamp
+    def __init__(self, author_membership_id: _Optional[str] = ..., actor_membership_id: _Optional[str] = ..., client_operation_id: _Optional[str] = ..., sequence: _Optional[int] = ..., references: _Optional[_Iterable[_Union[ProjectReference, _Mapping]]] = ..., body: _Optional[str] = ..., committed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., sent_sequence: _Optional[int] = ..., created_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
 
 class ChatDeletion(_message.Message):
     __slots__ = ()
     def __init__(self) -> None: ...
 
-class ChatEvent(_message.Message):
-    __slots__ = ("original", "message_head_id", "author_membership_id", "actor_membership_id", "client_operation_id", "sequence", "message_revision", "committed_at", "edited", "deleted")
-    ORIGINAL_FIELD_NUMBER: _ClassVar[int]
-    MESSAGE_HEAD_ID_FIELD_NUMBER: _ClassVar[int]
-    AUTHOR_MEMBERSHIP_ID_FIELD_NUMBER: _ClassVar[int]
-    ACTOR_MEMBERSHIP_ID_FIELD_NUMBER: _ClassVar[int]
-    CLIENT_OPERATION_ID_FIELD_NUMBER: _ClassVar[int]
-    SEQUENCE_FIELD_NUMBER: _ClassVar[int]
-    MESSAGE_REVISION_FIELD_NUMBER: _ClassVar[int]
-    COMMITTED_AT_FIELD_NUMBER: _ClassVar[int]
-    EDITED_FIELD_NUMBER: _ClassVar[int]
-    DELETED_FIELD_NUMBER: _ClassVar[int]
-    original: RecordReference
-    message_head_id: str
-    author_membership_id: str
-    actor_membership_id: str
-    client_operation_id: str
-    sequence: int
-    message_revision: int
-    committed_at: _timestamp_pb2.Timestamp
-    edited: ChatEdit
-    deleted: ChatDeletion
-    def __init__(self, original: _Optional[_Union[RecordReference, _Mapping]] = ..., message_head_id: _Optional[str] = ..., author_membership_id: _Optional[str] = ..., actor_membership_id: _Optional[str] = ..., client_operation_id: _Optional[str] = ..., sequence: _Optional[int] = ..., message_revision: _Optional[int] = ..., committed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., edited: _Optional[_Union[ChatEdit, _Mapping]] = ..., deleted: _Optional[_Union[ChatDeletion, _Mapping]] = ...) -> None: ...
-
-class ChatMessageHead(_message.Message):
-    __slots__ = ("original", "message_revision", "last_event", "events")
-    ORIGINAL_FIELD_NUMBER: _ClassVar[int]
-    MESSAGE_REVISION_FIELD_NUMBER: _ClassVar[int]
-    LAST_EVENT_FIELD_NUMBER: _ClassVar[int]
-    EVENTS_FIELD_NUMBER: _ClassVar[int]
-    original: RecordReference
-    message_revision: int
-    last_event: RecordReference
-    events: RecordReference
-    def __init__(self, original: _Optional[_Union[RecordReference, _Mapping]] = ..., message_revision: _Optional[int] = ..., last_event: _Optional[_Union[RecordReference, _Mapping]] = ..., events: _Optional[_Union[RecordReference, _Mapping]] = ...) -> None: ...
-
-class ChatOperation(_message.Message):
-    __slots__ = ("event_id", "message_id", "type")
-    EVENT_ID_FIELD_NUMBER: _ClassVar[int]
-    MESSAGE_ID_FIELD_NUMBER: _ClassVar[int]
+class ChatReceipt(_message.Message):
+    __slots__ = ("type",)
     TYPE_FIELD_NUMBER: _ClassVar[int]
-    event_id: str
-    message_id: str
     type: ChatEventType
-    def __init__(self, event_id: _Optional[str] = ..., message_id: _Optional[str] = ..., type: _Optional[_Union[ChatEventType, str]] = ...) -> None: ...
-
-class ChatTerminal(_message.Message):
-    __slots__ = ("original", "message_head_id", "delete_event", "message_revision")
-    ORIGINAL_FIELD_NUMBER: _ClassVar[int]
-    MESSAGE_HEAD_ID_FIELD_NUMBER: _ClassVar[int]
-    DELETE_EVENT_FIELD_NUMBER: _ClassVar[int]
-    MESSAGE_REVISION_FIELD_NUMBER: _ClassVar[int]
-    original: RecordReference
-    message_head_id: str
-    delete_event: RecordReference
-    message_revision: int
-    def __init__(self, original: _Optional[_Union[RecordReference, _Mapping]] = ..., message_head_id: _Optional[str] = ..., delete_event: _Optional[_Union[RecordReference, _Mapping]] = ..., message_revision: _Optional[int] = ...) -> None: ...
+    def __init__(self, type: _Optional[_Union[ChatEventType, str]] = ...) -> None: ...
 
 class ChatEventView(_message.Message):
-    __slots__ = ("id", "project_id", "message_id", "origin", "event")
+    __slots__ = ("id", "project_id", "message_id", "revision", "sequence", "incarnation", "author_membership_id", "actor_membership_id", "client_operation_id", "committed_at", "message", "deletion", "receipt")
     ID_FIELD_NUMBER: _ClassVar[int]
     PROJECT_ID_FIELD_NUMBER: _ClassVar[int]
     MESSAGE_ID_FIELD_NUMBER: _ClassVar[int]
-    ORIGIN_FIELD_NUMBER: _ClassVar[int]
-    EVENT_FIELD_NUMBER: _ClassVar[int]
+    REVISION_FIELD_NUMBER: _ClassVar[int]
+    SEQUENCE_FIELD_NUMBER: _ClassVar[int]
+    INCARNATION_FIELD_NUMBER: _ClassVar[int]
+    AUTHOR_MEMBERSHIP_ID_FIELD_NUMBER: _ClassVar[int]
+    ACTOR_MEMBERSHIP_ID_FIELD_NUMBER: _ClassVar[int]
+    CLIENT_OPERATION_ID_FIELD_NUMBER: _ClassVar[int]
+    COMMITTED_AT_FIELD_NUMBER: _ClassVar[int]
+    MESSAGE_FIELD_NUMBER: _ClassVar[int]
+    DELETION_FIELD_NUMBER: _ClassVar[int]
+    RECEIPT_FIELD_NUMBER: _ClassVar[int]
     id: str
     project_id: str
     message_id: str
-    origin: ChatOrigin
-    event: ChatEvent
-    def __init__(self, id: _Optional[str] = ..., project_id: _Optional[str] = ..., message_id: _Optional[str] = ..., origin: _Optional[_Union[ChatOrigin, _Mapping]] = ..., event: _Optional[_Union[ChatEvent, _Mapping]] = ...) -> None: ...
+    revision: int
+    sequence: int
+    incarnation: str
+    author_membership_id: str
+    actor_membership_id: str
+    client_operation_id: str
+    committed_at: _timestamp_pb2.Timestamp
+    message: ChatMessage
+    deletion: ChatDeletion
+    receipt: ChatReceipt
+    def __init__(self, id: _Optional[str] = ..., project_id: _Optional[str] = ..., message_id: _Optional[str] = ..., revision: _Optional[int] = ..., sequence: _Optional[int] = ..., incarnation: _Optional[str] = ..., author_membership_id: _Optional[str] = ..., actor_membership_id: _Optional[str] = ..., client_operation_id: _Optional[str] = ..., committed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., message: _Optional[_Union[ChatMessage, _Mapping]] = ..., deletion: _Optional[_Union[ChatDeletion, _Mapping]] = ..., receipt: _Optional[_Union[ChatReceipt, _Mapping]] = ...) -> None: ...
 
 class ChatMessageView(_message.Message):
     __slots__ = ("latest", "verified_through_sequence")
@@ -1018,35 +976,39 @@ class LoudnessMetadata(_message.Message):
     def __init__(self, state: _Optional[_Union[LoudnessState, str]] = ..., policy_version: _Optional[str] = ..., integrated_loudness_lufs: _Optional[float] = ..., true_peak_dbtp: _Optional[float] = ..., loudness_range_lu: _Optional[float] = ..., target_integrated_loudness_lufs: _Optional[float] = ..., maximum_true_peak_dbtp: _Optional[float] = ..., maximum_boost_db: _Optional[float] = ..., recommended_gain_db: _Optional[float] = ...) -> None: ...
 
 class FileUploadDraft(_message.Message):
-    __slots__ = ("file_id", "metadata", "entry", "preview_profile", "state")
+    __slots__ = ("file_id", "metadata", "entry", "preview_profile", "state", "publish_operation_id")
     FILE_ID_FIELD_NUMBER: _ClassVar[int]
     METADATA_FIELD_NUMBER: _ClassVar[int]
     ENTRY_FIELD_NUMBER: _ClassVar[int]
     PREVIEW_PROFILE_FIELD_NUMBER: _ClassVar[int]
     STATE_FIELD_NUMBER: _ClassVar[int]
+    PUBLISH_OPERATION_ID_FIELD_NUMBER: _ClassVar[int]
     file_id: str
     metadata: FileMetadata
     entry: ProjectEntryIntent
     preview_profile: str
     state: FileUploadState
-    def __init__(self, file_id: _Optional[str] = ..., metadata: _Optional[_Union[FileMetadata, _Mapping]] = ..., entry: _Optional[_Union[ProjectEntryIntent, _Mapping]] = ..., preview_profile: _Optional[str] = ..., state: _Optional[_Union[FileUploadState, str]] = ...) -> None: ...
+    publish_operation_id: str
+    def __init__(self, file_id: _Optional[str] = ..., metadata: _Optional[_Union[FileMetadata, _Mapping]] = ..., entry: _Optional[_Union[ProjectEntryIntent, _Mapping]] = ..., preview_profile: _Optional[str] = ..., state: _Optional[_Union[FileUploadState, str]] = ..., publish_operation_id: _Optional[str] = ...) -> None: ...
 
 class PreviewUploadDraft(_message.Message):
-    __slots__ = ("file_id", "metadata", "expected_file_revision", "expected_preview_id", "source_object_id")
+    __slots__ = ("file_id", "metadata", "expected_file_revision", "expected_preview_id", "source_object_id", "expected_file_incarnation")
     FILE_ID_FIELD_NUMBER: _ClassVar[int]
     METADATA_FIELD_NUMBER: _ClassVar[int]
     EXPECTED_FILE_REVISION_FIELD_NUMBER: _ClassVar[int]
     EXPECTED_PREVIEW_ID_FIELD_NUMBER: _ClassVar[int]
     SOURCE_OBJECT_ID_FIELD_NUMBER: _ClassVar[int]
+    EXPECTED_FILE_INCARNATION_FIELD_NUMBER: _ClassVar[int]
     file_id: str
     metadata: FileMetadata
     expected_file_revision: int
     expected_preview_id: str
     source_object_id: str
-    def __init__(self, file_id: _Optional[str] = ..., metadata: _Optional[_Union[FileMetadata, _Mapping]] = ..., expected_file_revision: _Optional[int] = ..., expected_preview_id: _Optional[str] = ..., source_object_id: _Optional[str] = ...) -> None: ...
+    expected_file_incarnation: str
+    def __init__(self, file_id: _Optional[str] = ..., metadata: _Optional[_Union[FileMetadata, _Mapping]] = ..., expected_file_revision: _Optional[int] = ..., expected_preview_id: _Optional[str] = ..., source_object_id: _Optional[str] = ..., expected_file_incarnation: _Optional[str] = ...) -> None: ...
 
 class RecordContent(_message.Message):
-    __slots__ = ("project", "stage", "comment_origin", "reply_origin", "thread_head", "text_head", "text_revision", "resolution", "directory_folder", "directory_file", "directory_leaf", "index_branch", "index_leaf", "directory_operations", "directory_deletion", "directory_deletion_stack", "chat_header", "chat_origin", "chat_event", "chat_message_head", "chat_operation", "chat_terminal", "schedule", "file_metadata", "file_upload", "preview_upload")
+    __slots__ = ("project", "stage", "comment_origin", "reply_origin", "thread_head", "text_head", "text_revision", "resolution", "directory_folder", "directory_file", "directory_leaf", "index_branch", "index_leaf", "directory_operations", "directory_deletion", "directory_deletion_stack", "chat_header", "schedule", "file_metadata", "file_upload", "preview_upload", "chat_message")
     PROJECT_FIELD_NUMBER: _ClassVar[int]
     STAGE_FIELD_NUMBER: _ClassVar[int]
     COMMENT_ORIGIN_FIELD_NUMBER: _ClassVar[int]
@@ -1064,15 +1026,11 @@ class RecordContent(_message.Message):
     DIRECTORY_DELETION_FIELD_NUMBER: _ClassVar[int]
     DIRECTORY_DELETION_STACK_FIELD_NUMBER: _ClassVar[int]
     CHAT_HEADER_FIELD_NUMBER: _ClassVar[int]
-    CHAT_ORIGIN_FIELD_NUMBER: _ClassVar[int]
-    CHAT_EVENT_FIELD_NUMBER: _ClassVar[int]
-    CHAT_MESSAGE_HEAD_FIELD_NUMBER: _ClassVar[int]
-    CHAT_OPERATION_FIELD_NUMBER: _ClassVar[int]
-    CHAT_TERMINAL_FIELD_NUMBER: _ClassVar[int]
     SCHEDULE_FIELD_NUMBER: _ClassVar[int]
     FILE_METADATA_FIELD_NUMBER: _ClassVar[int]
     FILE_UPLOAD_FIELD_NUMBER: _ClassVar[int]
     PREVIEW_UPLOAD_FIELD_NUMBER: _ClassVar[int]
+    CHAT_MESSAGE_FIELD_NUMBER: _ClassVar[int]
     project: ProjectRootContent
     stage: ProjectStageContent
     comment_origin: CommentOrigin
@@ -1090,13 +1048,9 @@ class RecordContent(_message.Message):
     directory_deletion: DirectoryDeletion
     directory_deletion_stack: DirectoryDeletionStack
     chat_header: ChatHeader
-    chat_origin: ChatOrigin
-    chat_event: ChatEvent
-    chat_message_head: ChatMessageHead
-    chat_operation: ChatOperation
-    chat_terminal: ChatTerminal
     schedule: ProjectScheduleContent
     file_metadata: FileMetadata
     file_upload: FileUploadDraft
     preview_upload: PreviewUploadDraft
-    def __init__(self, project: _Optional[_Union[ProjectRootContent, _Mapping]] = ..., stage: _Optional[_Union[ProjectStageContent, _Mapping]] = ..., comment_origin: _Optional[_Union[CommentOrigin, _Mapping]] = ..., reply_origin: _Optional[_Union[ReplyOrigin, _Mapping]] = ..., thread_head: _Optional[_Union[ThreadHead, _Mapping]] = ..., text_head: _Optional[_Union[TextHead, _Mapping]] = ..., text_revision: _Optional[_Union[TextRevision, _Mapping]] = ..., resolution: _Optional[_Union[ResolutionEvent, _Mapping]] = ..., directory_folder: _Optional[_Union[DirectoryFolder, _Mapping]] = ..., directory_file: _Optional[_Union[DirectoryFileLocator, _Mapping]] = ..., directory_leaf: _Optional[_Union[DirectoryLeaf, _Mapping]] = ..., index_branch: _Optional[_Union[OrderedIndexBranch, _Mapping]] = ..., index_leaf: _Optional[_Union[OrderedIndexLeaf, _Mapping]] = ..., directory_operations: _Optional[_Union[DirectoryOperations, _Mapping]] = ..., directory_deletion: _Optional[_Union[DirectoryDeletion, _Mapping]] = ..., directory_deletion_stack: _Optional[_Union[DirectoryDeletionStack, _Mapping]] = ..., chat_header: _Optional[_Union[ChatHeader, _Mapping]] = ..., chat_origin: _Optional[_Union[ChatOrigin, _Mapping]] = ..., chat_event: _Optional[_Union[ChatEvent, _Mapping]] = ..., chat_message_head: _Optional[_Union[ChatMessageHead, _Mapping]] = ..., chat_operation: _Optional[_Union[ChatOperation, _Mapping]] = ..., chat_terminal: _Optional[_Union[ChatTerminal, _Mapping]] = ..., schedule: _Optional[_Union[ProjectScheduleContent, _Mapping]] = ..., file_metadata: _Optional[_Union[FileMetadata, _Mapping]] = ..., file_upload: _Optional[_Union[FileUploadDraft, _Mapping]] = ..., preview_upload: _Optional[_Union[PreviewUploadDraft, _Mapping]] = ...) -> None: ...
+    chat_message: ChatMessage
+    def __init__(self, project: _Optional[_Union[ProjectRootContent, _Mapping]] = ..., stage: _Optional[_Union[ProjectStageContent, _Mapping]] = ..., comment_origin: _Optional[_Union[CommentOrigin, _Mapping]] = ..., reply_origin: _Optional[_Union[ReplyOrigin, _Mapping]] = ..., thread_head: _Optional[_Union[ThreadHead, _Mapping]] = ..., text_head: _Optional[_Union[TextHead, _Mapping]] = ..., text_revision: _Optional[_Union[TextRevision, _Mapping]] = ..., resolution: _Optional[_Union[ResolutionEvent, _Mapping]] = ..., directory_folder: _Optional[_Union[DirectoryFolder, _Mapping]] = ..., directory_file: _Optional[_Union[DirectoryFileLocator, _Mapping]] = ..., directory_leaf: _Optional[_Union[DirectoryLeaf, _Mapping]] = ..., index_branch: _Optional[_Union[OrderedIndexBranch, _Mapping]] = ..., index_leaf: _Optional[_Union[OrderedIndexLeaf, _Mapping]] = ..., directory_operations: _Optional[_Union[DirectoryOperations, _Mapping]] = ..., directory_deletion: _Optional[_Union[DirectoryDeletion, _Mapping]] = ..., directory_deletion_stack: _Optional[_Union[DirectoryDeletionStack, _Mapping]] = ..., chat_header: _Optional[_Union[ChatHeader, _Mapping]] = ..., schedule: _Optional[_Union[ProjectScheduleContent, _Mapping]] = ..., file_metadata: _Optional[_Union[FileMetadata, _Mapping]] = ..., file_upload: _Optional[_Union[FileUploadDraft, _Mapping]] = ..., preview_upload: _Optional[_Union[PreviewUploadDraft, _Mapping]] = ..., chat_message: _Optional[_Union[ChatMessage, _Mapping]] = ...) -> None: ...

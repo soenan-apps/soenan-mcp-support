@@ -158,6 +158,7 @@ def _publish_source(records, scope, pending, draft):
         return resumed
     if resumed is not None:
         return result
+    records.operation_id = draft.publish_operation_id
     description = metadata.description
     values = domain.ProjectEntryValues(
         name=draft.entry.name,
@@ -191,14 +192,17 @@ def _publish_source(records, scope, pending, draft):
                 "expected_revision": 0,
                 "value": metadata,
             },
+            *directory_writes,
+        ],
+        deletions=[
             {
                 "record_id": pending_id,
                 "kind": "file_upload",
                 "expected_revision": pending["revision"],
-                "deleted": True,
-            },
-            *directory_writes,
+                "incarnation": pending["incarnation"],
+            }
         ],
+        operation_id=draft.publish_operation_id,
         preconditions=preconditions,
         files=[
             app.FileRevisionBinding(
@@ -206,6 +210,7 @@ def _publish_source(records, scope, pending, draft):
                 revision=1,
                 metadata_value_id=file_id,
                 metadata_revision=1,
+                metadata_incarnation=records.operation_id,
                 original_object_id=identifier,
             )
         ],
@@ -218,6 +223,7 @@ def _publish_source(records, scope, pending, draft):
                 locator=metadata.original.descriptor,
                 draft_id=pending_id,
                 expected_draft_revision=pending["revision"],
+                draft_incarnation=pending["incarnation"],
             )
         ],
     )
@@ -278,7 +284,8 @@ def upload_file(
                 (
                     item
                     for item in resumed
-                    if item["kind"] == "file_metadata" and not item["deleted"]
+                    if item["kind"] == "file_metadata"
+                    and item["payload_type"] == "content"
                 ),
                 None,
             )
@@ -293,17 +300,22 @@ def upload_file(
             if upload_id
             else None
         )
-        if pending is not None and pending["deleted"]:
+        if pending is not None and pending["payload_type"] == "deletion":
             pending = None
         if upload_id and pending is None:
             cursor = None
+            snapshot_epoch = 0
             while True:
                 page = records.current(
-                    project_id, kind="file_metadata", after_record_id=cursor
+                    project_id,
+                    kind="file_metadata",
+                    after_record_id=cursor,
+                    snapshot_epoch=snapshot_epoch,
                 )
+                snapshot_epoch = page["snapshot_epoch"]
                 for record in page["records"]:
                     if (
-                        not record["deleted"]
+                        record["payload_type"] == "content"
                         and record["value"].original.descriptor.object_id == identifier
                     ):
                         return {
@@ -323,6 +335,7 @@ def upload_file(
                 stream = sources.enter_context(open_source())
                 size = os.fstat(stream.fileno()).st_size
                 file_id = "fil_" + secrets.token_hex(16)
+                publish_operation_id = str(uuid.uuid4())
                 now = Timestamp()
                 now.GetCurrentTime()
                 media_type = (
@@ -330,7 +343,10 @@ def upload_file(
                     or "application/octet-stream"
                 )
                 binding = app.FileRevisionBinding(
-                    file_id=file_id, original_object_id=identifier, metadata_revision=1
+                    file_id=file_id,
+                    original_object_id=identifier,
+                    metadata_revision=1,
+                    metadata_incarnation=publish_operation_id,
                 ).SerializeToString()
                 plan = build_encryption_plan(
                     stream,
@@ -358,6 +374,7 @@ def upload_file(
                     metadata=metadata,
                     entry=entry,
                     state=domain.FILE_UPLOAD_STATE_UPLOADING,
+                    publish_operation_id=publish_operation_id,
                 )
                 committed = records.write(
                     project_id,
@@ -378,6 +395,7 @@ def upload_file(
                             locator=plan.locator.descriptor,
                             draft_id=pending_id,
                             expected_draft_revision=1,
+                            draft_incarnation=records.operation_id,
                         )
                     ],
                 )
@@ -501,7 +519,11 @@ def _download_to_stream(
 ) -> int:
     session.require_approved()
     record = EncryptedRecords(session).read(project_id, [file_id]).get(file_id)
-    if record is None or record["deleted"] or record["kind"] != "file_metadata":
+    if (
+        record is None
+        or record["payload_type"] != "content"
+        or record["kind"] != "file_metadata"
+    ):
         raise E2eeError("not_found")
     metadata = cast(domain.FileMetadata, record["value"])
     plan = EncryptionPlan(metadata.original, session.core)

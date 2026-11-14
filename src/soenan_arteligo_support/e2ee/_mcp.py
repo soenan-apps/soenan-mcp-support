@@ -310,23 +310,35 @@ def _broker_operations(
 
     @server.tool()
     def arteligo_read_records(
-        project_id: str, after: int = 0, limit: int = 128
+        project_id: str,
+        after: int = 0,
+        limit: int = 128,
+        snapshot_epoch: int = 0,
     ) -> dict[str, Any]:
         """Read one authenticated, decrypted change page; pass its cursor for the next page."""
         return run(
             lambda session: EncryptedRecords(session).page(
-                project_id, after=after, limit=limit
+                project_id,
+                after=after,
+                limit=limit,
+                snapshot_epoch=snapshot_epoch,
             )
         )
 
     @server.tool()
     def arteligo_read_changes(
-        project_id: str, after: int = 0, limit: int = 256
+        project_id: str,
+        after: int = 0,
+        limit: int = 256,
+        snapshot_epoch: int = 0,
     ) -> dict[str, Any]:
         """Read bounded invalidations; fetch selected records to verify their current content."""
         return run(
             lambda session: EncryptedRecords(session).changes(
-                project_id, after=after, limit=limit
+                project_id,
+                after=after,
+                limit=limit,
+                snapshot_epoch=snapshot_epoch,
             )
         )
 
@@ -336,11 +348,16 @@ def _broker_operations(
         kind: str | None = None,
         after_record_id: str | None = None,
         limit: int = 256,
+        snapshot_epoch: int = 0,
     ) -> dict[str, Any]:
         """Read one bounded current-record page; filtering names and paths stays on this computer."""
         return run(
             lambda session: EncryptedRecords(session).current(
-                project_id, kind=kind, after_record_id=after_record_id, limit=limit
+                project_id,
+                kind=kind,
+                after_record_id=after_record_id,
+                limit=limit,
+                snapshot_epoch=snapshot_epoch,
             )
         )
 
@@ -384,6 +401,7 @@ def _broker_operations(
         ],
         expected_revision: int,
         value: dict[str, Any],
+        incarnation: str = "",
     ) -> list[dict[str, Any]]:
         """Encrypt a generated RecordContent JSON value; retain its single body variant."""
         if kind in {"chat", "comment"}:
@@ -400,6 +418,7 @@ def _broker_operations(
                         "record_id": record_id,
                         "kind": kind,
                         "expected_revision": expected_revision,
+                        "incarnation": incarnation,
                         "value": content,
                     }
                 ],
@@ -412,33 +431,49 @@ def _broker_operations(
         record_id: str,
         kind: Literal["project", "directory", "stage", "schedule"],
         expected_revision: int,
+        incarnation: str,
     ) -> list[dict[str, Any]]:
         """Sign a metadata-only deletion marker; no document is encrypted or retained in the marker."""
         return run(
             lambda session: EncryptedRecords(session).write(
                 project_id,
-                records=[
+                records=[],
+                deletions=[
                     {
                         "record_id": record_id,
                         "kind": kind,
                         "expected_revision": expected_revision,
-                        "deleted": True,
+                        "incarnation": incarnation,
                     }
                 ],
             )
         )
 
     def delete_file_content(
-        session, project_id, file_id, expected_revision, *, preview_only
+        session,
+        project_id,
+        file_id,
+        expected_revision,
+        expected_incarnation,
+        *,
+        preview_only,
     ):
         records = EncryptedRecords(session)
         current = records.read(project_id, [file_id]).get(file_id)
-        if current is None or current["deleted"] or current["kind"] != "file_metadata":
+        if (
+            current is None
+            or current["payload_type"] != "content"
+            or current["kind"] != "file_metadata"
+        ):
             raise E2eeError("file_not_found")
-        if current["revision"] != expected_revision:
+        if (
+            current["revision"] != expected_revision
+            or current["incarnation"] != expected_incarnation
+        ):
             raise E2eeError("revision_conflict")
         metadata = cast(domain.FileMetadata, current["value"])
         deleted = []
+        files = []
         if metadata.HasField("preview"):
             deleted.append(metadata.preview.object.descriptor.object_id)
         if preview_only:
@@ -449,14 +484,18 @@ def _broker_operations(
                 "record_id": file_id,
                 "kind": "file_metadata",
                 "expected_revision": expected_revision,
+                "incarnation": current["incarnation"],
                 "value": metadata,
             }
-            binding = app.FileRevisionBinding(
-                file_id=file_id,
-                revision=expected_revision + 1,
-                metadata_value_id=file_id,
-                metadata_revision=expected_revision + 1,
-                original_object_id=metadata.original.descriptor.object_id,
+            files.append(
+                app.FileRevisionBinding(
+                    file_id=file_id,
+                    revision=expected_revision + 1,
+                    metadata_value_id=file_id,
+                    metadata_incarnation=current["incarnation"],
+                    metadata_revision=expected_revision + 1,
+                    original_object_id=metadata.original.descriptor.object_id,
+                )
             )
         else:
             deleted.append(metadata.original.descriptor.object_id)
@@ -464,37 +503,51 @@ def _broker_operations(
                 "record_id": file_id,
                 "kind": "file_metadata",
                 "expected_revision": expected_revision,
-                "deleted": True,
+                "incarnation": current["incarnation"],
             }
-            binding = app.FileRevisionBinding(
-                file_id=file_id,
-                revision=expected_revision + 1,
-                metadata_value_id=file_id,
-                metadata_revision=expected_revision + 1,
-            )
         return records.write(
-            project_id, records=[draft], deleted_objects=deleted, files=[binding]
+            project_id,
+            records=[draft] if preview_only else [],
+            deletions=[] if preview_only else [draft],
+            deleted_objects=deleted,
+            files=files,
         )
 
     @server.tool()
     def arteligo_delete_file(
-        project_id: str, file_id: str, expected_revision: int
+        project_id: str,
+        file_id: str,
+        expected_revision: int,
+        expected_incarnation: str,
     ) -> list[dict[str, Any]]:
         """Delete the current file metadata and its original and preview objects atomically."""
         return run(
             lambda session: delete_file_content(
-                session, project_id, file_id, expected_revision, preview_only=False
+                session,
+                project_id,
+                file_id,
+                expected_revision,
+                expected_incarnation,
+                preview_only=False,
             )
         )
 
     @server.tool()
     def arteligo_delete_preview(
-        project_id: str, file_id: str, expected_revision: int
+        project_id: str,
+        file_id: str,
+        expected_revision: int,
+        expected_incarnation: str,
     ) -> list[dict[str, Any]]:
         """Remove the current preview and its object without deleting the original file."""
         return run(
             lambda session: delete_file_content(
-                session, project_id, file_id, expected_revision, preview_only=True
+                session,
+                project_id,
+                file_id,
+                expected_revision,
+                expected_incarnation,
+                preview_only=True,
             )
         )
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import threading
+import time
 import uuid
 from collections.abc import Callable, Sequence
 from contextlib import contextmanager
@@ -193,6 +194,7 @@ class DeviceSession:
         project_id,
         *,
         values=(),
+        deletions=(),
         deliveries=(),
         create_keys=(),
         binding=b"",
@@ -202,7 +204,9 @@ class DeviceSession:
         self.require_approved()
         if bundle is None:
             bundle = self.read_bundle(
-                project_id, view="by_ids", value_ids=[value.id for value in values]
+                project_id,
+                view="by_ids",
+                value_ids=[value.id for value in (*values, *deletions)],
             ).bundle
         self.identity.observe_receiver_generation(bundle)
         with self._document() as document:
@@ -213,6 +217,8 @@ class DeviceSession:
                 bundle=bundle,
                 operation_id=operation_id or str(uuid.uuid4()),
                 values=values,
+                deletions=deletions,
+                accept_until=int(time.time()) + 30 * 24 * 60 * 60,
                 deliveries=deliveries,
                 create_protection_keys=create_keys,
                 namespace_id=project_id,

@@ -61,7 +61,7 @@ def _fits(
     return len(items) <= 64
 
 
-def initial_directory() -> tuple[str, list[dict[str, Any]]]:
+def initial_directory(incarnation: str) -> tuple[str, list[dict[str, Any]]]:
     header, leaf = _id(), _id()
     return header, [
         {
@@ -75,7 +75,9 @@ def initial_directory() -> tuple[str, list[dict[str, Any]]]:
             "kind": "directory",
             "expected_revision": 0,
             "value": domain.DirectoryFolder(
-                root=domain.RecordReference(id=leaf, revision=1)
+                root=domain.RecordReference(
+                    id=leaf, revision=1, incarnation=incarnation
+                )
             ),
         },
     ]
@@ -94,13 +96,17 @@ class EncryptedDirectory:
     ) -> dict[str, Any] | ReadRecord[Message]:
         staged = self._writes.get(identifier)
         record = (
-            {**staged, "revision": staged["expected_revision"] + 1, "deleted": False}
+            {
+                **staged,
+                "revision": staged["expected_revision"] + 1,
+                "payload_type": "content",
+            }
             if staged is not None
             else self._loaded.get(identifier)
         )
         if record is None:
             record = self.records.read(self.scope, [identifier]).get(identifier)
-            if record is None or record["deleted"]:
+            if record is None or record["payload_type"] != "content":
                 raise E2eeError("not_found")
             self._loaded[identifier] = record
         if revision is not None and record["revision"] != revision:
@@ -126,6 +132,8 @@ class EncryptedDirectory:
         self, reference: domain.RecordReference
     ) -> dict[str, Any] | ReadRecord[domain.DirectoryLeaf | domain.OrderedIndexBranch]:
         record = self._load(reference.id, reference.revision)
+        if record["incarnation"] != reference.incarnation:
+            raise E2eeError("revision_conflict")
         value = record["value"]
         if record["kind"] != "directory" or not isinstance(
             value, (domain.DirectoryLeaf, domain.OrderedIndexBranch)
@@ -193,6 +201,7 @@ class EncryptedDirectory:
         if cursor is not None and (
             cursor.get("folder_id") != folder["record_id"]
             or cursor.get("revision") != folder["revision"]
+            or cursor.get("incarnation") != folder["incarnation"]
         ):
             raise E2eeError("revision_conflict")
         after = _key(cursor["last"]) if cursor is not None else None
@@ -206,8 +215,9 @@ class EncryptedDirectory:
         )
         if (
             latest is None
-            or latest["deleted"]
+            or latest["payload_type"] != "content"
             or latest["revision"] != folder["revision"]
+            or latest["incarnation"] != folder["incarnation"]
         ):
             raise E2eeError("revision_conflict")
         more = len(entries) > limit
@@ -216,6 +226,7 @@ class EncryptedDirectory:
             {
                 "folder_id": folder["record_id"],
                 "revision": folder["revision"],
+                "incarnation": folder["incarnation"],
                 "last": domain.OrderedEntryKey(
                     name=_entry_values(entries[-1]).name, id=entries[-1].id
                 ),
@@ -230,6 +241,7 @@ class EncryptedDirectory:
             "has_more": more,
             "folder_id": folder["record_id"],
             "revision": folder["revision"],
+            "incarnation": folder["incarnation"],
         }
 
     def _save(
@@ -245,9 +257,16 @@ class EncryptedDirectory:
             "record_id": identifier,
             "kind": "directory",
             "expected_revision": revision,
+            "incarnation": previous["incarnation"]
+            if previous
+            else self.records.operation_id,
             "value": value,
         }
-        return domain.RecordReference(id=identifier, revision=revision + 1)
+        return domain.RecordReference(
+            id=identifier,
+            revision=revision + 1,
+            incarnation=self._writes[identifier]["incarnation"],
+        )
 
     def _store_node(
         self, identifier: str, node: domain.DirectoryLeaf | domain.OrderedIndexBranch
@@ -339,6 +358,7 @@ class EncryptedDirectory:
                     id=identifier,
                     expected_revision=ancestor["revision"],
                     require_live=True,
+                    incarnation=ancestor["incarnation"],
                 )
             )
             if not ancestor["value"].HasField("parent"):
@@ -369,11 +389,14 @@ class EncryptedDirectory:
         self,
         entry: domain.ProjectEntry,
         *,
+        operation_id: str,
         additional_records: list[dict[str, Any]],
     ) -> list[dict[str, Any]] | AcceptedCommand:
+        self.records.operation_id = operation_id
         writes, preconditions = self.insertion([entry])
         return self.records.write(
             self.scope,
             records=additional_records + writes,
             preconditions=preconditions,
+            operation_id=operation_id,
         )

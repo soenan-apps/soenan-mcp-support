@@ -193,6 +193,7 @@ class GeneratedAPI:
                         "rekey_required",
                         "device_revoked",
                         "project_access_denied",
+                        "snapshot_expired",
                         "content_format_update_required",
                         "owner_rotation_required",
                         "owner_handoff_fenced",

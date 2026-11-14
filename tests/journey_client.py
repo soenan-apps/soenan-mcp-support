@@ -126,8 +126,10 @@ def sdk(request, session, records):
         if method == "prepare":
             key = session.project(project).protection_key
             identifier = arguments["record_id"]
+            operation_id = arguments["operation_id"]
             command = session.prepare(
                 project,
+                operation_id=operation_id,
                 values=[
                     crypto.ValueMutation(
                         id=identifier,
@@ -138,6 +140,7 @@ def sdk(request, session, records):
                             "stage",
                         ),
                         kind="stage",
+                        incarnation=operation_id,
                     )
                 ],
                 binding=app.RecordMutationBinding(
@@ -146,6 +149,8 @@ def sdk(request, session, records):
                             id=identifier,
                             revision=1,
                             kind="stage",
+                            incarnation=operation_id,
+                            content=app.RecordContentHead(),
                             author_device_id=session.device_id,
                         )
                     ]

@@ -11,7 +11,7 @@ from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 DESCRIPTOR: _descriptor.FileDescriptor
 
 class ReadCryptoRequest(_message.Message):
-    __slots__ = ("value_ids", "protection_keys", "project_id", "device_id", "kind", "cursor", "limit", "view", "value_id", "live_only", "id_prefix", "snapshot_cursor", "immutable_only", "comment_cursor", "history_cursor", "comment_limit", "history_limit", "comment_anchor_id")
+    __slots__ = ("value_ids", "protection_keys", "project_id", "device_id", "kind", "cursor", "limit", "view", "value_id", "live_only", "id_prefix", "snapshot_cursor", "immutable_only", "comment_cursor", "history_cursor", "comment_limit", "history_limit", "comment_anchor_id", "snapshot_epoch")
     VALUE_IDS_FIELD_NUMBER: _ClassVar[int]
     PROTECTION_KEYS_FIELD_NUMBER: _ClassVar[int]
     PROJECT_ID_FIELD_NUMBER: _ClassVar[int]
@@ -30,6 +30,7 @@ class ReadCryptoRequest(_message.Message):
     COMMENT_LIMIT_FIELD_NUMBER: _ClassVar[int]
     HISTORY_LIMIT_FIELD_NUMBER: _ClassVar[int]
     COMMENT_ANCHOR_ID_FIELD_NUMBER: _ClassVar[int]
+    SNAPSHOT_EPOCH_FIELD_NUMBER: _ClassVar[int]
     value_ids: _containers.RepeatedScalarFieldContainer[str]
     protection_keys: _containers.RepeatedCompositeFieldContainer[_crypto_pb2_1.KeyRef]
     project_id: str
@@ -48,7 +49,8 @@ class ReadCryptoRequest(_message.Message):
     comment_limit: int
     history_limit: int
     comment_anchor_id: str
-    def __init__(self, value_ids: _Optional[_Iterable[str]] = ..., protection_keys: _Optional[_Iterable[_Union[_crypto_pb2_1.KeyRef, _Mapping]]] = ..., project_id: _Optional[str] = ..., device_id: _Optional[str] = ..., kind: _Optional[str] = ..., cursor: _Optional[str] = ..., limit: _Optional[int] = ..., view: _Optional[str] = ..., value_id: _Optional[str] = ..., live_only: bool = ..., id_prefix: _Optional[str] = ..., snapshot_cursor: _Optional[int] = ..., immutable_only: bool = ..., comment_cursor: _Optional[_Union[_domain_pb2.CommentCursor, _Mapping]] = ..., history_cursor: _Optional[str] = ..., comment_limit: _Optional[int] = ..., history_limit: _Optional[int] = ..., comment_anchor_id: _Optional[str] = ...) -> None: ...
+    snapshot_epoch: int
+    def __init__(self, value_ids: _Optional[_Iterable[str]] = ..., protection_keys: _Optional[_Iterable[_Union[_crypto_pb2_1.KeyRef, _Mapping]]] = ..., project_id: _Optional[str] = ..., device_id: _Optional[str] = ..., kind: _Optional[str] = ..., cursor: _Optional[str] = ..., limit: _Optional[int] = ..., view: _Optional[str] = ..., value_id: _Optional[str] = ..., live_only: bool = ..., id_prefix: _Optional[str] = ..., snapshot_cursor: _Optional[int] = ..., immutable_only: bool = ..., comment_cursor: _Optional[_Union[_domain_pb2.CommentCursor, _Mapping]] = ..., history_cursor: _Optional[str] = ..., comment_limit: _Optional[int] = ..., history_limit: _Optional[int] = ..., comment_anchor_id: _Optional[str] = ..., snapshot_epoch: _Optional[int] = ...) -> None: ...
 
 class CommitCryptoRequest(_message.Message):
     __slots__ = ("command", "project_id", "signer_public_key")
@@ -68,26 +70,38 @@ class CommitCryptoResponse(_message.Message):
     bundle: _crypto_pb2.CryptoReadBundle
     def __init__(self, receipt: _Optional[_Union[_crypto_pb2.CommitReceiptBody, _Mapping]] = ..., bundle: _Optional[_Union[_crypto_pb2.CryptoReadBundle, _Mapping]] = ...) -> None: ...
 
+class RecordContentHead(_message.Message):
+    __slots__ = ()
+    def __init__(self) -> None: ...
+
+class RecordDeletionHead(_message.Message):
+    __slots__ = ()
+    def __init__(self) -> None: ...
+
 class RecordHead(_message.Message):
-    __slots__ = ("id", "revision", "kind", "deleted", "immutable", "author_device_id", "cursor")
+    __slots__ = ("id", "revision", "kind", "immutable", "author_device_id", "cursor", "content", "deletion", "incarnation")
     ID_FIELD_NUMBER: _ClassVar[int]
     REVISION_FIELD_NUMBER: _ClassVar[int]
     KIND_FIELD_NUMBER: _ClassVar[int]
-    DELETED_FIELD_NUMBER: _ClassVar[int]
     IMMUTABLE_FIELD_NUMBER: _ClassVar[int]
     AUTHOR_DEVICE_ID_FIELD_NUMBER: _ClassVar[int]
     CURSOR_FIELD_NUMBER: _ClassVar[int]
+    CONTENT_FIELD_NUMBER: _ClassVar[int]
+    DELETION_FIELD_NUMBER: _ClassVar[int]
+    INCARNATION_FIELD_NUMBER: _ClassVar[int]
     id: str
     revision: int
     kind: str
-    deleted: bool
     immutable: bool
     author_device_id: str
     cursor: str
-    def __init__(self, id: _Optional[str] = ..., revision: _Optional[int] = ..., kind: _Optional[str] = ..., deleted: bool = ..., immutable: bool = ..., author_device_id: _Optional[str] = ..., cursor: _Optional[str] = ...) -> None: ...
+    content: RecordContentHead
+    deletion: RecordDeletionHead
+    incarnation: str
+    def __init__(self, id: _Optional[str] = ..., revision: _Optional[int] = ..., kind: _Optional[str] = ..., immutable: bool = ..., author_device_id: _Optional[str] = ..., cursor: _Optional[str] = ..., content: _Optional[_Union[RecordContentHead, _Mapping]] = ..., deletion: _Optional[_Union[RecordDeletionHead, _Mapping]] = ..., incarnation: _Optional[str] = ...) -> None: ...
 
 class ReadCryptoResponse(_message.Message):
-    __slots__ = ("bundle", "heads", "cursor", "has_more", "configuration", "snapshot_cursor", "comments", "latest_comment_sequence", "next_comment_cursor", "next_history_cursor", "has_more_comments", "has_more_history", "project")
+    __slots__ = ("bundle", "heads", "cursor", "has_more", "configuration", "snapshot_cursor", "comments", "latest_comment_sequence", "next_comment_cursor", "next_history_cursor", "has_more_comments", "has_more_history", "project", "snapshot_epoch", "retention_floor")
     BUNDLE_FIELD_NUMBER: _ClassVar[int]
     HEADS_FIELD_NUMBER: _ClassVar[int]
     CURSOR_FIELD_NUMBER: _ClassVar[int]
@@ -101,6 +115,8 @@ class ReadCryptoResponse(_message.Message):
     HAS_MORE_COMMENTS_FIELD_NUMBER: _ClassVar[int]
     HAS_MORE_HISTORY_FIELD_NUMBER: _ClassVar[int]
     PROJECT_FIELD_NUMBER: _ClassVar[int]
+    SNAPSHOT_EPOCH_FIELD_NUMBER: _ClassVar[int]
+    RETENTION_FLOOR_FIELD_NUMBER: _ClassVar[int]
     bundle: _crypto_pb2.CryptoReadBundle
     heads: _containers.RepeatedCompositeFieldContainer[RecordHead]
     cursor: str
@@ -114,7 +130,9 @@ class ReadCryptoResponse(_message.Message):
     has_more_comments: bool
     has_more_history: bool
     project: ProjectCatalogEntry
-    def __init__(self, bundle: _Optional[_Union[_crypto_pb2.CryptoReadBundle, _Mapping]] = ..., heads: _Optional[_Iterable[_Union[RecordHead, _Mapping]]] = ..., cursor: _Optional[str] = ..., has_more: bool = ..., configuration: _Optional[_Union[CryptoConfiguration, _Mapping]] = ..., snapshot_cursor: _Optional[int] = ..., comments: _Optional[_Iterable[_Union[CommentViewItem, _Mapping]]] = ..., latest_comment_sequence: _Optional[int] = ..., next_comment_cursor: _Optional[_Union[_domain_pb2.CommentCursor, _Mapping]] = ..., next_history_cursor: _Optional[str] = ..., has_more_comments: bool = ..., has_more_history: bool = ..., project: _Optional[_Union[ProjectCatalogEntry, _Mapping]] = ...) -> None: ...
+    snapshot_epoch: int
+    retention_floor: int
+    def __init__(self, bundle: _Optional[_Union[_crypto_pb2.CryptoReadBundle, _Mapping]] = ..., heads: _Optional[_Iterable[_Union[RecordHead, _Mapping]]] = ..., cursor: _Optional[str] = ..., has_more: bool = ..., configuration: _Optional[_Union[CryptoConfiguration, _Mapping]] = ..., snapshot_cursor: _Optional[int] = ..., comments: _Optional[_Iterable[_Union[CommentViewItem, _Mapping]]] = ..., latest_comment_sequence: _Optional[int] = ..., next_comment_cursor: _Optional[_Union[_domain_pb2.CommentCursor, _Mapping]] = ..., next_history_cursor: _Optional[str] = ..., has_more_comments: bool = ..., has_more_history: bool = ..., project: _Optional[_Union[ProjectCatalogEntry, _Mapping]] = ..., snapshot_epoch: _Optional[int] = ..., retention_floor: _Optional[int] = ...) -> None: ...
 
 class ContentChangeHint(_message.Message):
     __slots__ = ("heads",)
@@ -241,7 +259,7 @@ class MembershipBinding(_message.Message):
     def __init__(self, subject: _Optional[str] = ..., expected_revision: _Optional[int] = ..., role: _Optional[str] = ..., revoked: bool = ..., owner_candidate: bool = ...) -> None: ...
 
 class FileRevisionBinding(_message.Message):
-    __slots__ = ("file_id", "revision", "metadata_value_id", "metadata_revision", "original_object_id", "preview_object_id", "thread_id")
+    __slots__ = ("file_id", "revision", "metadata_value_id", "metadata_revision", "original_object_id", "preview_object_id", "thread_id", "metadata_incarnation")
     FILE_ID_FIELD_NUMBER: _ClassVar[int]
     REVISION_FIELD_NUMBER: _ClassVar[int]
     METADATA_VALUE_ID_FIELD_NUMBER: _ClassVar[int]
@@ -249,6 +267,7 @@ class FileRevisionBinding(_message.Message):
     ORIGINAL_OBJECT_ID_FIELD_NUMBER: _ClassVar[int]
     PREVIEW_OBJECT_ID_FIELD_NUMBER: _ClassVar[int]
     THREAD_ID_FIELD_NUMBER: _ClassVar[int]
+    METADATA_INCARNATION_FIELD_NUMBER: _ClassVar[int]
     file_id: str
     revision: int
     metadata_value_id: str
@@ -256,7 +275,8 @@ class FileRevisionBinding(_message.Message):
     original_object_id: str
     preview_object_id: str
     thread_id: str
-    def __init__(self, file_id: _Optional[str] = ..., revision: _Optional[int] = ..., metadata_value_id: _Optional[str] = ..., metadata_revision: _Optional[int] = ..., original_object_id: _Optional[str] = ..., preview_object_id: _Optional[str] = ..., thread_id: _Optional[str] = ...) -> None: ...
+    metadata_incarnation: str
+    def __init__(self, file_id: _Optional[str] = ..., revision: _Optional[int] = ..., metadata_value_id: _Optional[str] = ..., metadata_revision: _Optional[int] = ..., original_object_id: _Optional[str] = ..., preview_object_id: _Optional[str] = ..., thread_id: _Optional[str] = ..., metadata_incarnation: _Optional[str] = ...) -> None: ...
 
 class CommentRevisionBinding(_message.Message):
     __slots__ = ("thread_id", "comment_id", "revision", "value_id", "value_revision", "origin", "thread_head", "body_head", "resolution", "text_revisions", "anchor_id", "sequence", "reply_sequence", "operation", "parent_comment_id")
@@ -393,17 +413,19 @@ class GroupReceiverRequest(_message.Message):
     def __init__(self, group_id: _Optional[str] = ..., subject: _Optional[str] = ...) -> None: ...
 
 class RecordPrecondition(_message.Message):
-    __slots__ = ("id", "expected_revision", "require_live")
+    __slots__ = ("id", "expected_revision", "require_live", "incarnation")
     ID_FIELD_NUMBER: _ClassVar[int]
     EXPECTED_REVISION_FIELD_NUMBER: _ClassVar[int]
     REQUIRE_LIVE_FIELD_NUMBER: _ClassVar[int]
+    INCARNATION_FIELD_NUMBER: _ClassVar[int]
     id: str
     expected_revision: int
     require_live: bool
-    def __init__(self, id: _Optional[str] = ..., expected_revision: _Optional[int] = ..., require_live: bool = ...) -> None: ...
+    incarnation: str
+    def __init__(self, id: _Optional[str] = ..., expected_revision: _Optional[int] = ..., require_live: bool = ..., incarnation: _Optional[str] = ...) -> None: ...
 
 class ObjectEffect(_message.Message):
-    __slots__ = ("action", "object_id", "file_id", "artifact_kind", "locator", "draft_id", "expected_draft_revision", "expected_file_revision", "expected_preview_id", "source_object_id", "processing_id", "job_id", "exact_source_binding")
+    __slots__ = ("action", "object_id", "file_id", "artifact_kind", "locator", "draft_id", "expected_draft_revision", "expected_file_revision", "expected_preview_id", "source_object_id", "processing_id", "job_id", "exact_source_binding", "draft_incarnation", "expected_file_incarnation")
     ACTION_FIELD_NUMBER: _ClassVar[int]
     OBJECT_ID_FIELD_NUMBER: _ClassVar[int]
     FILE_ID_FIELD_NUMBER: _ClassVar[int]
@@ -417,6 +439,8 @@ class ObjectEffect(_message.Message):
     PROCESSING_ID_FIELD_NUMBER: _ClassVar[int]
     JOB_ID_FIELD_NUMBER: _ClassVar[int]
     EXACT_SOURCE_BINDING_FIELD_NUMBER: _ClassVar[int]
+    DRAFT_INCARNATION_FIELD_NUMBER: _ClassVar[int]
+    EXPECTED_FILE_INCARNATION_FIELD_NUMBER: _ClassVar[int]
     action: str
     object_id: str
     file_id: str
@@ -430,7 +454,9 @@ class ObjectEffect(_message.Message):
     processing_id: str
     job_id: str
     exact_source_binding: bytes
-    def __init__(self, action: _Optional[str] = ..., object_id: _Optional[str] = ..., file_id: _Optional[str] = ..., artifact_kind: _Optional[str] = ..., locator: _Optional[_Union[_domain_pb2.ObjectDescriptor, _Mapping]] = ..., draft_id: _Optional[str] = ..., expected_draft_revision: _Optional[int] = ..., expected_file_revision: _Optional[int] = ..., expected_preview_id: _Optional[str] = ..., source_object_id: _Optional[str] = ..., processing_id: _Optional[str] = ..., job_id: _Optional[str] = ..., exact_source_binding: _Optional[bytes] = ...) -> None: ...
+    draft_incarnation: str
+    expected_file_incarnation: str
+    def __init__(self, action: _Optional[str] = ..., object_id: _Optional[str] = ..., file_id: _Optional[str] = ..., artifact_kind: _Optional[str] = ..., locator: _Optional[_Union[_domain_pb2.ObjectDescriptor, _Mapping]] = ..., draft_id: _Optional[str] = ..., expected_draft_revision: _Optional[int] = ..., expected_file_revision: _Optional[int] = ..., expected_preview_id: _Optional[str] = ..., source_object_id: _Optional[str] = ..., processing_id: _Optional[str] = ..., job_id: _Optional[str] = ..., exact_source_binding: _Optional[bytes] = ..., draft_incarnation: _Optional[str] = ..., expected_file_incarnation: _Optional[str] = ...) -> None: ...
 
 class CryptoConfiguration(_message.Message):
     __slots__ = ("account_jwks", "account_issuer", "account_audience")
