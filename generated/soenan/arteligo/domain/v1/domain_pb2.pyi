@@ -897,6 +897,14 @@ class ObjectDescriptor(_message.Message):
     chunk_size: int
     def __init__(self, object_id: _Optional[str] = ..., exact_source_binding: _Optional[bytes] = ..., chunks: _Optional[_Iterable[_Union[FileChunk, _Mapping]]] = ..., ciphertext_size: _Optional[int] = ..., chunk_size: _Optional[int] = ...) -> None: ...
 
+class UploadPart(_message.Message):
+    __slots__ = ("ciphertext_size", "sha256")
+    CIPHERTEXT_SIZE_FIELD_NUMBER: _ClassVar[int]
+    SHA256_FIELD_NUMBER: _ClassVar[int]
+    ciphertext_size: int
+    sha256: bytes
+    def __init__(self, ciphertext_size: _Optional[int] = ..., sha256: _Optional[bytes] = ...) -> None: ...
+
 class ObjectLocator(_message.Message):
     __slots__ = ("descriptor", "stream")
     DESCRIPTOR_FIELD_NUMBER: _ClassVar[int]
@@ -976,36 +984,44 @@ class LoudnessMetadata(_message.Message):
     def __init__(self, state: _Optional[_Union[LoudnessState, str]] = ..., policy_version: _Optional[str] = ..., integrated_loudness_lufs: _Optional[float] = ..., true_peak_dbtp: _Optional[float] = ..., loudness_range_lu: _Optional[float] = ..., target_integrated_loudness_lufs: _Optional[float] = ..., maximum_true_peak_dbtp: _Optional[float] = ..., maximum_boost_db: _Optional[float] = ..., recommended_gain_db: _Optional[float] = ...) -> None: ...
 
 class FileUploadDraft(_message.Message):
-    __slots__ = ("file_id", "metadata", "entry", "preview_profile", "state", "publish_operation_id")
+    __slots__ = ("file_id", "metadata", "entry", "preview_profile", "state", "publish_operation_id", "upload_parts", "plaintext_sha256")
     FILE_ID_FIELD_NUMBER: _ClassVar[int]
     METADATA_FIELD_NUMBER: _ClassVar[int]
     ENTRY_FIELD_NUMBER: _ClassVar[int]
     PREVIEW_PROFILE_FIELD_NUMBER: _ClassVar[int]
     STATE_FIELD_NUMBER: _ClassVar[int]
     PUBLISH_OPERATION_ID_FIELD_NUMBER: _ClassVar[int]
+    UPLOAD_PARTS_FIELD_NUMBER: _ClassVar[int]
+    PLAINTEXT_SHA256_FIELD_NUMBER: _ClassVar[int]
     file_id: str
     metadata: FileMetadata
     entry: ProjectEntryIntent
     preview_profile: str
     state: FileUploadState
     publish_operation_id: str
-    def __init__(self, file_id: _Optional[str] = ..., metadata: _Optional[_Union[FileMetadata, _Mapping]] = ..., entry: _Optional[_Union[ProjectEntryIntent, _Mapping]] = ..., preview_profile: _Optional[str] = ..., state: _Optional[_Union[FileUploadState, str]] = ..., publish_operation_id: _Optional[str] = ...) -> None: ...
+    upload_parts: _containers.RepeatedCompositeFieldContainer[UploadPart]
+    plaintext_sha256: bytes
+    def __init__(self, file_id: _Optional[str] = ..., metadata: _Optional[_Union[FileMetadata, _Mapping]] = ..., entry: _Optional[_Union[ProjectEntryIntent, _Mapping]] = ..., preview_profile: _Optional[str] = ..., state: _Optional[_Union[FileUploadState, str]] = ..., publish_operation_id: _Optional[str] = ..., upload_parts: _Optional[_Iterable[_Union[UploadPart, _Mapping]]] = ..., plaintext_sha256: _Optional[bytes] = ...) -> None: ...
 
 class PreviewUploadDraft(_message.Message):
-    __slots__ = ("file_id", "metadata", "expected_file_revision", "expected_preview_id", "source_object_id", "expected_file_incarnation")
+    __slots__ = ("file_id", "metadata", "expected_file_revision", "expected_preview_id", "source_object_id", "expected_file_incarnation", "upload_parts", "plaintext_sha256")
     FILE_ID_FIELD_NUMBER: _ClassVar[int]
     METADATA_FIELD_NUMBER: _ClassVar[int]
     EXPECTED_FILE_REVISION_FIELD_NUMBER: _ClassVar[int]
     EXPECTED_PREVIEW_ID_FIELD_NUMBER: _ClassVar[int]
     SOURCE_OBJECT_ID_FIELD_NUMBER: _ClassVar[int]
     EXPECTED_FILE_INCARNATION_FIELD_NUMBER: _ClassVar[int]
+    UPLOAD_PARTS_FIELD_NUMBER: _ClassVar[int]
+    PLAINTEXT_SHA256_FIELD_NUMBER: _ClassVar[int]
     file_id: str
     metadata: FileMetadata
     expected_file_revision: int
     expected_preview_id: str
     source_object_id: str
     expected_file_incarnation: str
-    def __init__(self, file_id: _Optional[str] = ..., metadata: _Optional[_Union[FileMetadata, _Mapping]] = ..., expected_file_revision: _Optional[int] = ..., expected_preview_id: _Optional[str] = ..., source_object_id: _Optional[str] = ..., expected_file_incarnation: _Optional[str] = ...) -> None: ...
+    upload_parts: _containers.RepeatedCompositeFieldContainer[UploadPart]
+    plaintext_sha256: bytes
+    def __init__(self, file_id: _Optional[str] = ..., metadata: _Optional[_Union[FileMetadata, _Mapping]] = ..., expected_file_revision: _Optional[int] = ..., expected_preview_id: _Optional[str] = ..., source_object_id: _Optional[str] = ..., expected_file_incarnation: _Optional[str] = ..., upload_parts: _Optional[_Iterable[_Union[UploadPart, _Mapping]]] = ..., plaintext_sha256: _Optional[bytes] = ...) -> None: ...
 
 class RecordContent(_message.Message):
     __slots__ = ("project", "stage", "comment_origin", "reply_origin", "thread_head", "text_head", "text_revision", "resolution", "directory_folder", "directory_file", "directory_leaf", "index_branch", "index_leaf", "directory_operations", "directory_deletion", "directory_deletion_stack", "chat_header", "schedule", "file_metadata", "file_upload", "preview_upload", "chat_message")

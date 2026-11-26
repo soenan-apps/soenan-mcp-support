@@ -425,7 +425,7 @@ class RecordPrecondition(_message.Message):
     def __init__(self, id: _Optional[str] = ..., expected_revision: _Optional[int] = ..., require_live: bool = ..., incarnation: _Optional[str] = ...) -> None: ...
 
 class ObjectEffect(_message.Message):
-    __slots__ = ("action", "object_id", "file_id", "artifact_kind", "locator", "draft_id", "expected_draft_revision", "expected_file_revision", "expected_preview_id", "source_object_id", "processing_id", "job_id", "exact_source_binding", "draft_incarnation", "expected_file_incarnation")
+    __slots__ = ("action", "object_id", "file_id", "artifact_kind", "locator", "draft_id", "expected_draft_revision", "expected_file_revision", "expected_preview_id", "source_object_id", "processing_id", "job_id", "exact_source_binding", "draft_incarnation", "expected_file_incarnation", "upload_parts")
     ACTION_FIELD_NUMBER: _ClassVar[int]
     OBJECT_ID_FIELD_NUMBER: _ClassVar[int]
     FILE_ID_FIELD_NUMBER: _ClassVar[int]
@@ -441,6 +441,7 @@ class ObjectEffect(_message.Message):
     EXACT_SOURCE_BINDING_FIELD_NUMBER: _ClassVar[int]
     DRAFT_INCARNATION_FIELD_NUMBER: _ClassVar[int]
     EXPECTED_FILE_INCARNATION_FIELD_NUMBER: _ClassVar[int]
+    UPLOAD_PARTS_FIELD_NUMBER: _ClassVar[int]
     action: str
     object_id: str
     file_id: str
@@ -456,7 +457,8 @@ class ObjectEffect(_message.Message):
     exact_source_binding: bytes
     draft_incarnation: str
     expected_file_incarnation: str
-    def __init__(self, action: _Optional[str] = ..., object_id: _Optional[str] = ..., file_id: _Optional[str] = ..., artifact_kind: _Optional[str] = ..., locator: _Optional[_Union[_domain_pb2.ObjectDescriptor, _Mapping]] = ..., draft_id: _Optional[str] = ..., expected_draft_revision: _Optional[int] = ..., expected_file_revision: _Optional[int] = ..., expected_preview_id: _Optional[str] = ..., source_object_id: _Optional[str] = ..., processing_id: _Optional[str] = ..., job_id: _Optional[str] = ..., exact_source_binding: _Optional[bytes] = ..., draft_incarnation: _Optional[str] = ..., expected_file_incarnation: _Optional[str] = ...) -> None: ...
+    upload_parts: _containers.RepeatedCompositeFieldContainer[_domain_pb2.UploadPart]
+    def __init__(self, action: _Optional[str] = ..., object_id: _Optional[str] = ..., file_id: _Optional[str] = ..., artifact_kind: _Optional[str] = ..., locator: _Optional[_Union[_domain_pb2.ObjectDescriptor, _Mapping]] = ..., draft_id: _Optional[str] = ..., expected_draft_revision: _Optional[int] = ..., expected_file_revision: _Optional[int] = ..., expected_preview_id: _Optional[str] = ..., source_object_id: _Optional[str] = ..., processing_id: _Optional[str] = ..., job_id: _Optional[str] = ..., exact_source_binding: _Optional[bytes] = ..., draft_incarnation: _Optional[str] = ..., expected_file_incarnation: _Optional[str] = ..., upload_parts: _Optional[_Iterable[_Union[_domain_pb2.UploadPart, _Mapping]]] = ...) -> None: ...
 
 class CryptoConfiguration(_message.Message):
     __slots__ = ("account_jwks", "account_issuer", "account_audience")
@@ -623,48 +625,54 @@ class InvitationReadResponse(_message.Message):
     def __init__(self, invitations: _Optional[_Iterable[_Union[InvitationStatus, _Mapping]]] = ..., bundle: _Optional[_Union[_crypto_pb2.CryptoReadBundle, _Mapping]] = ...) -> None: ...
 
 class FileOperationRequest(_message.Message):
-    __slots__ = ("project_id", "device_id", "object_id", "chunk_index", "content_length", "sha256", "action")
+    __slots__ = ("project_id", "device_id", "object_id", "part_number", "content_length", "sha256", "action", "range_offset", "range_length")
     PROJECT_ID_FIELD_NUMBER: _ClassVar[int]
     DEVICE_ID_FIELD_NUMBER: _ClassVar[int]
     OBJECT_ID_FIELD_NUMBER: _ClassVar[int]
-    CHUNK_INDEX_FIELD_NUMBER: _ClassVar[int]
+    PART_NUMBER_FIELD_NUMBER: _ClassVar[int]
     CONTENT_LENGTH_FIELD_NUMBER: _ClassVar[int]
     SHA256_FIELD_NUMBER: _ClassVar[int]
     ACTION_FIELD_NUMBER: _ClassVar[int]
+    RANGE_OFFSET_FIELD_NUMBER: _ClassVar[int]
+    RANGE_LENGTH_FIELD_NUMBER: _ClassVar[int]
     project_id: str
     device_id: str
     object_id: str
-    chunk_index: int
+    part_number: int
     content_length: int
     sha256: bytes
     action: str
-    def __init__(self, project_id: _Optional[str] = ..., device_id: _Optional[str] = ..., object_id: _Optional[str] = ..., chunk_index: _Optional[int] = ..., content_length: _Optional[int] = ..., sha256: _Optional[bytes] = ..., action: _Optional[str] = ...) -> None: ...
+    range_offset: int
+    range_length: int
+    def __init__(self, project_id: _Optional[str] = ..., device_id: _Optional[str] = ..., object_id: _Optional[str] = ..., part_number: _Optional[int] = ..., content_length: _Optional[int] = ..., sha256: _Optional[bytes] = ..., action: _Optional[str] = ..., range_offset: _Optional[int] = ..., range_length: _Optional[int] = ...) -> None: ...
 
 class FileOperationResponse(_message.Message):
-    __slots__ = ("url", "content_length", "headers", "missing_indices", "state", "expires_at", "operation", "object_id", "chunk_index", "contract", "version")
+    __slots__ = ("url", "content_length", "headers", "missing_parts", "state", "expires_at", "operation", "object_id", "part_number", "contract", "version", "object_length")
     URL_FIELD_NUMBER: _ClassVar[int]
     CONTENT_LENGTH_FIELD_NUMBER: _ClassVar[int]
     HEADERS_FIELD_NUMBER: _ClassVar[int]
-    MISSING_INDICES_FIELD_NUMBER: _ClassVar[int]
+    MISSING_PARTS_FIELD_NUMBER: _ClassVar[int]
     STATE_FIELD_NUMBER: _ClassVar[int]
     EXPIRES_AT_FIELD_NUMBER: _ClassVar[int]
     OPERATION_FIELD_NUMBER: _ClassVar[int]
     OBJECT_ID_FIELD_NUMBER: _ClassVar[int]
-    CHUNK_INDEX_FIELD_NUMBER: _ClassVar[int]
+    PART_NUMBER_FIELD_NUMBER: _ClassVar[int]
     CONTRACT_FIELD_NUMBER: _ClassVar[int]
     VERSION_FIELD_NUMBER: _ClassVar[int]
+    OBJECT_LENGTH_FIELD_NUMBER: _ClassVar[int]
     url: str
     content_length: int
     headers: _containers.RepeatedCompositeFieldContainer[HttpHeader]
-    missing_indices: _containers.RepeatedScalarFieldContainer[int]
+    missing_parts: _containers.RepeatedScalarFieldContainer[int]
     state: str
     expires_at: str
     operation: str
     object_id: str
-    chunk_index: int
+    part_number: int
     contract: str
     version: int
-    def __init__(self, url: _Optional[str] = ..., content_length: _Optional[int] = ..., headers: _Optional[_Iterable[_Union[HttpHeader, _Mapping]]] = ..., missing_indices: _Optional[_Iterable[int]] = ..., state: _Optional[str] = ..., expires_at: _Optional[str] = ..., operation: _Optional[str] = ..., object_id: _Optional[str] = ..., chunk_index: _Optional[int] = ..., contract: _Optional[str] = ..., version: _Optional[int] = ...) -> None: ...
+    object_length: int
+    def __init__(self, url: _Optional[str] = ..., content_length: _Optional[int] = ..., headers: _Optional[_Iterable[_Union[HttpHeader, _Mapping]]] = ..., missing_parts: _Optional[_Iterable[int]] = ..., state: _Optional[str] = ..., expires_at: _Optional[str] = ..., operation: _Optional[str] = ..., object_id: _Optional[str] = ..., part_number: _Optional[int] = ..., contract: _Optional[str] = ..., version: _Optional[int] = ..., object_length: _Optional[int] = ...) -> None: ...
 
 class HttpHeader(_message.Message):
     __slots__ = ("name", "value")

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import tempfile
 import uuid
 from contextlib import nullcontext
+from hashlib import sha256
 from pathlib import Path
 from typing import BinaryIO, cast
 
@@ -13,7 +15,7 @@ from ..e2ee._crypto import E2eeError
 from ..e2ee._records import EncryptedRecords
 from ..e2ee._session import DeviceSession
 from ..e2ee._signed_commands import AcceptedCommand
-from ._crypto import EncryptionPlan, authenticate_source, build_encryption_plan
+from ._crypto import EncryptionPlan, prepare_upload, restore_missing_parts
 from ._http import (
     DEFAULT_TIMEOUTS,
     DEFAULT_TRANSPORT,
@@ -21,7 +23,7 @@ from ._http import (
     TransferTransport,
 )
 from ._opus import OpusPreview, prepare_opus_preview
-from ._workflow import _file_operation, _put_chunk
+from ._workflow import _download_frames, _missing_parts, _put_missing_parts
 
 
 def upload_wav_preview(
@@ -107,9 +109,12 @@ def upload_wav_preview(
         ):
             raise E2eeError("source_changed")
         identifier = draft.metadata.preview.preview_id
-        status = _file_operation(session, project_id, identifier, "status")
-        if status.state == "ready":
+        plan = EncryptionPlan(draft.metadata.preview.object, session.core)
+        missing = _missing_parts(session, project_id, plan, draft.upload_parts)
+        if not missing:
             return _publish_preview(records, project_id, pending, draft)
+        if len(draft.plaintext_sha256) != 32:
+            raise E2eeError("preview_encoding_changed")
     elif (
         metadata.HasField("preview")
         and metadata.preview.state == domain.PREVIEW_STATE_READY
@@ -121,20 +126,28 @@ def upload_wav_preview(
             "state": "ready",
         }
     original = EncryptionPlan(metadata.original, session.core)
+    digest = sha256()
+    with _download_frames(
+        session, project_id, original, timeouts=timeouts, transport=transport
+    ) as frames:
+        for plaintext in frames:
+            digest.update(plaintext)
     with (
         nullcontext(source_stream)
         if source_stream is not None
         else Path(source).open("rb")
     ) as stream:
-        digest = authenticate_source(stream, original)
         with prepare_opus_preview(
             stream,
             source_size=metadata.description.plaintext_size,
             timeout=timeouts.total,
         ) as encoded:
-            if encoded.source_sha256 != digest:
+            if encoded.source_sha256 != digest.digest():
                 raise E2eeError("source_changed")
-            with encoded.path.open("rb") as preview_stream:
+            with (
+                encoded.path.open("rb") as preview_stream,
+                cast(BinaryIO, tempfile.TemporaryFile(mode="w+b")) as spool,
+            ):
                 if pending is None:
                     identifier = str(uuid.uuid4())
                     binding = app.FileRevisionBinding(
@@ -144,13 +157,15 @@ def upload_wav_preview(
                         metadata_revision=record["revision"] + 1,
                         metadata_incarnation=record["incarnation"],
                     ).SerializeToString()
-                    plan = build_encryption_plan(
+                    prepared = prepare_upload(
                         preview_stream,
+                        spool,
                         core=session.core,
                         object_id=identifier,
                         binding=binding,
                         plaintext_size=encoded.size,
                     )
+                    plan = prepared.plan
                     next_metadata = domain.FileMetadata()
                     next_metadata.CopyFrom(metadata)
                     next_metadata.preview.CopyFrom(
@@ -184,6 +199,8 @@ def upload_wav_preview(
                         expected_file_incarnation=record["incarnation"],
                         expected_preview_id=previous,
                         source_object_id=metadata.original.descriptor.object_id,
+                        upload_parts=prepared.parts,
+                        plaintext_sha256=prepared.plaintext_sha256,
                     )
                     committed = records.write(
                         project_id,
@@ -210,6 +227,7 @@ def upload_wav_preview(
                                 file_id=file_id,
                                 artifact_kind="preview",
                                 locator=plan.locator.descriptor,
+                                upload_parts=draft.upload_parts,
                                 draft_id=pending_id,
                                 expected_draft_revision=1,
                                 draft_incarnation=records.operation_id,
@@ -228,38 +246,33 @@ def upload_wav_preview(
                     pending = next(
                         item for item in committed if item["record_id"] == pending_id
                     )
-                    status = _file_operation(session, project_id, identifier, "status")
+                    missing = _missing_parts(
+                        session, project_id, plan, draft.upload_parts
+                    )
                 else:
-                    draft = pending["value"]
-                    plan = EncryptionPlan(draft.metadata.preview.object, session.core)
-                    if plan.plaintext_size != encoded.size:
-                        raise E2eeError("preview_encoding_changed")
-                if status.state not in {"uploading", "ready"}:
-                    raise E2eeError("object_not_ready")
-                if status.state != "ready":
-                    missing = set(status.missing_indices)
-                    for chunk in plan.chunks:
-                        if chunk.index not in missing:
-                            preview_stream.seek(chunk.frame.plaintext_length, 1)
-                            continue
-                        try:
-                            ciphertext = plan.seal_chunk(
-                                preview_stream.read(chunk.frame.plaintext_length),
-                                chunk.index,
-                            )
-                        except E2eeError as error:
-                            if error.code != "source_changed":
-                                raise
-                            raise E2eeError("preview_encoding_changed") from None
-                        _put_chunk(
-                            session,
-                            project_id,
-                            identifier,
-                            chunk.index,
-                            ciphertext,
-                            timeouts=timeouts,
-                            transport=transport,
+                    try:
+                        restore_missing_parts(
+                            preview_stream,
+                            spool,
+                            plan,
+                            draft.upload_parts,
+                            missing,
+                            draft.plaintext_sha256,
                         )
+                    except E2eeError as error:
+                        if error.code != "source_changed":
+                            raise
+                        raise E2eeError("preview_encoding_changed") from None
+                _put_missing_parts(
+                    session,
+                    project_id,
+                    plan,
+                    draft.upload_parts,
+                    missing,
+                    spool,
+                    timeouts=timeouts,
+                    transport=transport,
+                )
     return _publish_preview(records, project_id, pending, draft)
 
 

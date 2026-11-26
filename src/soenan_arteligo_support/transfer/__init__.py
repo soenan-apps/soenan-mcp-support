@@ -1,4 +1,4 @@
-"""Client-side encrypted transfers using direct Railway Bucket capabilities."""
+"""Client-side encrypted transfers using direct S3 object capabilities."""
 
 from ._http import (
     DEFAULT_TIMEOUTS,

@@ -6,9 +6,11 @@ import socket
 import ssl
 import threading
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Generator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import BinaryIO
 from urllib.parse import SplitResult, urlsplit
 
 
@@ -114,70 +116,29 @@ class TransferTransport:
 
 DEFAULT_TIMEOUTS = TransferTimeouts()
 DEFAULT_TRANSPORT = TransferTransport()
-_ALLOWED_HEADERS = frozenset(
-    {
-        "content-type",
-        "x-amz-checksum-sha256",
-        "x-amz-content-sha256",
-        "x-amz-server-side-encryption",
-    }
-)
+_COPY_SIZE = 256 * 1024
+_DEFAULT_DOWNLOAD_BYTES_PER_SECOND = 512 * 1024
 
 
 def put_ciphertext(
     url: str,
     headers: Mapping[str, str],
-    ciphertext: bytes,
+    ciphertext: BinaryIO,
+    length: int,
     *,
     timeouts: TransferTimeouts,
     transport: TransferTransport,
 ) -> None:
-    parsed = _parse_url(url, transport)
-    deadline = time.monotonic() + timeouts.total
-    connection: http.client.HTTPConnection | None = None
-    watchdog: threading.Timer | None = None
-    try:
-        connection = _connection(parsed, timeouts, deadline, transport)
-        connection.connect()
-        watchdog = _deadline_watchdog(connection, deadline)
-        _set_socket_timeout(connection, timeouts, deadline)
-        connection.putrequest(
-            "PUT", _request_target(parsed), skip_host=True, skip_accept_encoding=True
-        )
-        connection.putheader("Host", _authority(parsed))
-        for name, value in _validated_headers(headers).items():
-            connection.putheader(name, value)
-        connection.putheader("Content-Length", str(len(ciphertext)))
-        connection.endheaders()
-        _set_socket_timeout(connection, timeouts, deadline)
-        connection.send(ciphertext)
-        _set_socket_timeout(connection, timeouts, deadline)
-        response = connection.getresponse()
-        try:
-            if 300 <= response.status < 400:
-                raise TransferHTTPError(response.status)
-            if response.status not in (200, 204):
-                raise TransferHTTPError(response.status)
-            response.read(1)
-            _remaining(deadline)
-        finally:
-            response.close()
-    except TransferError:
-        raise
-    except TimeoutError:
-        raise TransferTimeoutError() from None
-    except (OSError, http.client.HTTPException, ssl.SSLError):
-        if time.monotonic() >= deadline:
-            raise TransferTimeoutError() from None
-        raise TransferError("direct Bucket upload failed") from None
-    finally:
-        if watchdog is not None:
-            watchdog.cancel()
-            watchdog.join()
-        if connection is not None:
-            connection.close()
+    with _bucket_response(
+        "PUT", url, headers, timeouts, transport, upload=(ciphertext, length)
+    ) as (response, deadline):
+        if response.status not in (200, 204):
+            raise TransferHTTPError(response.status)
+        response.read(1)
+        _remaining(deadline)
 
 
+@contextmanager
 def get_ciphertext(
     url: str,
     headers: Mapping[str, str],
@@ -185,60 +146,90 @@ def get_ciphertext(
     *,
     timeouts: TransferTimeouts,
     transport: TransferTransport,
-) -> bytes:
-    if expected_length <= 0:
-        raise ValueError("expected_length must be positive")
+) -> Generator[Callable[[int], bytes], None, None]:
+    total = timeouts.total
+    if timeouts is DEFAULT_TIMEOUTS:
+        total = max(
+            total,
+            timeouts.connect + expected_length / _DEFAULT_DOWNLOAD_BYTES_PER_SECOND,
+        )
+    with _bucket_response("GET", url, headers, timeouts, transport, total=total) as (
+        response,
+        deadline,
+    ):
+        if response.status != 200:
+            raise TransferHTTPError(response.status)
+        if (
+            response.headers.get_all("Content-Length") != [str(expected_length)]
+            or response.getheader("Content-Range") is not None
+            or response.getheader("Transfer-Encoding") is not None
+        ):
+            raise TransferSizeMismatch()
+
+        def read(length: int) -> bytes:
+            data = response.read(length)
+            _remaining(deadline)
+            return data
+
+        yield read
+        if response.length != 0 or read(1):
+            raise TransferSizeMismatch()
+
+
+@contextmanager
+def _bucket_response(
+    method: str,
+    url: str,
+    headers: Mapping[str, str],
+    timeouts: TransferTimeouts,
+    transport: TransferTransport,
+    *,
+    upload: tuple[BinaryIO, int] | None = None,
+    total: float | None = None,
+) -> Generator[tuple[http.client.HTTPResponse, float], None, None]:
     parsed = _parse_url(url, transport)
-    deadline = time.monotonic() + timeouts.total
-    connection: http.client.HTTPConnection | None = None
-    watchdog: threading.Timer | None = None
+    deadline = time.monotonic() + (timeouts.total if total is None else total)
+    connection = _connection(parsed, timeouts, deadline, transport)
+    watchdog = None
     try:
-        connection = _connection(parsed, timeouts, deadline, transport)
         connection.connect()
         watchdog = _deadline_watchdog(connection, deadline)
         _set_socket_timeout(connection, timeouts, deadline)
         connection.putrequest(
-            "GET", _request_target(parsed), skip_host=True, skip_accept_encoding=True
+            method, _request_target(parsed), skip_host=True, skip_accept_encoding=True
         )
         connection.putheader("Host", _authority(parsed))
-        for name, value in _validated_headers(headers).items():
+        for name, value in headers.items():
             connection.putheader(name, value)
+        if upload is not None:
+            ciphertext, length = upload
+            connection.putheader("Content-Length", str(length))
         connection.endheaders()
+        if upload is not None:
+            remaining = length
+            while remaining:
+                block = ciphertext.read(min(remaining, _COPY_SIZE))
+                if not block:
+                    raise TransferSizeMismatch()
+                _set_socket_timeout(connection, timeouts, deadline)
+                connection.send(block)
+                remaining -= len(block)
         _set_socket_timeout(connection, timeouts, deadline)
-        response = connection.getresponse()
-        try:
-            if 300 <= response.status < 400:
-                raise TransferHTTPError(response.status)
-            if response.status != 200:
-                raise TransferHTTPError(response.status)
-            response_length = response.getheader("Content-Length")
-            if (
-                response_length is None
-                or not response_length.isdecimal()
-                or int(response_length) != expected_length
-            ):
-                raise TransferSizeMismatch()
-            ciphertext = response.read(expected_length + 1)
+        with connection.getresponse() as response:
             _remaining(deadline)
-            if len(ciphertext) != expected_length:
-                raise TransferSizeMismatch()
-            return ciphertext
-        finally:
-            response.close()
-    except TransferError:
-        raise
+            yield response, deadline
+            _remaining(deadline)
     except TimeoutError:
         raise TransferTimeoutError() from None
-    except (OSError, http.client.HTTPException, ssl.SSLError):
+    except (OSError, http.client.HTTPException):
         if time.monotonic() >= deadline:
             raise TransferTimeoutError() from None
-        raise TransferError("direct Bucket download failed") from None
+        raise TransferError("direct Bucket transfer failed") from None
     finally:
         if watchdog is not None:
             watchdog.cancel()
             watchdog.join()
-        if connection is not None:
-            connection.close()
+        connection.close()
 
 
 def _parse_url(url: str, transport: TransferTransport) -> SplitResult:
@@ -276,24 +267,6 @@ def _parse_url(url: str, transport: TransferTransport) -> SplitResult:
 
 def _is_loopback(host: str) -> bool:
     return host.lower() in {"localhost", "127.0.0.1", "::1"}
-
-
-def _validated_headers(headers: Mapping[str, str]) -> dict[str, str]:
-    if not isinstance(headers, Mapping) or len(headers) > len(_ALLOWED_HEADERS):
-        raise TransferError("Bucket capability headers are invalid")
-    validated: dict[str, str] = {}
-    for raw_name, raw_value in headers.items():
-        if not isinstance(raw_name, str) or not isinstance(raw_value, str):
-            raise TransferError("Bucket capability headers are invalid")
-        name = raw_name.lower()
-        if name not in _ALLOWED_HEADERS or name in validated:
-            raise TransferError("Bucket capability headers are invalid")
-        if not raw_value or any(
-            character in raw_value for character in ("\r", "\n", "\x00")
-        ):
-            raise TransferError("Bucket capability headers are invalid")
-        validated[name] = raw_value
-    return validated
 
 
 def _connection(
@@ -367,8 +340,9 @@ def _set_socket_timeout(
     timeouts: TransferTimeouts,
     deadline: float,
 ) -> None:
+    remaining = _remaining(deadline)
     if connection.sock is not None:
-        connection.sock.settimeout(min(timeouts.read, _remaining(deadline)))
+        connection.sock.settimeout(min(timeouts.read, remaining))
 
 
 def _remaining(deadline: float) -> float:
@@ -389,7 +363,6 @@ def _deadline_watchdog(
                 connected_socket.shutdown(socket.SHUT_RDWR)
             except OSError:
                 pass
-        connection.close()
 
     timer = threading.Timer(max(0.0, deadline - time.monotonic()), expire)
     timer.daemon = True

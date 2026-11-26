@@ -8,12 +8,11 @@ import sys
 import tempfile
 import uuid
 from base64 import b64encode
-from collections.abc import Callable
-from contextlib import AbstractContextManager, ExitStack
-from hashlib import sha256
+from collections.abc import Callable, Generator, Iterator, Sequence
+from contextlib import AbstractContextManager, ExitStack, contextmanager
 from pathlib import Path
 from typing import BinaryIO, cast
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qsl, unquote, urlsplit
 
 from google.protobuf.timestamp_pb2 import Timestamp
 from soenan.arteligo.application.v1 import application_pb2 as app
@@ -25,15 +24,26 @@ from ..e2ee._directory import EncryptedDirectory
 from ..e2ee._records import EncryptedRecords
 from ..e2ee._session import DeviceSession
 from ..e2ee._signed_commands import AcceptedCommand
-from ._crypto import EncryptionPlan, build_encryption_plan
+from ._crypto import EncryptionPlan, prepare_upload, restore_missing_parts
 from ._http import (
     DEFAULT_TIMEOUTS,
     DEFAULT_TRANSPORT,
+    TransferHTTPError,
+    TransferSizeMismatch,
     TransferTimeouts,
     TransferTransport,
     get_ciphertext,
     put_ciphertext,
 )
+
+_SIGNING_QUERY_NAMES = {
+    "X-Amz-Algorithm",
+    "X-Amz-Credential",
+    "X-Amz-Date",
+    "X-Amz-Expires",
+    "X-Amz-Signature",
+    "X-Amz-SignedHeaders",
+}
 
 
 def _file_operation(
@@ -42,7 +52,8 @@ def _file_operation(
     object_id: str,
     action: str,
     *,
-    index: int = 0,
+    object_length: int,
+    part_number: int = 0,
     length: int = 0,
     digest: bytes = b"",
 ) -> app.FileOperationResponse:
@@ -52,13 +63,27 @@ def _file_operation(
         device_id=session.device_id,
         object_id=object_id,
         action=action,
-        chunk_index=index,
+        part_number=part_number,
         content_length=length,
         sha256=digest,
     )
-    if action == "upload_capability":
-        return session.service.create_crypto_file_upload_capability(request)
-    return session.service.read_crypto_file(request)
+    upload = action == "upload_capability"
+    operation = (
+        session.service.create_crypto_file_upload_capability
+        if upload
+        else session.service.read_crypto_file
+    )
+    value = operation(request)
+    if (
+        value.contract != "arteligo.s3-object-capability"
+        or value.version != 1
+        or value.operation != ("put" if upload else "get")
+        or value.object_id != object_id
+        or value.part_number != part_number
+        or value.object_length != object_length
+    ):
+        raise E2eeError("invalid_capability")
+    return value
 
 
 def _capability(
@@ -67,19 +92,22 @@ def _capability(
     method: str,
     scope: str,
     object_id: str,
-    index: int,
     length: int,
-    ciphertext: bytes | None = None,
+    digest: bytes = b"",
+    multipart: bool = False,
 ) -> tuple[str, dict[str, str]]:
     url = value.url
     try:
         parsed = urlsplit(url)
+        query_pairs = parse_qsl(
+            parsed.query, keep_blank_values=True, strict_parsing=True
+        )
     except ValueError:
         raise E2eeError("invalid_capability") from None
     path = unquote(parsed.path)
     if (
-        parsed.scheme not in {"http", "https"}
-        or not parsed.netloc
+        parsed.scheme != "https"
+        or not parsed.hostname
         or parsed.username is not None
         or parsed.password is not None
         or parsed.fragment
@@ -89,63 +117,125 @@ def _capability(
         or "\\" in path
         or "//" in path
         or any(p in {".", ".."} for p in path.split("/"))
-        or not path.endswith(
-            f"/projects/{scope}/encrypted-objects/{object_id}/chunks/{index}.bin"
-        )
+        or not path.endswith(f"/projects/{scope}/encrypted-objects/{object_id}.bin")
         or value.content_length != length
+        or value.state != ("uploading" if method == "PUT" else "ready")
     ):
         raise E2eeError("invalid_capability")
+    query = dict(query_pairs)
     headers = {header.name: header.value for header in value.headers}
-    if len(headers) != len(value.headers) or any(
-        name != name.lower() or not val or any(c in val for c in ("\r", "\n", "\x00"))
-        for name, val in headers.items()
-    ):
-        raise E2eeError("invalid_capability")
+    expected_query = _SIGNING_QUERY_NAMES
+    expected_headers: dict[str, str] = {}
+    signed = {"host"}
     if method == "PUT":
-        if (
-            not headers.keys() <= {"content-type", "x-amz-checksum-sha256"}
-            or headers.get("content-type", "application/octet-stream")
-            != "application/octet-stream"
-            or ciphertext is None
-            or len(ciphertext) != length
-            or headers.get("x-amz-checksum-sha256")
-            != b64encode(sha256(ciphertext).digest()).decode("ascii")
-        ):
-            raise E2eeError("invalid_capability")
-    elif method != "GET" or headers:
+        expected_headers = {
+            "content-type": "application/octet-stream",
+            "x-amz-checksum-sha256": b64encode(digest).decode("ascii"),
+        }
+        if multipart:
+            expected_query = _SIGNING_QUERY_NAMES | {"partNumber", "uploadId"}
+            if query.get("partNumber") != str(value.part_number) or not query.get(
+                "uploadId"
+            ):
+                raise E2eeError("invalid_capability")
+        else:
+            expected_headers["if-none-match"] = "*"
+        signed.update(expected_headers)
+        signed.add("content-length")
+    if (
+        len(query) != len(query_pairs)
+        or query.keys() != expected_query
+        or not all(query.values())
+        or query["X-Amz-Algorithm"] != "AWS4-HMAC-SHA256"
+        or query.get("X-Amz-SignedHeaders") != ";".join(sorted(signed))
+        or len(headers) != len(value.headers)
+        or headers != expected_headers
+    ):
         raise E2eeError("invalid_capability")
     return url, headers
 
 
-def _put_chunk(
+def _missing_parts(
     session: DeviceSession,
     project_id: str,
-    object_id: str,
-    index: int,
-    ciphertext: bytes,
+    plan: EncryptionPlan,
+    parts: Sequence[domain.UploadPart],
+) -> tuple[int, ...]:
+    descriptor = plan.locator.descriptor
+    status = _file_operation(
+        session,
+        project_id,
+        descriptor.object_id,
+        "status",
+        object_length=descriptor.ciphertext_size,
+    )
+    if status.state not in {"ready", "uploading"}:
+        raise E2eeError("object_not_ready")
+    missing = tuple(sorted(set(status.missing_parts)))
+    if (
+        status.content_length
+        or len(missing) != len(status.missing_parts)
+        or (
+            missing
+            and (status.state == "ready" or missing[0] < 1 or missing[-1] > len(parts))
+        )
+    ):
+        raise E2eeError("invalid_capability")
+    return missing
+
+
+def _put_missing_parts(
+    session: DeviceSession,
+    project_id: str,
+    plan: EncryptionPlan,
+    parts: Sequence[domain.UploadPart],
+    missing: Sequence[int],
+    spool: BinaryIO,
     *,
     timeouts: TransferTimeouts,
     transport: TransferTransport,
 ) -> None:
-    capability = _file_operation(
-        session,
-        project_id,
-        object_id,
-        "upload_capability",
-        index=index,
-        length=len(ciphertext),
-        digest=sha256(ciphertext).digest(),
-    )
-    url, headers = _capability(
-        capability,
-        method="PUT",
-        scope=project_id,
-        object_id=object_id,
-        index=index,
-        length=len(ciphertext),
-        ciphertext=ciphertext,
-    )
-    put_ciphertext(url, headers, ciphertext, timeouts=timeouts, transport=transport)
+    descriptor = plan.locator.descriptor
+    needed = set(missing)
+    offset = 0
+    multipart = len(parts) > 1
+    for number, part in enumerate(parts, 1):
+        if number in needed:
+            capability = _file_operation(
+                session,
+                project_id,
+                descriptor.object_id,
+                "upload_capability",
+                object_length=descriptor.ciphertext_size,
+                part_number=number,
+                length=part.ciphertext_size,
+                digest=part.sha256,
+            )
+            url, headers = _capability(
+                capability,
+                method="PUT",
+                scope=project_id,
+                object_id=descriptor.object_id,
+                length=part.ciphertext_size,
+                digest=part.sha256,
+                multipart=multipart,
+            )
+            spool.seek(offset)
+            try:
+                put_ciphertext(
+                    url,
+                    headers,
+                    spool,
+                    part.ciphertext_size,
+                    timeouts=timeouts,
+                    transport=transport,
+                )
+            except TransferHTTPError as error:
+                if multipart or error.status != 412:
+                    raise
+                if _missing_parts(session, project_id, plan, parts):
+                    raise
+        offset += part.ciphertext_size
 
 
 def _publish_source(records, scope, pending, draft):
@@ -330,7 +420,7 @@ def upload_file(
                     raise E2eeError("invalid_cursor")
                 cursor = following
         with ExitStack() as sources:
-            stream = None
+            spool = None
             if pending is None:
                 stream = sources.enter_context(open_source())
                 size = os.fstat(stream.fileno()).st_size
@@ -348,13 +438,18 @@ def upload_file(
                     metadata_revision=1,
                     metadata_incarnation=publish_operation_id,
                 ).SerializeToString()
-                plan = build_encryption_plan(
+                spool = sources.enter_context(
+                    cast(BinaryIO, tempfile.TemporaryFile(mode="w+b"))
+                )
+                prepared = prepare_upload(
                     stream,
+                    spool,
                     core=session.core,
                     object_id=identifier,
                     binding=binding,
                     plaintext_size=size,
                 )
+                plan = prepared.plan
                 metadata = domain.FileMetadata(
                     description=domain.FileDescription(
                         name=source_path.name,
@@ -375,6 +470,8 @@ def upload_file(
                     entry=entry,
                     state=domain.FILE_UPLOAD_STATE_UPLOADING,
                     publish_operation_id=publish_operation_id,
+                    upload_parts=prepared.parts,
+                    plaintext_sha256=prepared.plaintext_sha256,
                 )
                 committed = records.write(
                     project_id,
@@ -393,6 +490,7 @@ def upload_file(
                             file_id=file_id,
                             artifact_kind="source",
                             locator=plan.locator.descriptor,
+                            upload_parts=draft.upload_parts,
                             draft_id=pending_id,
                             expected_draft_revision=1,
                             draft_incarnation=records.operation_id,
@@ -410,36 +508,29 @@ def upload_file(
                 plan = EncryptionPlan(metadata.original, session.core)
                 if metadata.original.descriptor.object_id != identifier:
                     raise E2eeError("invalid_object_context")
-            status = _file_operation(session, project_id, identifier, "status")
-            if status.state not in {"uploading", "ready"}:
-                raise E2eeError("object_not_ready")
-            if status.state != "ready":
-                if stream is None:
+            parts = draft.upload_parts
+            missing = _missing_parts(session, project_id, plan, parts)
+            if missing:
+                if spool is None:
+                    if len(draft.plaintext_sha256) != 32:
+                        raise E2eeError("source_changed")
                     stream = sources.enter_context(open_source())
-                if (
-                    os.fstat(stream.fileno()).st_size
-                    != metadata.description.plaintext_size
-                ):
-                    raise E2eeError("source_changed")
-                missing = set(status.missing_indices)
-                for chunk in plan.chunks:
-                    if chunk.index not in missing:
-                        stream.seek(chunk.frame.plaintext_length, 1)
-                        continue
-                    ciphertext = plan.seal_chunk(
-                        stream.read(chunk.frame.plaintext_length), chunk.index
+                    spool = sources.enter_context(
+                        cast(BinaryIO, tempfile.TemporaryFile(mode="w+b"))
                     )
-                    _put_chunk(
-                        session,
-                        project_id,
-                        identifier,
-                        chunk.index,
-                        ciphertext,
-                        timeouts=timeouts,
-                        transport=transport,
+                    restore_missing_parts(
+                        stream, spool, plan, parts, missing, draft.plaintext_sha256
                     )
-                if stream.read(1):
-                    raise E2eeError("source_changed")
+                _put_missing_parts(
+                    session,
+                    project_id,
+                    plan,
+                    parts,
+                    missing,
+                    spool,
+                    timeouts=timeouts,
+                    transport=transport,
+                )
         return _publish_source(records, project_id, pending, draft)
     except (OSError, KeyError, ValueError):
         raise E2eeError("transfer_failed") from None
@@ -527,30 +618,43 @@ def _download_to_stream(
         raise E2eeError("not_found")
     metadata = cast(domain.FileMetadata, record["value"])
     plan = EncryptionPlan(metadata.original, session.core)
-    status = _file_operation(
-        session, project_id, plan.locator.descriptor.object_id, "status"
+    written = 0
+    with _download_frames(
+        session, project_id, plan, timeouts=timeouts, transport=transport
+    ) as frames:
+        for plaintext in frames:
+            output.write(plaintext)
+            written += len(plaintext)
+    if written != metadata.description.plaintext_size:
+        raise TransferSizeMismatch("plaintext byte count does not match metadata")
+    return written
+
+
+@contextmanager
+def _download_frames(
+    session: DeviceSession,
+    project_id: str,
+    plan: EncryptionPlan,
+    *,
+    timeouts: TransferTimeouts,
+    transport: TransferTransport,
+) -> Generator[Iterator[bytes], None, None]:
+    descriptor = plan.locator.descriptor
+    capability = _file_operation(
+        session,
+        project_id,
+        descriptor.object_id,
+        "read_capability",
+        object_length=descriptor.ciphertext_size,
     )
-    if status.state != "ready":
-        raise E2eeError("object_not_ready")
-    for chunk in plan.chunks:
-        length = chunk.frame.plaintext_length + 16
-        capability = _file_operation(
-            session,
-            project_id,
-            plan.locator.descriptor.object_id,
-            "read_capability",
-            index=chunk.index,
-        )
-        url, headers = _capability(
-            capability,
-            method="GET",
-            scope=project_id,
-            object_id=plan.locator.descriptor.object_id,
-            index=chunk.index,
-            length=length,
-        )
-        ciphertext = get_ciphertext(
-            url, headers, length, timeouts=timeouts, transport=transport
-        )
-        output.write(plan.open_chunk(ciphertext, chunk.index))
-    return metadata.description.plaintext_size
+    url, headers = _capability(
+        capability,
+        method="GET",
+        scope=project_id,
+        object_id=descriptor.object_id,
+        length=descriptor.ciphertext_size,
+    )
+    with get_ciphertext(
+        url, headers, descriptor.ciphertext_size, timeouts=timeouts, transport=transport
+    ) as read:
+        yield plan.open_frames(read)

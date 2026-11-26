@@ -234,7 +234,7 @@ conversation.write_chat(
 
 ファイル名の検索・並べ替えはクライアントの処理です。サーバーへ名前、パス、検索文字列を渡す経路はありません。未取得の範囲を検索するアプリケーションは、通常の上限付き取得を使い、範囲・進捗・取消を管理します。SDK はプロジェクト全体の自動取得を行いません。
 
-DEK はアップロードごとに端末で生成します。ProjectKey で包んだ DEK と詳細 manifest は encrypted file record に保存し、server の object manifest には object ID、鍵世代、暗号文サイズ、chunk index と checksum だけを送ります。Bucket へは暗号文だけを直接送信し、OAuth token は転送しません。
+原本とプレビューの DEK はアップロードごとに端末で生成します。ProjectKey で包んだ鍵とフレーム索引は暗号化したレコードに保存し、Bucket へは暗号文だけを直接送信します。アップロード用の長さとチェックサムは WWW が検証します。
 
 アップロード途中の情報は生成型 `FileUploadDraft` の暗号化 record `upl_` に保存します。begin と publish の署名済み command は送信前に保護保存し、応答を失った場合は同じ bytes を再送します。Bucket PUT 後の publish は、object の ready 状態、`FileMetadata`、locator、directory と draft の終了を同じ revision batch で確定します。公開済みなら原本を開き直さず、再暗号化・再 PUT もしません。確定的な directory revision 競合を、元 publish の再署名で回避しません。ダウンロードは全 chunk の checksum と AES-GCM 認証を終えてから、新しい保存先へ公開し、既存 file を上書きしません。
 
@@ -242,7 +242,7 @@ Flutter と SDK は同じ生成型 `FileMetadata` を `file_metadata` record に
 
 `upload_wav_preview` と local MCP の `arteligo_upload_wav_preview` は、元ファイルの暗号文 checksum と手元の WAV が一致することを確認し、ローカルの FFmpeg / FFprobe で Opus へ変換します。生成型 `PreviewUploadDraft` に preview の暗号化情報、元 object ID、元 file の revision を保存します。publish では `FileRevisionBinding` と `ObjectEffect` を同じ command に含め、file の preview 情報、object の ready 状態、draft の終了を原子的に更新します。応答を失った場合は、同じ file ID と WAV から保存済みの command を再送します。保留中の原本 publish を preview 公開済みとは判定しません。転送途中の再開では変換後の checksum を照合し、同じ鍵と nonce で異なる内容を送ることを防ぎます。preview の失敗は原本の保存を取り消しません。
 
-転送は 8 MiB を既定の chunk 単位として進め、1,024 chunks や 8 GiB では打ち切りません。各 chunk の nonce と AAD が使う 32 bit の chunk index と、共通 wire 整数の正確な表現範囲は暗号契約として検証します。各 Bucket 要求には接続、読み取り、要求全体の期限があります。プレビューの変換と解析にも期限を設けます。暗号処理中のメモリは chunk 単位に限定し、使用後の可変バッファーは上書きします。Python の文字列や GC 内の複製まで消去できるとは保証しません。
+暗号化は既定で 8 MiB のフレーム単位です。原本とプレビューはそれぞれ1つの S3 キーを持ち、大容量のアップロードでは同じキーへの標準 multipart を使います。全体ダウンロードは1キーをストリームで読み、フレームを順に認証してから保存結果を公開します。暗号処理のメモリはファイル全体のサイズに比例しません。各 Bucket 要求とプレビュー変換には処理期限があります。
 
 ## 契約と検証
 

@@ -16,6 +16,7 @@ from contextlib import AsyncExitStack
 from dataclasses import asdict
 from pathlib import Path
 from traceback import walk_tb
+from urllib.parse import parse_qs, urlsplit
 
 
 def public(value):
@@ -114,6 +115,49 @@ def sdk(request, session, records):
     method = request["method"]
     arguments = request.get("arguments", {})
     positional = request.get("positional", [])
+    if target == "storage":
+        if method in {"status", "read_capability"}:
+            response = session.service.read_crypto_file(
+                app.FileOperationRequest(
+                    project_id=arguments["project_id"],
+                    device_id=session.device_id,
+                    object_id=arguments["object_id"],
+                    action=method,
+                )
+            )
+            return {
+                "state": response.state,
+                "missing_parts": list(response.missing_parts),
+                "has_read_capability": bool(response.url),
+            }
+        if method in {"interrupt_after_first_part", "observe_resume"}:
+            from soenan_arteligo_support.transfer import _workflow
+
+            upload = _workflow.put_ciphertext
+            parts = []
+
+            def observe(url, *positional, **named):
+                upload(url, *positional, **named)
+                target_url = urlsplit(url)
+                part = int(parse_qs(target_url.query)["partNumber"][0])
+                parts.append(part)
+                if method == "interrupt_after_first_part":
+                    object_id = Path(target_url.path).stem
+                    print(
+                        json.dumps(
+                            {"result": {"object_id": object_id, "parts": parts}}
+                        ),
+                        flush=True,
+                    )
+                    os._exit(0)
+
+            _workflow.put_ciphertext = observe
+            try:
+                result = public(upload_file(session, **arguments))
+            finally:
+                _workflow.put_ciphertext = upload
+            return {"file": result, "parts": parts}
+        raise ValueError("unsupported_storage_operation")
     if target == "metadata" and method == "read":
         record = records.read(request["project"], [arguments["file_id"]])[
             arguments["file_id"]
